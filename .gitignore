@@ -2,3 +2,11 @@ node_modules/
 out/
 dist/
 *.log
+
+# segredos: chaves de API nunca entram no repositório
+.env
+.env.*
+*.key
+*.pem
+secrets.json
+keys.json
