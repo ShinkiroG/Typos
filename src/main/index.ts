@@ -5,6 +5,7 @@ import { pathToFileURL } from 'url'
 import { randomUUID } from 'crypto'
 import { loadSettings, saveSettings } from './settings'
 import { initUpdater, checkManually, installDownloadedNow, installMode } from './updater'
+import { initSpell } from './spell'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer
 protocol.registerSchemesAsPrivileged([
@@ -17,8 +18,8 @@ const ASSETS_DIR = 'assets'
 const IMAGE_EXT = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']
 
 const DEFAULT_FORMATS = [
-  { id: 'long', name: 'Longo / Horizontal', aspect: '16:9', wpm: 150, maxSeconds: null },
-  { id: 'vertical', name: 'Vertical', aspect: '9:16', wpm: 160, maxSeconds: 60 }
+  { id: 'long', name: 'Longo / Horizontal', aspect: '16:9', wpm: 150, maxSeconds: null, lang: 'pt-BR' },
+  { id: 'vertical', name: 'Vertical', aspect: '9:16', wpm: 160, maxSeconds: 60, lang: 'pt-BR' }
 ]
 
 const userDir = () => app.getPath('userData')
@@ -144,6 +145,8 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => app.quit())
+
+initSpell()
 
 // ---------- configurações e atualizações ----------
 ipcMain.handle('settings:get', async () => {

@@ -48,6 +48,12 @@ const api = {
     }
   },
 
+  // corretor (Hunspell no main): o editor manda as palavras e desenha o sublinhado
+  spellCheck: (lang: string, words: string[]): Promise<string[]> => ipcRenderer.invoke('spell:check', lang, words),
+  spellSuggest: (lang: string, word: string): Promise<string[]> => ipcRenderer.invoke('spell:suggest', lang, word),
+  spellAdd: (word: string) => ipcRenderer.invoke('spell:add', word),
+  spellLanguages: (): Promise<string[]> => ipcRenderer.invoke('spell:languages'),
+
   /** o main pede pra salvar antes de fechar/atualizar */
   onFlush: (cb: () => Promise<void>) => {
     ipcRenderer.removeAllListeners('app:flush')

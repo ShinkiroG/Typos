@@ -57,6 +57,20 @@ export interface Format {
   aspect: string
   wpm: number
   maxSeconds: number | null
+  /** idioma do corretor ortográfico ("pt-BR", "en-US"… ou "off"); vazio = pt-BR */
+  lang?: string
+}
+
+export const formatLang = (f?: Format) => f?.lang || 'pt-BR'
+
+/** "pt-BR" → "português (Brasil)" */
+export function langLabel(code: string) {
+  if (code === 'off') return 'desligado'
+  try {
+    return new Intl.DisplayNames(['pt-BR'], { type: 'language' }).of(code) ?? code
+  } catch {
+    return code
+  }
 }
 
 export interface LibraryItem {

@@ -7,6 +7,7 @@ import type { JSONContent } from '@tiptap/core'
 import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Chapter, ScriptKeys, convertBracketLines } from '../editor/nodes'
 import { PlaybackHighlight } from '../editor/highlight'
+import { SpellCheck, misspelledAt, setSpellLanguage, spellSuggestions, acceptWord } from '../editor/spell'
 import { Timeline } from './Timeline'
 import {
   api,
@@ -15,7 +16,9 @@ import {
   blockLabel,
   buildTiming,
   computeStats,
+  formatLang,
   formatTime,
+  langLabel,
   setProjectDir,
   toMarkdown,
   uid,
@@ -96,6 +99,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     }
   })
   const [toast, setToast] = useState('')
+  const [spell, setSpell] = useState<{ word: string; from: number; to: number; suggestions: string[] | null } | null>(null)
 
   const format = formats.find((f) => f.id === formatId) ?? formats[0]
   const wpm = customWpm ?? format?.wpm ?? 150
@@ -160,7 +164,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       SoundUp,
       Chapter,
       ScriptKeys,
-      PlaybackHighlight
+      PlaybackHighlight,
+      SpellCheck
     ],
     content: data.doc,
     autofocus: 'end',
@@ -170,7 +175,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       timer.current = window.setTimeout(() => saveRef.current(), 1000)
     },
     editorProps: {
-      attributes: { spellcheck: 'true' },
+      // o corretor nativo fica desligado; quem sublinha é o plugin (editor/spell.ts)
+      attributes: { spellcheck: 'false' },
       handleDrop: (view, event) => {
         const dt = event.dataTransfer
         if (!dt) return false
@@ -327,17 +333,30 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     }
   }, [menu])
 
+  // idioma do corretor segue o formato do roteiro
+  const lang = formatLang(format)
+  useEffect(() => {
+    setSpellLanguage(editorRef.current, lang)
+  }, [lang, editor])
+
   const setBlock = (type: string) => editor?.chain().focus().setNode(type).run()
 
   const onContextMenu = (e: React.MouseEvent) => {
     if (!editor) return
     const hit = blockAtCoords(editor.view, e.clientX, e.clientY)
-    if (!hit) return
+    const at = editor.view.posAtCoords({ left: e.clientX, top: e.clientY })
+    const wrong = at ? misspelledAt(editor.state.doc, at.pos) : null
+    setSpell(wrong ? { ...wrong, suggestions: null } : null)
+    if (wrong)
+      spellSuggestions(wrong.word).then((suggestions) =>
+        setSpell((cur) => (cur && cur.from === wrong.from && cur.word === wrong.word ? { ...cur, suggestions } : cur))
+      )
+    if (!hit && !wrong) return setMenu(null)
     e.preventDefault()
-    setMenu({ x: e.clientX, y: e.clientY, pos: hit.pos })
+    setMenu({ x: e.clientX, y: e.clientY, pos: hit ? hit.pos : -1 })
   }
 
-  const menuNode = menu ? editor?.state.doc.nodeAt(menu.pos) : null
+  const menuNode = menu && menu.pos >= 0 ? editor?.state.doc.nodeAt(menu.pos) : null
 
   const startSaveSnippet = () => {
     if (!menuNode) return
@@ -406,10 +425,10 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           ))}
         </div>
         <div className="tb-right">
-          <select className="format-select" value={formatId} onChange={(e) => setFormatId(e.target.value)} title="Formato do vídeo">
+          <select className="format-select" value={formatId} onChange={(e) => setFormatId(e.target.value)} title={`Formato do vídeo · corretor: ${langLabel(lang)} (muda em Formatos)`}>
             {formats.map((f) => (
               <option key={f.id} value={f.id}>
-                {f.name} · {f.aspect}
+                {f.name} · {f.aspect} · {formatLang(f) === 'off' ? 'sem corretor' : formatLang(f)}
               </option>
             ))}
           </select>
@@ -511,8 +530,61 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         )}
       </footer>
 
-      {menu && menuNode && (
-        <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
+      {menu && (menuNode || spell) && (
+        <div
+          className="ctx-menu"
+          style={{ left: menu.x, top: menu.y }}
+          ref={(el) => {
+            // não deixa o menu sair da tela
+            if (!el) return
+            const r = el.getBoundingClientRect()
+            if (r.bottom > window.innerHeight - 8) el.style.top = `${Math.max(8, window.innerHeight - r.height - 8)}px`
+            if (r.right > window.innerWidth - 8) el.style.left = `${Math.max(8, window.innerWidth - r.width - 8)}px`
+          }}
+          onMouseDown={(e) => {
+            // mantém o foco no texto (a troca da palavra acontece onde está o cursor)
+            e.preventDefault()
+            e.stopPropagation()
+          }}
+        >
+          {spell && (
+            <>
+              <div className="ctx-label">
+                Corretor · <i>{spell.word}</i>
+              </div>
+              {spell.suggestions === null ? (
+                <div className="ctx-label">buscando sugestões…</div>
+              ) : spell.suggestions.length ? (
+                spell.suggestions.slice(0, 6).map((w) => (
+                  <button
+                    key={w}
+                    className="ctx-suggest"
+                    onClick={() => {
+                      editor?.view.dispatch(editor.state.tr.insertText(w, spell.from, spell.to))
+                      setMenu(null)
+                      setSpell(null)
+                    }}
+                  >
+                    {w}
+                  </button>
+                ))
+              ) : (
+                <div className="ctx-label">sem sugestões</div>
+              )}
+              <button
+                onClick={() => {
+                  acceptWord(editor, spell.word)
+                  setMenu(null)
+                  setSpell(null)
+                }}
+              >
+                Adicionar "{spell.word}" ao dicionário
+              </button>
+              {menuNode && <div className="ctx-sep" />}
+            </>
+          )}
+          {menuNode && (
+            <>
           <button onClick={startSaveSnippet}>Salvar na biblioteca…</button>
           <div className="ctx-sep" />
           <div className="ctx-label">Transformar em</div>
@@ -532,6 +604,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           >
             Excluir bloco
           </button>
+            </>
+          )}
         </div>
       )}
 
