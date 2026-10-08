@@ -4,19 +4,23 @@ import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
 import type { JSONContent } from '@tiptap/core'
-import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2 } from 'lucide-react'
+import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Chapter, ScriptKeys, convertBracketLines } from '../editor/nodes'
+import { PlaybackHighlight } from '../editor/highlight'
+import { Timeline } from './Timeline'
 import {
   api,
   absPath,
   BLOCKS,
   blockLabel,
+  buildTiming,
   computeStats,
   formatTime,
   setProjectDir,
   toMarkdown,
   uid,
   type Attachment,
+  type Clip,
   type Format,
   type LibraryItem,
   type ProjectData
@@ -33,6 +37,7 @@ interface Props {
   library: LibraryItem[]
   onLibraryChange: (l: LibraryItem[]) => void
   onClose: () => void
+  onOpenSettings: () => void
   registerFlush: (fn: (() => Promise<void>) | null) => void
 }
 
@@ -64,7 +69,7 @@ const afterCurrentBlock = (editor: Editor) => {
   return $from.depth >= 1 ? $from.after(1) : editor.state.doc.content.size
 }
 
-export function Workspace({ dir, data, formats, onFormatsChange, library, onLibraryChange, onClose, registerFlush }: Props) {
+export function Workspace({ dir, data, formats, onFormatsChange, library, onLibraryChange, onClose, onOpenSettings, registerFlush }: Props) {
   setProjectDir(dir)
 
   const [title, setTitle] = useState(data.title)
@@ -75,14 +80,26 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
   const [menu, setMenu] = useState<{ x: number; y: number; pos: number } | null>(null)
   const [snippet, setSnippet] = useState<(SnippetDraft & { node?: JSONContent }) | null>(null)
 
+  const [clips, setClips] = useState<Clip[]>(data.timeline?.clips ?? [])
+  const [customWpm, setCustomWpm] = useState<number | null>(data.wpm ?? null)
+  const [timelineOpen, setTimelineOpen] = useState(() => {
+    try {
+      return localStorage.getItem('typos.timeline') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const [toast, setToast] = useState('')
+
   const format = formats.find((f) => f.id === formatId) ?? formats[0]
+  const wpm = customWpm ?? format?.wpm ?? 150
 
   // refs pros handlers do editor (que são criados uma vez só)
   const editorRef = useRef<Editor | null>(null)
   const libraryRef = useRef(library)
   libraryRef.current = library
-  const metaRef = useRef({ title, formatId, format })
-  metaRef.current = { title, formatId, format }
+  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm })
+  metaRef.current = { title, formatId, format, clips, customWpm, wpm }
   const timer = useRef<number | undefined>(undefined)
 
   const attachTo = useCallback((pos: number, atts: Attachment[]) => {
@@ -135,7 +152,8 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
       Transition,
       SoundUp,
       Chapter,
-      ScriptKeys
+      ScriptKeys,
+      PlaybackHighlight
     ],
     content: data.doc,
     autofocus: 'end',
@@ -193,17 +211,26 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
       return $from && $from.depth >= 1 ? $from.node(1).type.name : 'paragraph'
     }
   })
-  const stats = useMemo(() => (doc ? computeStats(doc, format?.wpm ?? 150) : null), [doc, format?.wpm])
+  const stats = useMemo(() => (doc ? computeStats(doc, wpm) : null), [doc, wpm])
+  const timing = useMemo(() => (doc ? buildTiming(doc, wpm) : null), [doc, wpm])
   const overLimit = !!(stats && format?.maxSeconds && stats.seconds > format.maxSeconds)
 
   const save = useCallback(async () => {
     const ed = editorRef.current
     if (!ed || ed.isDestroyed) return
     window.clearTimeout(timer.current)
-    const { title, formatId, format } = metaRef.current
-    const out: ProjectData = { ...data, title, formatId, doc: ed.getJSON(), updatedAt: new Date().toISOString() }
+    const { title, formatId, format, clips, customWpm, wpm } = metaRef.current
+    const out: ProjectData = {
+      ...data,
+      title,
+      formatId,
+      wpm: customWpm,
+      timeline: { clips },
+      doc: ed.getJSON(),
+      updatedAt: new Date().toISOString()
+    }
     setSaveState('saving')
-    const md = toMarkdown(out, format, computeStats(ed.state.doc, format?.wpm ?? 150))
+    const md = toMarkdown(out, format, computeStats(ed.state.doc, wpm), buildTiming(ed.state.doc, wpm), wpm)
     const r = await api.saveProject(dir, out, md)
     setSaveState(r && typeof r === 'object' && 'error' in r ? 'error' : 'saved')
   }, [data, dir])
@@ -218,7 +245,35 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
     setSaveState('dirty')
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => save(), 800)
-  }, [title, formatId, save])
+  }, [title, formatId, clips, customWpm, save])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('typos.timeline', timelineOpen ? '1' : '0')
+    } catch {
+      /* sem storage */
+    }
+  }, [timelineOpen])
+
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(''), 3500)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  const sendToClaude = async () => {
+    await save()
+    const sep = dir.includes('\\') ? '\\' : '/'
+    const msg = [
+      `Roteiro do Typos pronto pra trabalhar: "${dir}"`,
+      `Leia ${dir}${sep}roteiro.md (as imagens e áudios estão em assets/).`,
+      '- Use os [PROMPT], [TRANSIÇÃO] e [SOBE SOM] como instruções de motion/edição, nos tempos indicados.',
+      '- Imagens [RECORTAR]: recorte os elementos e salve PNG transparente em assets/recortes/ com o mesmo nome do arquivo. Se alguma não der pra recortar bem, me diga o que pedir pro ChatGPT regerar.',
+      '- Imagens [REGERAR]: me sugira um prompt melhor pro ChatGPT.'
+    ].join('\n')
+    await navigator.clipboard.writeText(msg)
+    setToast('Pedido copiado! Cole no Claude (Ctrl+V).')
+  }
 
   useEffect(() => {
     registerFlush(save)
@@ -296,7 +351,7 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
   }
 
   return (
-    <div className={'workspace' + (panelOpen ? ' with-panel' : '')}>
+    <div className={'workspace' + (panelOpen ? ' with-panel' : '') + (timelineOpen ? ' with-timeline' : '')}>
       <header className="topbar">
         <div className="tb-left">
           <button className="icon-btn" title="Voltar pros roteiros" onClick={async () => (await save(), onClose())}>
@@ -330,11 +385,20 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
             {saveState === 'saved' && <Check size={13} />}
             {{ saved: 'Salvo', dirty: 'Editando…', saving: 'Salvando', error: 'Erro ao salvar' }[saveState]}
           </span>
+          <button className="btn small claude-btn" title="Salva e copia um pedido pronto pra colar no Claude" onClick={sendToClaude}>
+            <Send size={14} /> Claude
+          </button>
+          <button className={'icon-btn' + (timelineOpen ? ' on' : '')} title="Timeline (áudio + texto)" onClick={() => setTimelineOpen((o) => !o)}>
+            <AudioLines size={17} />
+          </button>
           <button className="icon-btn" title="Abrir pasta do roteiro" onClick={() => api.openPath(dir)}>
             <FolderOpen size={17} />
           </button>
           <button className="icon-btn" title="Painel lateral" onClick={() => setPanelOpen((o) => !o)}>
             {panelOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
+          </button>
+          <button className="icon-btn" title="Configurações" onClick={onOpenSettings}>
+            <Settings size={17} />
           </button>
         </div>
       </header>
@@ -368,6 +432,22 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
         </aside>
       )}
 
+      {timelineOpen && timing && (
+        <div className="timeline-area">
+          <Timeline
+            editor={editor}
+            dir={dir}
+            timing={timing}
+            clips={clips}
+            onClipsChange={setClips}
+            wpm={wpm}
+            formatWpm={format?.wpm ?? 150}
+            customWpm={customWpm !== null}
+            onWpmChange={setCustomWpm}
+          />
+        </div>
+      )}
+
       <footer className="statusbar">
         {stats && (
           <>
@@ -381,7 +461,7 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
               </span>
             )}
             <span className="stat">{stats.words} palavras faladas</span>
-            <span className="stat">{format?.wpm} ppm</span>
+            <span className="stat">{wpm} ppm</span>
             <span className="stat t-chapter">{stats.chapters} capítulos</span>
             <span className="stat t-prompt">{stats.prompts} prompts</span>
             <span className="stat t-transition">{stats.transitions} transições</span>
@@ -414,6 +494,7 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
         </div>
       )}
 
+      {toast && <div className="toast">{toast}</div>}
       {snippet && <SnippetModal draft={snippet} onCancel={() => setSnippet(null)} onSave={(d) => saveSnippet({ ...snippet, ...d })} />}
     </div>
   )

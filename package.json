@@ -1,7 +1,7 @@
 {
   "name": "typos",
   "productName": "Typos",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Editor de roteiros para YouTube",
   "main": "out/main/index.js",
@@ -9,9 +9,23 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dist": "electron-vite build && electron-builder --win --publish never",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.7",
     "@tiptap/core": "^3.31.4",
     "@tiptap/extensions": "^3.31.4",
     "@tiptap/pm": "^3.31.4",
@@ -21,18 +35,65 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
-  "devDependencies": {
-    "@types/node": "^26.6.4",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^5.2.0",
-    "electron": "^44.7.0",
-    "electron-vite": "^5.0.0",
-    "typescript": "^7.0.2",
-    "vite": "^7.3.7"
-  },
   "allowScripts": {
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true
+  },
+  "author": "ShinkiroG",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ShinkiroG/Typos.git"
+  },
+  "build": {
+    "appId": "com.shinkirog.typos",
+    "productName": "Typos",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Typos",
+      "uninstallDisplayName": "Typos",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "installerLanguages": [
+        "pt_BR"
+      ],
+      "language": "1046"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ShinkiroG",
+        "repo": "Typos"
+      }
+    ]
   }
 }

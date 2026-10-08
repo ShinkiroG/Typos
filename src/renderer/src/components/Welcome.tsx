@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { FilePlus2, FolderOpen, Clapperboard } from 'lucide-react'
+import { FilePlus2, FolderOpen, Clapperboard, Settings } from 'lucide-react'
 import { api, type ProjectData } from '../lib'
 
 type Recent = { dir: string; title: string; openedAt: string }
 
-export function Welcome({ onOpen }: { onOpen: (dir: string, data: ProjectData) => void }) {
+export function Welcome({ onOpen, onOpenSettings }: { onOpen: (dir: string, data: ProjectData) => void; onOpenSettings: () => void }) {
   const [recent, setRecent] = useState<Recent[]>([])
   const [error, setError] = useState('')
 
@@ -20,6 +20,9 @@ export function Welcome({ onOpen }: { onOpen: (dir: string, data: ProjectData) =
 
   return (
     <div className="welcome">
+      <button className="icon-btn welcome-gear" title="Configurações" onClick={onOpenSettings}>
+        <Settings size={18} />
+      </button>
       <div className="welcome-card">
         <div className="welcome-logo">
           <Clapperboard size={34} />

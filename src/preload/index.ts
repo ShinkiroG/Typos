@@ -21,11 +21,35 @@ const api = {
   loadFormats: () => ipcRenderer.invoke('formats:load'),
   saveFormats: (formats: unknown) => ipcRenderer.invoke('formats:save', formats),
 
-  onRequestClose: (cb: () => void) => {
-    ipcRenderer.removeAllListeners('app:request-close')
-    ipcRenderer.on('app:request-close', cb)
+  pickAudio: (dir: string): Promise<{ path: string; name: string }[]> => ipcRenderer.invoke('audio:pick', dir),
+  importAudioPaths: (dir: string, paths: string[]): Promise<{ path: string; name: string }[]> =>
+    ipcRenderer.invoke('audio:importPaths', dir, paths),
+  generateSfx: (dir: string, text: string, seconds: number | null): Promise<{ path: string; name: string } | { error: string }> =>
+    ipcRenderer.invoke('sfx:generate', dir, text, seconds),
+
+  getSettings: (): Promise<{ autoUpdate: boolean; hasElevenLabsKey: boolean; version: string; mode: 'installer' | 'portable' | 'dev' }> =>
+    ipcRenderer.invoke('settings:get'),
+  setSettings: (patch: { autoUpdate?: boolean; elevenLabsKey?: string }) => ipcRenderer.invoke('settings:set', patch),
+  checkUpdates: () => ipcRenderer.invoke('update:check'),
+  installUpdateNow: () => ipcRenderer.invoke('update:installNow'),
+  onUpdate: (cb: (event: string, payload: any) => void) => {
+    for (const ch of ['update:ready', 'update:progress', 'update:status']) {
+      ipcRenderer.removeAllListeners(ch)
+      ipcRenderer.on(ch, (_e, payload) => cb(ch, payload))
+    }
   },
-  confirmClose: () => ipcRenderer.invoke('app:close-confirmed')
+
+  /** o main pede pra salvar antes de fechar/atualizar */
+  onFlush: (cb: () => Promise<void>) => {
+    ipcRenderer.removeAllListeners('app:flush')
+    ipcRenderer.on('app:flush', async () => {
+      try {
+        await cb()
+      } finally {
+        ipcRenderer.send('app:flushed')
+      }
+    })
+  }
 }
 
 export type Api = typeof api

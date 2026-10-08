@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NodeViewWrapper, NodeViewContent, type NodeViewProps } from '@tiptap/react'
 import { Paperclip, Copy, Check, Music, ArrowLeftRight, Trash2, ClipboardPaste, FolderOpen, Maximize2 } from 'lucide-react'
-import { api, attachmentUrl, getProjectDir, openPreview, pasteClipboardImage, TRANSITIONS, type Attachment } from '../lib'
+import { api, attachmentUrl, fileUrl, getProjectDir, openPreview, pasteClipboardImage, ATTACHMENT_STATUS, TRANSITIONS, type Attachment, type AttachmentStatus } from '../lib'
 
 function useOutsideClose(ref: React.RefObject<HTMLElement | null>, open: boolean, close: () => void) {
   useEffect(() => {
@@ -26,7 +26,26 @@ const Placeholder = ({ show, text }: { show: boolean; text: string }) =>
     </span>
   ) : null
 
-function AttachmentManager({ atts, onAdd, onRemove }: { atts: Attachment[]; onAdd: (a: Attachment[]) => void; onRemove: (id: string) => void }) {
+/** Recorte feito pelo Claude em assets/recortes/<mesmo nome>.png (só aparece se existir). */
+function CutPreview({ a }: { a: Attachment }) {
+  const [ok, setOk] = useState(true)
+  if (a.external || !ok) return null
+  const base = a.path.split('/').pop()!.replace(/\.[^.]+$/, '')
+  const src = fileUrl(`${getProjectDir()}/assets/recortes/${base}.png`)
+  return <img className="cut-preview" src={src} title="Recorte pronto" onError={() => setOk(false)} onClick={() => openPreview(src)} />
+}
+
+function AttachmentManager({
+  atts,
+  onAdd,
+  onRemove,
+  onStatus
+}: {
+  atts: Attachment[]
+  onAdd: (a: Attachment[]) => void
+  onRemove: (id: string) => void
+  onStatus: (id: string, s: AttachmentStatus) => void
+}) {
   const [msg, setMsg] = useState('')
   const dir = getProjectDir()
 
@@ -44,9 +63,23 @@ function AttachmentManager({ atts, onAdd, onRemove }: { atts: Attachment[]; onAd
         {atts.map((a) => (
           <div className="pop-item" key={a.id}>
             <img src={attachmentUrl(a)} onClick={() => openPreview(attachmentUrl(a))} />
-            <span className="pop-name" title={a.path}>
-              {a.name}
-            </span>
+            <div className="pop-info">
+              <span className="pop-name" title={a.path}>
+                {a.name}
+              </span>
+              <select
+                className={'status-select st-' + (a.status ?? 'ref')}
+                value={a.status ?? 'ref'}
+                onChange={(e) => onStatus(a.id, e.target.value as AttachmentStatus)}
+              >
+                {ATTACHMENT_STATUS.map((s) => (
+                  <option key={s.id} value={s.id} title={s.hint}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <CutPreview a={a} />
             <button className="icon-btn" title="Ver grande" onClick={() => openPreview(attachmentUrl(a))}>
               <Maximize2 size={14} />
             </button>
@@ -78,6 +111,8 @@ export function PromptView({ node, updateAttributes }: NodeViewProps) {
 
   const add = (list: Attachment[]) => list.length && updateAttributes({ attachments: [...(node.attrs.attachments ?? []), ...list] })
   const remove = (id: string) => updateAttributes({ attachments: atts.filter((a) => a.id !== id) })
+  const setStatus = (id: string, status: AttachmentStatus) =>
+    updateAttributes({ attachments: atts.map((a) => (a.id === id ? { ...a, status } : a)) })
 
   return (
     <NodeViewWrapper className="blk blk-prompt" data-type="prompt">
@@ -98,13 +133,16 @@ export function PromptView({ node, updateAttributes }: NodeViewProps) {
               <Paperclip size={15} />
               {atts.length > 0 && <span className="badge">{atts.length}</span>}
             </button>
-            {open && <AttachmentManager atts={atts} onAdd={add} onRemove={remove} />}
+            {open && <AttachmentManager atts={atts} onAdd={add} onRemove={remove} onStatus={setStatus} />}
           </div>
         </div>
         {atts.length > 0 && (
           <div className="thumbs" contentEditable={false}>
             {atts.map((a) => (
-              <img key={a.id} src={attachmentUrl(a)} title={a.name} onClick={() => openPreview(attachmentUrl(a))} />
+              <div key={a.id} className={'thumb st-' + (a.status ?? 'ref')}>
+                <img src={attachmentUrl(a)} title={a.name} onClick={() => openPreview(attachmentUrl(a))} />
+                {a.status && a.status !== 'ref' && <span className="thumb-status">{ATTACHMENT_STATUS.find((s) => s.id === a.status)?.label}</span>}
+              </div>
             ))}
           </div>
         )}

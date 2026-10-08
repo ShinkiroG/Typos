@@ -16,6 +16,39 @@ export interface Attachment {
   path: string
   name: string
   external?: boolean
+  /** fluxo de aprovação: referência solta → aprovada → pedir recorte / pedir pra regerar */
+  status?: AttachmentStatus
+}
+
+export type AttachmentStatus = 'ref' | 'aprovado' | 'recortar' | 'regerar'
+
+export const ATTACHMENT_STATUS: { id: AttachmentStatus; label: string; hint: string }[] = [
+  { id: 'ref', label: 'Referência', hint: 'só referência visual' },
+  { id: 'aprovado', label: 'Aprovada', hint: 'usar como está' },
+  { id: 'recortar', label: 'Recortar', hint: 'o Claude recorta os elementos' },
+  { id: 'regerar', label: 'Regerar', hint: 'refazer no ChatGPT' }
+]
+
+/** Clipe de áudio na timeline. Keyframes de volume ficam no tempo da FONTE, então cortar/aparar não mexe no envelope. */
+export interface Clip {
+  id: string
+  path: string
+  name: string
+  kind: 'music' | 'sfx'
+  lane: number
+  /** início na timeline (s) */
+  start: number
+  /** a partir de onde o arquivo toca (s) */
+  offset: number
+  duration: number
+  sourceDuration: number
+  /** volume geral do clipe (1 = 100%) */
+  gain: number
+  keys: { t: number; v: number }[]
+}
+
+export interface TimelineData {
+  clips: Clip[]
 }
 
 export interface Format {
@@ -38,6 +71,9 @@ export interface ProjectData {
   title: string
   formatId: string
   doc: JSONContent
+  /** palavras/min deste roteiro; vazio = usa o do formato */
+  wpm?: number | null
+  timeline?: TimelineData
   createdAt: string
   updatedAt: string
 }
@@ -152,40 +188,155 @@ export function formatTime(totalSeconds: number) {
 const jsonText = (n: JSONContent): string =>
   (n.content ?? []).map((c) => (c.type === 'text' ? c.text ?? '' : c.type === 'hardBreak' ? '\n' : jsonText(c))).join('')
 
-export function toMarkdown(data: ProjectData, format: Format | undefined, stats: Stats): string {
+const STATUS_TAG: Record<string, string> = { aprovado: ' [APROVADA]', recortar: ' [RECORTAR]', regerar: ' [REGERAR]' }
+
+export function toMarkdown(data: ProjectData, format: Format | undefined, stats: Stats, timing: Timing, wpm: number): string {
   const out: string[] = []
   out.push(`# ${data.title}`, '')
   if (format) out.push(`- Formato: ${format.name} (${format.aspect}, ${RESOLUTIONS[format.aspect] ?? ''})`)
-  out.push(`- Duração estimada: ${formatTime(stats.seconds)} (${stats.words} palavras faladas${format ? ` a ${format.wpm} ppm` : ''})`)
+  out.push(`- Duração estimada: ${formatTime(stats.seconds)} (${stats.words} palavras faladas a ${wpm} ppm)`)
+  out.push(`- Pasta do roteiro: os caminhos abaixo são relativos a esta pasta.`)
   out.push(`- Gerado pelo Typos em ${new Date().toLocaleString('pt-BR')}. Não edite este arquivo; a fonte é o roteiro.json.`, '')
-  out.push('Legenda: linhas sem marcação = fala/narração. [PROMPT] = instrução de motion. [TRANSIÇÃO] e [SOBE SOM] = edição.', '')
+  out.push('Legenda: linhas sem marcação = fala/narração. [PROMPT] = instrução de motion. [TRANSIÇÃO] e [SOBE SOM] = edição. `(m:ss)` = tempo estimado na timeline.')
+  out.push('Imagens: [APROVADA] usar como está · [RECORTAR] recortar os elementos (salvar PNG transparente em assets/recortes/ com o mesmo nome) · [REGERAR] refazer no ChatGPT.', '')
 
   let chapter = 0
-  for (const n of data.doc.content ?? []) {
+  ;(data.doc.content ?? []).forEach((n, i) => {
     const text = jsonText(n).trim()
+    const at = `(${formatTime(timing.blockStarts[i] ?? 0)})`
     switch (n.type) {
       case 'chapter':
         chapter++
-        out.push('', `## ${chapter}. ${text}`, '')
+        out.push('', `## ${chapter}. ${text} ${at}`, '')
         break
       case 'paragraph':
-        if (text) out.push(text, '')
+        if (text) out.push(`${at} ${text}`, '')
         break
       case 'prompt': {
-        out.push(`[PROMPT] ${text}`)
-        for (const a of (n.attrs?.attachments ?? []) as Attachment[]) out.push(`  - anexo: ${a.path}`)
+        out.push(`${at} [PROMPT] ${text}`)
+        for (const a of (n.attrs?.attachments ?? []) as Attachment[]) out.push(`  - anexo: ${a.path}${STATUS_TAG[a.status ?? ''] ?? ''}`)
         out.push('')
         break
       }
       case 'transition':
-        out.push(`[TRANSIÇÃO: ${n.attrs?.kind}] ${text}`, '')
+        out.push(`${at} [TRANSIÇÃO: ${n.attrs?.kind}] ${text}`, '')
         break
       case 'soundUp':
-        out.push(`[SOBE SOM ${n.attrs?.seconds}s] ${text}`, '')
+        out.push(`${at} [SOBE SOM ${n.attrs?.seconds}s] ${text}`, '')
         break
+    }
+  })
+
+  const clips = [...(data.timeline?.clips ?? [])].sort((a, b) => a.start - b.start)
+  if (clips.length) {
+    out.push('', '## Trilha de áudio', '')
+    for (const c of clips) {
+      const keys = c.keys.length
+        ? ' · volume: ' + c.keys.map((k) => `${formatTime(c.start + k.t - c.offset)}→${Math.round(k.v * 100)}%`).join(', ')
+        : ''
+      out.push(
+        `- ${c.kind === 'sfx' ? 'SFX' : 'Música'} "${c.name}" (${c.path}) · entra ${formatTime(c.start)} · dura ${c.duration.toFixed(1)}s · começa em ${c.offset.toFixed(1)}s do arquivo · volume ${Math.round(c.gain * 100)}%${keys}`
+      )
     }
   }
   return out.join('\n').replace(/\n{3,}/g, '\n\n')
 }
+
+// ---------- timing: texto → tempo (por palavras/min) ----------
+export interface WordTime {
+  from: number
+  to: number
+  start: number
+  end: number
+  text: string
+}
+
+export interface Segment {
+  kind: string
+  pos: number
+  start: number
+  end: number
+  label: string
+}
+
+export interface Timing {
+  words: WordTime[]
+  segments: Segment[]
+  /** tempo de início de cada bloco de nível superior, na ordem do documento */
+  blockStarts: number[]
+  total: number
+}
+
+export function buildTiming(doc: PMNode, wpm: number): Timing {
+  const perWord = 60 / Math.max(wpm, 1)
+  const words: WordTime[] = []
+  const segments: Segment[] = []
+  const blockStarts: number[] = []
+  let t = 0
+
+  doc.forEach((node, offset) => {
+    blockStarts.push(t)
+    const name = node.type.name
+    const label = node.textContent.trim()
+    if (name === 'paragraph') {
+      // cada palavra ganha um pedaço proporcional ao tamanho, mas o total respeita o ppm
+      const local: { from: number; to: number; text: string; w: number }[] = []
+      node.descendants((child, pos) => {
+        if (!child.isText) return
+        for (const m of child.text!.matchAll(/\S+/g)) {
+          const from = offset + 1 + pos + m.index!
+          local.push({ from, to: from + m[0].length, text: m[0], w: m[0].length + 3 })
+        }
+      })
+      if (!local.length) return
+      const dur = local.length * perWord
+      const sumW = local.reduce((s, x) => s + x.w, 0)
+      const start = t
+      for (const x of local) {
+        const d = (x.w / sumW) * dur
+        words.push({ from: x.from, to: x.to, start: t, end: t + d, text: x.text })
+        t += d
+      }
+      segments.push({ kind: name, pos: offset, start, end: t, label })
+    } else if (name === 'soundUp') {
+      const d = Number(node.attrs.seconds) || 0
+      segments.push({ kind: name, pos: offset, start: t, end: t + d, label: label || 'sobe som' })
+      t += d
+    } else {
+      segments.push({ kind: name, pos: offset, start: t, end: t, label })
+    }
+  })
+  return { words, segments, blockStarts, total: t }
+}
+
+/** Índice da palavra tocando no tempo t (busca binária); -1 se nenhuma. */
+export function wordAt(words: WordTime[], t: number) {
+  let lo = 0
+  let hi = words.length - 1
+  let found = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (words[mid].start <= t) {
+      found = mid
+      lo = mid + 1
+    } else hi = mid - 1
+  }
+  return found >= 0 && t < words[found].end + 0.05 ? found : -1
+}
+
+// ---------- envelope de volume ----------
+/** Volume (0..1) do envelope no tempo da fonte; sem keyframes = 1. */
+export function envelopeAt(keys: Clip['keys'], srcT: number) {
+  if (!keys.length) return 1
+  if (srcT <= keys[0].t) return keys[0].v
+  for (let i = 1; i < keys.length; i++) {
+    const a = keys[i - 1]
+    const b = keys[i]
+    if (srcT <= b.t) return a.v + ((b.v - a.v) * (srcT - a.t)) / Math.max(b.t - a.t, 1e-6)
+  }
+  return keys[keys.length - 1].v
+}
+
+export const clipEnd = (c: Clip) => c.start + c.duration
 
 export const uid = () => Math.random().toString(36).slice(2, 10)
