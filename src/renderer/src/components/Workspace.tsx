@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useEditor, useEditorState, EditorContent, type Editor } from '@tiptap/react'
+import { undoDepth } from '@tiptap/pm/history'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
@@ -118,6 +119,30 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   libraryRef.current = library
   const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm })
   metaRef.current = { title, formatId, format, clips, customWpm, wpm }
+
+  // ---------- desfazer/refazer da tela inteira (texto + timeline) ----------
+  // O texto usa o histórico do editor; os clipes de áudio guardam cópias. A pilha "ordem"
+  // diz de quem foi a última ação, pra Ctrl+Z desfazer na ordem certa.
+  const undoOrder = useRef<('doc' | 'clips')[]>([])
+  const redoOrder = useRef<('doc' | 'clips')[]>([])
+  const clipPast = useRef<Clip[][]>([])
+  const clipFuture = useRef<Clip[][]>([])
+  const lastClipEdit = useRef(0)
+  const applyingHistory = useRef(false)
+
+  /** muda os clipes guardando o estado anterior (um arraste inteiro vira um passo só) */
+  const changeClips = useCallback((next: Clip[]) => {
+    const now = Date.now()
+    const sameGesture = undoOrder.current[undoOrder.current.length - 1] === 'clips' && now - lastClipEdit.current < 700
+    if (!sameGesture) {
+      clipPast.current.push(metaRef.current.clips)
+      undoOrder.current.push('clips')
+    }
+    lastClipEdit.current = now
+    clipFuture.current = []
+    redoOrder.current = []
+    setClips(next)
+  }, [])
   const timer = useRef<number | undefined>(undefined)
   const saveRef = useRef<() => Promise<void>>(async () => {})
 
@@ -245,6 +270,68 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const stats = useMemo(() => (doc ? computeStats(doc, wpm) : null), [doc, wpm])
   const timing = useMemo(() => (doc ? buildTiming(doc, wpm) : null), [doc, wpm])
   const overLimit = !!(stats && format?.maxSeconds && stats.seconds > format.maxSeconds)
+
+  // cada passo novo no histórico do texto entra na ordem de desfazer
+  useEffect(() => {
+    if (!editor) return
+    let depth = undoDepth(editor.state)
+    const onTr = () => {
+      const d = undoDepth(editor.state)
+      if (d > depth && !applyingHistory.current) {
+        undoOrder.current.push('doc')
+        redoOrder.current = []
+      }
+      depth = d
+    }
+    editor.on('transaction', onTr)
+    return () => {
+      editor.off('transaction', onTr)
+    }
+  }, [editor])
+
+  const historyStep = useCallback(
+    (dir: 'undo' | 'redo') => {
+      if (!editor) return
+      const from = dir === 'undo' ? undoOrder : redoOrder
+      const to = dir === 'undo' ? redoOrder : undoOrder
+      const kind = from.current.pop() ?? (dir === 'undo' && undoDepth(editor.state) > 0 ? 'doc' : null)
+      if (!kind) return
+      applyingHistory.current = true
+      try {
+        if (kind === 'doc') {
+          if (dir === 'undo') editor.commands.undo()
+          else editor.commands.redo()
+        } else {
+          const src = dir === 'undo' ? clipPast : clipFuture
+          const dst = dir === 'undo' ? clipFuture : clipPast
+          const snap = src.current.pop()
+          if (snap) {
+            dst.current.push(metaRef.current.clips)
+            setClips(snap)
+          }
+        }
+      } finally {
+        applyingHistory.current = false
+      }
+      to.current.push(kind)
+    },
+    [editor]
+  )
+
+  // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y valem na tela toda (não só com o cursor no texto)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      const k = e.key.toLowerCase()
+      if (k !== 'z' && k !== 'y') return
+      if ((e.target as HTMLElement)?.matches?.('input, textarea, select')) return // campos comuns usam o desfazer deles
+      e.preventDefault()
+      e.stopPropagation()
+      historyStep(k === 'y' || e.shiftKey ? 'redo' : 'undo')
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [historyStep])
 
   useEffect(() => {
     if (timing) setTimestamps(editor, showTimes, timing.blockStarts)
@@ -551,7 +638,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             dir={dir}
             timing={timing}
             clips={clips}
-            onClipsChange={setClips}
+            onClipsChange={changeClips}
             wpm={wpm}
             formatWpm={format?.wpm ?? 150}
             customWpm={customWpm !== null}

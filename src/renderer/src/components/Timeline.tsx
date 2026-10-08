@@ -72,6 +72,9 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
   const [height, setHeight] = useState(() => Number(localStorage.getItem('typos.tlHeight')) || 300)
   const [playing, setPlaying] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
+  /** bloco de texto selecionado na timeline (fala/pausa/sobe som), guardado pela posição e tipo */
+  const [selSeg, setSelSeg] = useState<{ pos: number; kind: string } | null>(null)
+  const [tlMenu, setTlMenu] = useState<{ x: number; y: number; seg?: { pos: number; kind: string }; clipId?: string } | null>(null)
   const [loadedTick, setLoadedTick] = useState(0)
   const [wordIdx, setWordIdx] = useState(-1)
   const [sfxOpen, setSfxOpen] = useState(false)
@@ -311,6 +314,15 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
     }
   }
 
+  /** Apaga da timeline (e do texto) a fala/pausa selecionada. */
+  const deleteSeg = (seg: { pos: number; kind: string }) => {
+    if (!editor) return
+    const node = editor.state.doc.nodeAt(seg.pos)
+    if (!node || node.type.name !== seg.kind) return
+    editor.view.dispatch(editor.state.tr.delete(seg.pos, seg.pos + node.nodeSize))
+    setSelSeg(null)
+  }
+
   /** Troca a anotação (texto) de uma pausa. */
   const setPauseText = (pos: number, text: string) => {
     if (!editor) return
@@ -511,6 +523,18 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
     }
   })
 
+  useEffect(() => {
+    if (!tlMenu) return
+    const close = () => setTlMenu(null)
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close()
+    window.addEventListener('mousedown', close)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [tlMenu])
+
   // ---------- atalhos ----------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -524,7 +548,10 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
           e.preventDefault()
           togglePlay()
         } else if (e.key.toLowerCase() === 's' && !e.ctrlKey) split()
-        else if (e.key === 'Delete' || e.key === 'Backspace') remove()
+        else if (e.key === 'Delete' || e.key === 'Backspace') {
+          if (selSeg) deleteSeg(selSeg)
+          else remove()
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -660,6 +687,7 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
                     'tl-seg t-' +
                     s.kind +
                     (speechDrag?.pos === s.pos ? ' dragging' : '') +
+                    (selSeg?.pos === s.pos && selSeg.kind === s.kind ? ' selected' : '') +
                     (s.kind === 'paragraph' && editor?.state.doc.nodeAt(s.pos)?.attrs.seconds ? ' custom' : '')
                   }
                   style={{
@@ -673,9 +701,18 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
                       ? `${s.label}\n\nClique: vai pro texto · Duplo clique: escrever anotação · Borda: duração`
                       : `${s.label}\n\nArraste: mover (o vão vira pausa) ou reordenar · Borda: ritmo da fala (duplo clique volta ao automático)`
                   }
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setSelSeg({ pos: s.pos, kind: s.kind })
+                    setSelected(null)
+                    setTlMenu({ x: e.clientX, y: e.clientY, seg: { pos: s.pos, kind: s.kind } })
+                  }}
                   onPointerDown={(e) => {
                     if (e.button !== 0) return
                     e.stopPropagation()
+                    setSelSeg({ pos: s.pos, kind: s.kind })
+                    setSelected(null)
                     if (TIMED_PAUSES.includes(s.kind)) {
                       drag.current = { mode: 'pauseMove', pos: s.pos, x0: e.clientX, seg: s, moved: false }
                       return
@@ -757,7 +794,10 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
           )}
 
           {Array.from({ length: lanes }, (_, i) => (
-            <div key={i} className="tl-lane" style={{ top: RULER_H + TEXT_H + PAUSE_H + i * LANE_H, height: LANE_H }} onPointerDown={() => setSelected(null)} />
+            <div key={i} className="tl-lane" style={{ top: RULER_H + TEXT_H + PAUSE_H + i * LANE_H, height: LANE_H }} onPointerDown={() => {
+                setSelected(null)
+                setSelSeg(null)
+              }} />
           ))}
 
           {clips.map((c) => (
@@ -770,8 +810,16 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
               selected={c.id === selected}
               peaks={engine.get(c.path)?.peaks}
               loadedTick={loadedTick}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setSelected(c.id)
+                setSelSeg(null)
+                setTlMenu({ x: e.clientX, y: e.clientY, clipId: c.id })
+              }}
               onPointerDown={(e, mode) => {
                 e.stopPropagation()
+                setSelSeg(null)
                 setSelected(c.id)
                 drag.current = { mode, id: c.id, x0: e.clientX, y0: e.clientY, clip0: c }
               }}
@@ -788,6 +836,42 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
           <div className="tl-playhead" ref={playheadRef} />
         </div>
       </div>
+
+      {tlMenu && (
+        <div className="ctx-menu" style={{ left: tlMenu.x, top: tlMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+          {tlMenu.seg && TIMED_PAUSES.includes(tlMenu.seg.kind) && (
+            <button
+              onClick={() => {
+                setEditingPause(tlMenu.seg!.pos)
+                setTlMenu(null)
+              }}
+            >
+              Escrever anotação
+            </button>
+          )}
+          {tlMenu.seg && tlMenu.seg.kind === 'paragraph' && editor?.state.doc.nodeAt(tlMenu.seg.pos)?.attrs.seconds ? (
+            <button
+              onClick={() => {
+                setSpeechSeconds(tlMenu.seg!.pos, null)
+                setTlMenu(null)
+              }}
+            >
+              Ritmo automático
+            </button>
+          ) : null}
+          <button
+            className="danger"
+            onClick={() => {
+              if (tlMenu.seg) deleteSeg(tlMenu.seg)
+              else if (tlMenu.clipId) remove(tlMenu.clipId)
+              setTlMenu(null)
+            }}
+          >
+            Excluir
+            <span className="ctx-key">Delete</span>
+          </button>
+        </div>
+      )}
 
       {sfxOpen && (
         <SfxModal
@@ -816,9 +900,10 @@ interface ClipViewProps {
   onKeyDown: (e: React.PointerEvent, index: number, rect: DOMRect) => void
   onAddKey: (t: number, v: number) => void
   onRemoveKey: (index: number) => void
+  onContextMenu: (e: React.MouseEvent) => void
 }
 
-function ClipView({ clip: c, pps, top, height, selected, peaks, loadedTick, onPointerDown, onKeyDown, onAddKey, onRemoveKey }: ClipViewProps) {
+function ClipView({ clip: c, pps, top, height, selected, peaks, loadedTick, onPointerDown, onKeyDown, onAddKey, onRemoveKey, onContextMenu }: ClipViewProps) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const w = Math.max(4, c.duration * pps)
@@ -860,6 +945,7 @@ function ClipView({ clip: c, pps, top, height, selected, peaks, loadedTick, onPo
       className={'tl-clip k-' + c.kind + (selected ? ' selected' : '')}
       style={{ left: c.start * pps, top, width: w, height }}
       onPointerDown={(e) => e.button === 0 && onPointerDown(e, 'move')}
+      onContextMenu={onContextMenu}
     >
       <div className="tl-clip-name">
         {c.name} <span className="muted">· {Math.round(c.gain * 100)}%</span>

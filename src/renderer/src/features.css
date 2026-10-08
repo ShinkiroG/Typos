@@ -556,3 +556,11 @@
   padding: 2px 4px;
   outline: none;
 }
+
+/* seleção na timeline: brilho em volta do objeto */
+.tl-seg.selected,
+.tl-clip.selected {
+  z-index: 4;
+  border-color: #fff;
+  box-shadow: 0 0 0 2px #fff, 0 0 14px 3px color-mix(in srgb, var(--accent) 75%, transparent);
+}
