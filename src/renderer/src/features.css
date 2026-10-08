@@ -525,3 +525,8 @@
 .page-title::placeholder {
   color: #3d4452;
 }
+
+/* fala na timeline: clique vai pra lá, arrastar cria pausa */
+.tl-seg.t-paragraph {
+  cursor: crosshair;
+}

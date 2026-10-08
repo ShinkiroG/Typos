@@ -31,7 +31,7 @@ type Drag =
   | { mode: 'scrub'; rect: DOMRect }
   | { mode: 'pauseResize'; pos: number; x0: number; dur0: number }
   | { mode: 'pauseMove'; pos: number; x0: number; seg: Segment; moved: boolean }
-  | { mode: 'pauseCreate'; rect: DOMRect; t0: number }
+  | { mode: 'pauseCreate'; rect: DOMRect; t0: number; fromText?: boolean }
 
 const fmtPrecise = (t: number) => `${formatTime(Math.floor(t))}.${Math.floor((t % 1) * 10)}`
 
@@ -356,7 +356,8 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
       }
       if (d.mode === 'pauseCreate') {
         const t = Math.max(0, (e.clientX - d.rect.left) / p)
-        setGhost({ start: Math.min(d.t0, t), end: Math.max(d.t0, t) })
+        // em cima da fala só vira pausa depois de arrastar um pouco (senão é clique)
+        if (!d.fromText || Math.abs(t - d.t0) * p > 4) setGhost({ start: Math.min(d.t0, t), end: Math.max(d.t0, t) })
         return
       }
       if (d.mode === 'key') {
@@ -408,7 +409,12 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
         const t = Math.max(0, (e.clientX - d.rect.left) / p)
         const start = Math.min(d.t0, t)
         const len = Math.abs(t - d.t0)
-        createSonora(start, len < 0.3 ? 5 : len) // clique sem arrastar = 5s
+        if (d.fromText && len * p <= 4) {
+          // clique na fala: leva o playhead e o cursor do texto pra essa palavra
+          seek(d.t0)
+          const w = timingRef.current.words[wordAt(timingRef.current.words, d.t0)]
+          if (w) editor?.chain().setTextSelection(w.from).scrollIntoView().run()
+        } else createSonora(start, len < 0.3 ? 5 : len) // clique sem arrastar na faixa = 5s
       }
     }
     window.addEventListener('pointermove', onMove)
@@ -566,16 +572,19 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
                   key={s.pos}
                   className={'tl-seg t-' + s.kind}
                   style={{ left: s.start * pps, width: Math.max(2, (s.end - s.start) * pps) }}
-                  title={s.label}
-                  onClick={() => {
-                    if (TIMED_PAUSES.includes(s.kind)) return // tratado no pointerdown (mover/clicar)
-                    seek(s.start)
-                    editor?.chain().setTextSelection(s.pos + 1).scrollIntoView().run()
-                  }}
+                  title={TIMED_PAUSES.includes(s.kind) ? s.label : `${s.label}
+
+Clique: ir pra cá · Arraste: corta a fala e cria uma pausa`}
                   onPointerDown={(e) => {
-                    if (!TIMED_PAUSES.includes(s.kind) || e.button !== 0) return
+                    if (e.button !== 0) return
                     e.stopPropagation()
-                    drag.current = { mode: 'pauseMove', pos: s.pos, x0: e.clientX, seg: s, moved: false }
+                    if (TIMED_PAUSES.includes(s.kind)) {
+                      drag.current = { mode: 'pauseMove', pos: s.pos, x0: e.clientX, seg: s, moved: false }
+                      return
+                    }
+                    // arrastar em cima da fala separa o bloco ali e cria a pausa
+                    const rect = e.currentTarget.parentElement!.getBoundingClientRect()
+                    drag.current = { mode: 'pauseCreate', rect, t0: Math.max(0, (e.clientX - rect.left) / pps), fromText: true }
                   }}
                 >
                   {s.label}
@@ -601,7 +610,7 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
           <div
             className="tl-pauselane"
             style={{ top: RULER_H + TEXT_H, height: PAUSE_H }}
-            title="Arraste aqui pra criar uma sonora: o trecho em que a narração para e aparece outra coisa"
+            title="Arraste aqui para criar uma PAUSA"
             onPointerDown={(e) => {
               if (e.button !== 0) return
               const rect = e.currentTarget.getBoundingClientRect()
@@ -610,7 +619,7 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
               setGhost({ start: t0, end: t0 })
             }}
           >
-            <span className="tl-pauselane-hint">arraste aqui pra criar uma sonora (pausa na narração)</span>
+            <span className="tl-pauselane-hint">Arraste aqui para criar uma PAUSA.</span>
           </div>
           {ghost && (
             <div className="tl-ghost" style={{ left: ghost.start * pps, width: Math.max(4, (ghost.end - ghost.start) * pps), top: RULER_H + 4, height: TEXT_H + PAUSE_H - 8 }}>
