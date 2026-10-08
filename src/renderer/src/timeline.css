@@ -555,3 +555,22 @@
   opacity: 0.45;
   cursor: default;
 }
+
+/* ---------- topo todo alinhado à esquerda, grupos separados por divisória ---------- */
+.topbar > .tb-blocks,
+.topbar > .tb-right {
+  margin-left: 6px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+.topbar > .tb-blocks {
+  border-left: 0;
+  padding-left: 0;
+  margin-left: 4px;
+}
+.topbar {
+  overflow-x: auto;
+}
+.topbar .title-input {
+  width: 220px;
+}

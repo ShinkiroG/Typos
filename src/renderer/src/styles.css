@@ -197,7 +197,7 @@ select {
   grid-area: top;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   padding: 0 12px;
   background: var(--bg-2);
