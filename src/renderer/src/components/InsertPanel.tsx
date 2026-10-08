@@ -8,7 +8,7 @@ const ITEMS: { type: BlockType; icon: React.ReactNode; hint: string }[] = [
   { type: 'prompt', icon: <Brackets size={16} />, hint: 'instrução de motion / imagem' },
   { type: 'transition', icon: <ArrowLeftRight size={16} />, hint: 'troca de cena' },
   { type: 'soundUp', icon: <Music size={16} />, hint: 'a trilha sobe, narração pausa' },
-  { type: 'sonora', icon: <Tv size={16} />, hint: 'trecho com som original, sem narração' }
+  { type: 'sonora', icon: <Tv size={16} />, hint: 'a narração para: respiro ou trecho mostrado' }
 ]
 
 /** Linha atual vazia vira o bloco; senão cria um bloco novo logo abaixo. */
@@ -72,7 +72,7 @@ export function InsertPanel({ editor }: { editor: Editor | null }) {
           <kbd>Ctrl+P</kbd> toca a timeline
         </li>
         <li>Botão direito: corretor, salvar na biblioteca, trocar tipo</li>
-        <li>Arraste na faixa de sonoras da timeline pra criar uma pausa</li>
+        <li>Na timeline: arraste a fala pra direita e o vão vira pausa; estique a borda pra mudar o ritmo</li>
       </ul>
     </aside>
   )

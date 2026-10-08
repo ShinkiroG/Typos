@@ -131,7 +131,7 @@ export const BLOCKS: { type: BlockType; label: string; key: string }[] = [
   { type: 'transition', label: 'Transição', key: 'Ctrl+3' },
   { type: 'soundUp', label: 'Sobe som', key: 'Ctrl+4' },
   { type: 'chapter', label: 'Capítulo', key: 'Ctrl+5' },
-  { type: 'sonora', label: 'Sonora', key: 'Ctrl+6' }
+  { type: 'sonora', label: 'Pausa', key: 'Ctrl+6' }
 ]
 
 /** blocos que não são fala mas ocupam tempo no vídeo */
@@ -203,11 +203,16 @@ export const countWords = (text: string) => text.trim().split(/\s+/).filter(Bool
 export function computeStats(doc: PMNode, wpm: number): Stats {
   const s: Stats = { words: 0, seconds: 0, chapters: 0, prompts: 0, transitions: 0, soundUps: 0, sonoras: 0 }
   let pause = 0
+  let speech = 0
   doc.forEach((n) => {
     switch (n.type.name) {
-      case 'paragraph':
-        s.words += countWords(n.textContent)
+      case 'paragraph': {
+        const words = countWords(n.textContent)
+        s.words += words
+        // fala com ritmo próprio (esticada/encolhida na timeline) usa a duração dela
+        speech += Number(n.attrs.seconds) || (words / Math.max(wpm, 1)) * 60
         break
+      }
       case 'chapter':
         s.chapters++
         break
@@ -227,7 +232,7 @@ export function computeStats(doc: PMNode, wpm: number): Stats {
         break
     }
   })
-  s.seconds = (s.words / Math.max(wpm, 1)) * 60 + pause
+  s.seconds = speech + pause
   return s
 }
 
@@ -251,7 +256,7 @@ export function toMarkdown(data: ProjectData, format: Format | undefined, stats:
   out.push(`- Duração estimada: ${formatTime(stats.seconds)} (${stats.words} palavras faladas a ${wpm} ppm)`)
   out.push(`- Pasta do roteiro: os caminhos abaixo são relativos a esta pasta.`)
   out.push(`- Gerado pelo Typos em ${new Date().toLocaleString('pt-BR')}. Não edite este arquivo; a fonte é o roteiro.json.`, '')
-  out.push('Legenda: linhas sem marcação = fala/narração. [PROMPT] = instrução de motion. [TRANSIÇÃO] e [SOBE SOM] = edição. [SONORA] = trecho mostrado com som original, sem narração. `(m:ss)` = tempo estimado na timeline.')
+  out.push('Legenda: linhas sem marcação = fala/narração. [PROMPT] = instrução de motion. [TRANSIÇÃO] e [SOBE SOM] = edição. [PAUSA] = a narração para (respiro ou trecho mostrado com som original). `(m:ss)` = tempo estimado na timeline.')
   out.push('Imagens: [APROVADA] usar como está · [RECORTAR] recortar os elementos (salvar PNG transparente em assets/recortes/ com o mesmo nome) · [REGERAR] refazer no ChatGPT.', '')
 
   let chapter = 0
@@ -264,7 +269,7 @@ export function toMarkdown(data: ProjectData, format: Format | undefined, stats:
         out.push('', `## ${chapter}. ${text} ${at}`, '')
         break
       case 'paragraph':
-        if (text) out.push(`${at} ${text}`, '')
+        if (text) out.push(`${at} ${text}${n.attrs?.seconds ? ` (ritmo: ${n.attrs.seconds}s)` : ''}`, '')
         break
       case 'prompt': {
         out.push(`${at} [PROMPT] ${text}`)
@@ -279,7 +284,7 @@ export function toMarkdown(data: ProjectData, format: Format | undefined, stats:
         out.push(`${at} [SOBE SOM ${n.attrs?.seconds}s] ${text}`, '')
         break
       case 'sonora': {
-        out.push(`${at} [SONORA ${n.attrs?.seconds}s, sem narração] ${text}`)
+        out.push(`${at} [PAUSA ${n.attrs?.seconds}s, sem narração] ${text}`)
         for (const a of (n.attrs?.attachments ?? []) as Attachment[]) out.push(`  - anexo: ${a.path}${STATUS_TAG[a.status ?? ''] ?? ''}`)
         out.push('')
         break
@@ -349,7 +354,7 @@ export function buildTiming(doc: PMNode, wpm: number): Timing {
         }
       })
       if (!local.length) return
-      const dur = local.length * perWord
+      const dur = Number(node.attrs.seconds) || local.length * perWord
       const sumW = local.reduce((s, x) => s + x.w, 0)
       const start = t
       for (const x of local) {
@@ -360,7 +365,7 @@ export function buildTiming(doc: PMNode, wpm: number): Timing {
       segments.push({ kind: name, pos: offset, start, end: t, label })
     } else if (name === 'soundUp' || name === 'sonora') {
       const d = Number(node.attrs.seconds) || 0
-      segments.push({ kind: name, pos: offset, start: t, end: t + d, label: label || (name === 'sonora' ? 'sonora' : 'sobe som') })
+      segments.push({ kind: name, pos: offset, start: t, end: t + d, label: label || (name === 'sonora' ? 'pausa' : 'sobe som') })
       t += d
     } else {
       segments.push({ kind: name, pos: offset, start: t, end: t, label })

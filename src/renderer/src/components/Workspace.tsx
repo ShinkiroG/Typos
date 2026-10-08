@@ -5,7 +5,7 @@ import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
 import type { JSONContent } from '@tiptap/core'
 import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose } from 'lucide-react'
-import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, convertBracketLines } from '../editor/nodes'
+import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming, convertBracketLines } from '../editor/nodes'
 import { Timestamps, setTimestamps } from '../editor/timestamps'
 import { FilterBar } from './FilterBar'
 import { InsertPanel } from './InsertPanel'
@@ -172,6 +172,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       SoundUp,
       Chapter,
       Sonora,
+      SpeechTiming,
       ScriptKeys,
       Timestamps,
       PlaybackHighlight,
@@ -577,7 +578,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             <span className="stat t-prompt">{stats.prompts} prompts</span>
             <span className="stat t-transition">{stats.transitions} transições</span>
             <span className="stat t-soundUp">{stats.soundUps} sobe som</span>
-            <span className="stat t-sonora">{stats.sonoras} sonoras</span>
+            <span className="stat t-sonora">{stats.sonoras} pausas</span>
           </>
         )}
       </footer>

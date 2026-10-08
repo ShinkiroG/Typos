@@ -530,3 +530,29 @@
 .tl-seg.t-paragraph {
   cursor: crosshair;
 }
+
+/* fala na timeline: arrastar move/reordena, borda muda o ritmo */
+.tl-seg.t-paragraph {
+  cursor: grab;
+  padding-right: 10px;
+}
+.tl-seg.dragging {
+  z-index: 6;
+  cursor: grabbing;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  outline: 1px solid var(--accent);
+}
+.tl-seg.custom {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, #232837);
+}
+.tl-seg-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--c-sonora);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 11px;
+  padding: 2px 4px;
+  outline: none;
+}

@@ -169,6 +169,25 @@ export const Chapter = Node.create({
   }
 })
 
+/** Duração própria de uma fala (ritmo variado), definida esticando o bloco na timeline. */
+export const SpeechTiming = Extension.create({
+  name: 'speechTiming',
+  addGlobalAttributes() {
+    return [
+      {
+        types: ['paragraph'],
+        attributes: {
+          seconds: {
+            default: null,
+            parseHTML: (el) => Number(el.getAttribute('data-seconds')) || null,
+            renderHTML: (a) => (a.seconds ? { 'data-seconds': a.seconds } : {})
+          }
+        }
+      }
+    ]
+  }
+})
+
 export const ScriptKeys = Extension.create({
   name: 'scriptKeys',
   addKeyboardShortcuts() {

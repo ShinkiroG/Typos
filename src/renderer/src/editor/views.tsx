@@ -234,7 +234,7 @@ export function SonoraView({ node, updateAttributes }: NodeViewProps) {
     <NodeViewWrapper className="blk blk-sonora" data-type="sonora">
       <div className="blk-chip" contentEditable={false}>
         <Tv size={14} />
-        <span>SONORA</span>
+        <span>PAUSA</span>
         <input
           type="number"
           min={0}
@@ -247,7 +247,7 @@ export function SonoraView({ node, updateAttributes }: NodeViewProps) {
       </div>
       <div className="blk-main">
         <NodeViewContent className="blk-text" />
-        <Placeholder show={node.content.size === 0} text="o que aparece aqui (trecho de jornal, gameplay, série…)" />
+        <Placeholder show={node.content.size === 0} text="anotação: o que aparece aqui (jornal, gameplay, série…) ou só respiro" />
       </div>
       {button}
       {thumbs}

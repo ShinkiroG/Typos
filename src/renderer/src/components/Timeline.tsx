@@ -31,7 +31,9 @@ type Drag =
   | { mode: 'scrub'; rect: DOMRect }
   | { mode: 'pauseResize'; pos: number; x0: number; dur0: number }
   | { mode: 'pauseMove'; pos: number; x0: number; seg: Segment; moved: boolean }
-  | { mode: 'pauseCreate'; rect: DOMRect; t0: number; fromText?: boolean }
+  | { mode: 'pauseCreate'; rect: DOMRect; t0: number }
+  | { mode: 'speechMove'; seg: Segment; x0: number; moved: boolean }
+  | { mode: 'speechResize'; pos: number; x0: number; dur0: number }
 
 const fmtPrecise = (t: number) => `${formatTime(Math.floor(t))}.${Math.floor((t % 1) * 10)}`
 
@@ -75,6 +77,10 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
   const [sfxOpen, setSfxOpen] = useState(false)
   const [error, setError] = useState('')
   const [ghost, setGhost] = useState<{ start: number; end: number } | null>(null)
+  /** fala sendo arrastada: desloca o bloco na tela até soltar */
+  const [speechDrag, setSpeechDrag] = useState<{ pos: number; dx: number } | null>(null)
+  /** pausa com a anotação sendo editada direto na timeline */
+  const [editingPause, setEditingPause] = useState<number | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
@@ -254,6 +260,70 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
     if (pos !== null) editor.chain().focus().setTextSelection(pos + 1).scrollIntoView().run()
   }
 
+  /** Ritmo próprio da fala (null volta pro automático pelo ppm). */
+  const setSpeechSeconds = (pos: number, seconds: number | null) => {
+    if (!editor) return
+    const node = editor.state.doc.nodeAt(pos)
+    if (!node || node.type.name !== 'paragraph') return
+    const v = seconds === null ? null : Math.round(seconds * 10) / 10
+    editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, seconds: v }))
+  }
+
+  /**
+   * Solta uma fala arrastada dx segundos:
+   * - se o centro dela passou do centro de outra fala, reordena no texto;
+   * - senão, o vão antes dela vira (ou ajusta) uma pausa.
+   */
+  const dropSpeech = (seg: Segment, dx: number) => {
+    if (!editor) return
+    const { doc } = editor.state
+    const speech = timingRef.current.segments.filter((x) => x.kind === 'paragraph' && x.end > x.start)
+    const i = speech.findIndex((x) => x.pos === seg.pos)
+    const node = doc.nodeAt(seg.pos)
+    if (i < 0 || !node) return
+    const mid = (x: Segment) => (x.start + x.end) / 2
+    const center = mid(seg) + dx
+    let j = i
+    while (j + 1 < speech.length && center > mid(speech[j + 1])) j++
+    while (j - 1 >= 0 && center < mid(speech[j - 1])) j--
+
+    if (j !== i) {
+      const target = speech[j]
+      const targetNode = doc.nodeAt(target.pos)!
+      const at = j > i ? target.pos + targetNode.nodeSize : target.pos
+      const tr = editor.state.tr.delete(seg.pos, seg.pos + node.nodeSize)
+      tr.insert(tr.mapping.map(at), node)
+      editor.view.dispatch(tr)
+      return
+    }
+
+    const before = pauseBefore(doc, seg.pos)
+    if (before) {
+      const secs = (Number(before.node.attrs.seconds) || 0) + dx
+      const tr = editor.state.tr
+      const empty = !before.node.textContent.trim() && !(before.node.attrs.attachments ?? []).length
+      if (secs < 0.25 && empty) tr.delete(before.pos, before.pos + before.node.nodeSize)
+      else tr.setNodeMarkup(before.pos, undefined, { ...before.node.attrs, seconds: Math.max(0.5, Math.round(secs * 10) / 10) })
+      editor.view.dispatch(tr)
+    } else if (dx > 0.25) {
+      const pause = editor.schema.nodes.sonora.create({ seconds: Math.round(dx * 10) / 10 })
+      editor.view.dispatch(editor.state.tr.insert(seg.pos, pause))
+    }
+  }
+
+  /** Troca a anotação (texto) de uma pausa. */
+  const setPauseText = (pos: number, text: string) => {
+    if (!editor) return
+    const node = editor.state.doc.nodeAt(pos)
+    if (!node || !TIMED_PAUSES.includes(node.type.name)) return
+    const from = pos + 1
+    const to = pos + node.nodeSize - 1
+    const tr = editor.state.tr
+    if (text.trim()) tr.replaceWith(from, to, editor.schema.text(text.trim()))
+    else tr.delete(from, to)
+    editor.view.dispatch(tr)
+  }
+
   const movePause = (seg: Segment, start: number) => {
     if (!editor) return
     const node = editor.state.doc.nodeAt(seg.pos)
@@ -356,8 +426,17 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
       }
       if (d.mode === 'pauseCreate') {
         const t = Math.max(0, (e.clientX - d.rect.left) / p)
-        // em cima da fala só vira pausa depois de arrastar um pouco (senão é clique)
-        if (!d.fromText || Math.abs(t - d.t0) * p > 4) setGhost({ start: Math.min(d.t0, t), end: Math.max(d.t0, t) })
+        setGhost({ start: Math.min(d.t0, t), end: Math.max(d.t0, t) })
+        return
+      }
+      if (d.mode === 'speechMove') {
+        if (Math.abs(e.clientX - d.x0) > 4) d.moved = true
+        // não deixa a fala ir antes do zero
+        if (d.moved) setSpeechDrag({ pos: d.seg.pos, dx: Math.max(-d.seg.start, (e.clientX - d.x0) / p) })
+        return
+      }
+      if (d.mode === 'speechResize') {
+        setSpeechSeconds(d.pos, Math.max(0.4, d.dur0 + (e.clientX - d.x0) / p))
         return
       }
       if (d.mode === 'key') {
@@ -409,12 +488,19 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
         const t = Math.max(0, (e.clientX - d.rect.left) / p)
         const start = Math.min(d.t0, t)
         const len = Math.abs(t - d.t0)
-        if (d.fromText && len * p <= 4) {
-          // clique na fala: leva o playhead e o cursor do texto pra essa palavra
-          seek(d.t0)
-          const w = timingRef.current.words[wordAt(timingRef.current.words, d.t0)]
-          if (w) editor?.chain().setTextSelection(w.from).scrollIntoView().run()
-        } else createSonora(start, len < 0.3 ? 5 : len) // clique sem arrastar na faixa = 5s
+        createSonora(start, len < 0.3 ? 5 : len) // clique sem arrastar = 5s
+      } else if (d.mode === 'speechMove') {
+        setSpeechDrag(null)
+        const dx = Math.max(-d.seg.start, (e.clientX - d.x0) / p)
+        if (d.moved) dropSpeech(d.seg, dx)
+        else {
+          // clique: playhead e cursor do texto vão pra palavra clicada
+          const lane = (e.target as HTMLElement).closest('.tl-textlane')?.getBoundingClientRect()
+          const t = lane ? Math.max(0, (e.clientX - lane.left) / p) : d.seg.start
+          seek(t)
+          const w = timingRef.current.words[wordAt(timingRef.current.words, t)]
+          editor?.chain().setTextSelection(w ? w.from : d.seg.pos + 1).scrollIntoView().run()
+        }
       }
     }
     window.addEventListener('pointermove', onMove)
@@ -570,11 +656,23 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
               s.end > s.start ? (
                 <div
                   key={s.pos}
-                  className={'tl-seg t-' + s.kind}
-                  style={{ left: s.start * pps, width: Math.max(2, (s.end - s.start) * pps) }}
-                  title={TIMED_PAUSES.includes(s.kind) ? s.label : `${s.label}
-
-Clique: ir pra cá · Arraste: corta a fala e cria uma pausa`}
+                  className={
+                    'tl-seg t-' +
+                    s.kind +
+                    (speechDrag?.pos === s.pos ? ' dragging' : '') +
+                    (s.kind === 'paragraph' && editor?.state.doc.nodeAt(s.pos)?.attrs.seconds ? ' custom' : '')
+                  }
+                  style={{
+                    left: s.start * pps,
+                    width: Math.max(2, (s.end - s.start) * pps),
+                    transform: speechDrag?.pos === s.pos ? `translateX(${speechDrag.dx * pps}px)` : undefined
+                  }}
+                  onDoubleClick={() => TIMED_PAUSES.includes(s.kind) && setEditingPause(s.pos)}
+                  title={
+                    TIMED_PAUSES.includes(s.kind)
+                      ? `${s.label}\n\nClique: vai pro texto · Duplo clique: escrever anotação · Borda: duração`
+                      : `${s.label}\n\nArraste: mover (o vão vira pausa) ou reordenar · Borda: ritmo da fala (duplo clique volta ao automático)`
+                  }
                   onPointerDown={(e) => {
                     if (e.button !== 0) return
                     e.stopPropagation()
@@ -582,12 +680,43 @@ Clique: ir pra cá · Arraste: corta a fala e cria uma pausa`}
                       drag.current = { mode: 'pauseMove', pos: s.pos, x0: e.clientX, seg: s, moved: false }
                       return
                     }
-                    // arrastar em cima da fala separa o bloco ali e cria a pausa
-                    const rect = e.currentTarget.parentElement!.getBoundingClientRect()
-                    drag.current = { mode: 'pauseCreate', rect, t0: Math.max(0, (e.clientX - rect.left) / pps), fromText: true }
+                    drag.current = { mode: 'speechMove', seg: s, x0: e.clientX, moved: false }
                   }}
                 >
-                  {s.label}
+                  {editingPause === s.pos ? (
+                    <input
+                      className="tl-seg-input"
+                      autoFocus
+                      defaultValue={s.label === 'pausa' || s.label === 'sobe som' ? '' : s.label}
+                      placeholder="anotação da pausa…"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        e.stopPropagation()
+                        if (e.key === 'Enter') e.currentTarget.blur()
+                        if (e.key === 'Escape') setEditingPause(null)
+                      }}
+                      onBlur={(e) => {
+                        if (editingPause === s.pos) setPauseText(s.pos, e.currentTarget.value)
+                        setEditingPause(null)
+                      }}
+                    />
+                  ) : (
+                    s.label
+                  )}
+                  {s.kind === 'paragraph' && (
+                    <span
+                      className="tl-seg-handle"
+                      title="Arraste pra mudar o ritmo desta fala · duplo clique: volta ao automático"
+                      onPointerDown={(e) => {
+                        e.stopPropagation()
+                        drag.current = { mode: 'speechResize', pos: s.pos, x0: e.clientX, dur0: s.end - s.start }
+                      }}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation()
+                        setSpeechSeconds(s.pos, null)
+                      }}
+                    />
+                  )}
                   {TIMED_PAUSES.includes(s.kind) && (
                     <span
                       className="tl-seg-handle"
@@ -868,4 +997,20 @@ function findBlockNear(doc: import('@tiptap/pm/model').Node, pos: number, type: 
     if (node.type.name === type && (best === null || Math.abs(offset - pos) < Math.abs(best - pos))) best = offset
   })
   return best
+}
+
+/** A pausa logo antes de uma fala (pulando prompts/transições/capítulos); null se tiver outra fala no meio. */
+function pauseBefore(doc: import('@tiptap/pm/model').Node, pos: number) {
+  const list: { pos: number; node: import('@tiptap/pm/model').Node }[] = []
+  doc.forEach((node, offset) => list.push({ pos: offset, node }))
+  const idx = list.findIndex((x) => x.pos === pos)
+  for (let k = idx - 1; k >= 0; k--) {
+    const { node } = list[k]
+    const name = node.type.name
+    if (name === 'sonora') return list[k]
+    if (name === 'prompt' || name === 'transition' || name === 'chapter') continue
+    if (name === 'paragraph' && !node.textContent.trim()) continue
+    return null
+  }
+  return null
 }
