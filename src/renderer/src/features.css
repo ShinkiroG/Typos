@@ -506,3 +506,22 @@
   padding-left: 14px;
   border-left: 1px solid var(--line);
 }
+
+/* título do roteiro no topo da página */
+.page-title {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  outline: none;
+  padding: 0;
+  margin: 0 0 22px;
+  font-family: var(--font-script);
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+}
+.page-title::placeholder {
+  color: #3d4452;
+}

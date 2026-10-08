@@ -496,6 +496,21 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
 
       <main className="editor-scroll" onContextMenu={onContextMenu}>
         <div className={'page aspect-' + (format?.aspect ?? '16:9').replace(':', 'x')}>
+          {/* título do roteiro no topo da página (o mesmo do campo lá em cima) */}
+          <input
+            className="page-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onFocus={(e) => draft && title === 'Sem título' && e.target.select()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === 'ArrowDown') {
+                e.preventDefault()
+                editor?.commands.focus('start')
+              }
+            }}
+            placeholder="Título do vídeo"
+            spellCheck={false}
+          />
           <EditorContent editor={editor} className={'script' + hidden.map((h) => ' hide-' + h).join('')} />
         </div>
       </main>
