@@ -1,7 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
 import { NodeViewWrapper, NodeViewContent, type NodeViewProps } from '@tiptap/react'
-import { Paperclip, Copy, Check, Music, ArrowLeftRight, Trash2, ClipboardPaste, FolderOpen, Maximize2 } from 'lucide-react'
-import { api, attachmentUrl, fileUrl, getProjectDir, openPreview, pasteClipboardImage, ATTACHMENT_STATUS, TRANSITIONS, type Attachment, type AttachmentStatus } from '../lib'
+import { Paperclip, Copy, Check, Music, ArrowLeftRight, Trash2, ClipboardPaste, FolderOpen, Maximize2, Play, Pause, Tv } from 'lucide-react'
+import {
+  api,
+  attachmentUrl,
+  fileUrl,
+  getProjectDir,
+  isPreviewing,
+  kindOf,
+  openPreview,
+  pasteClipboardImage,
+  toggleAudioPreview,
+  ATTACHMENT_STATUS,
+  TRANSITIONS,
+  type Attachment,
+  type AttachmentStatus
+} from '../lib'
 
 function useOutsideClose(ref: React.RefObject<HTMLElement | null>, open: boolean, close: () => void) {
   useEffect(() => {
@@ -26,10 +40,56 @@ const Placeholder = ({ show, text }: { show: boolean; text: string }) =>
     </span>
   ) : null
 
+/** Botão de play/pausa ligado ao player de prévia único do app. */
+export function AudioPlayButton({ url, size = 14 }: { url: string; size?: number }) {
+  const [playing, setPlaying] = useState(isPreviewing(url))
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ url: string; playing: boolean }>).detail
+      setPlaying(d.url === url && d.playing)
+    }
+    window.addEventListener('typos:audio', on)
+    return () => window.removeEventListener('typos:audio', on)
+  }, [url])
+  return (
+    <button
+      className={'audio-play' + (playing ? ' on' : '')}
+      title={playing ? 'Pausar' : 'Ouvir'}
+      onClick={(e) => {
+        e.stopPropagation()
+        toggleAudioPreview(url)
+      }}
+    >
+      {playing ? <Pause size={size} /> : <Play size={size} />}
+    </button>
+  )
+}
+
+/** Prévia de um anexo: imagem, vídeo (quadro + abre grande) ou áudio (play). */
+export function MediaThumb({ a, className = '' }: { a: Attachment; className?: string }) {
+  const url = attachmentUrl(a)
+  const kind = kindOf(a)
+  if (kind === 'audio')
+    return (
+      <div className={'media-audio ' + className} title={a.name}>
+        <AudioPlayButton url={url} />
+        <span>{a.name}</span>
+      </div>
+    )
+  if (kind === 'video')
+    return (
+      <div className={'media-video ' + className} title={a.name} onClick={() => openPreview(url)}>
+        <video src={url + '#t=0.5'} preload="metadata" muted />
+        <Play size={18} className="media-video-icon" />
+      </div>
+    )
+  return <img className={className} src={url} title={a.name} onClick={() => openPreview(url)} />
+}
+
 /** Recorte feito pelo Claude em assets/recortes/<mesmo nome>.png (só aparece se existir). */
 function CutPreview({ a }: { a: Attachment }) {
   const [ok, setOk] = useState(true)
-  if (a.external || !ok) return null
+  if (a.external || !ok || kindOf(a) !== 'image') return null
   const base = a.path.split('/').pop()!.replace(/\.[^.]+$/, '')
   const src = fileUrl(`${getProjectDir()}/assets/recortes/${base}.png`)
   return <img className="cut-preview" src={src} title="Recorte pronto" onError={() => setOk(false)} onClick={() => openPreview(src)} />
@@ -57,12 +117,12 @@ function AttachmentManager({
 
   return (
     <div className="popover attach-pop">
-      <div className="pop-head">Referências deste prompt</div>
-      {atts.length === 0 && <div className="pop-empty">Nenhuma imagem anexada ainda.</div>}
+      <div className="pop-head">Referências deste bloco</div>
+      {atts.length === 0 && <div className="pop-empty">Nada anexado ainda (imagem, áudio ou vídeo).</div>}
       <div className="pop-list">
         {atts.map((a) => (
           <div className="pop-item" key={a.id}>
-            <img src={attachmentUrl(a)} onClick={() => openPreview(attachmentUrl(a))} />
+            <MediaThumb a={a} className="pop-media" />
             <div className="pop-info">
               <span className="pop-name" title={a.path}>
                 {a.name}
@@ -80,10 +140,12 @@ function AttachmentManager({
               </select>
             </div>
             <CutPreview a={a} />
-            <button className="icon-btn" title="Ver grande" onClick={() => openPreview(attachmentUrl(a))}>
-              <Maximize2 size={14} />
-            </button>
-            <button className="icon-btn danger" title="Remover do prompt (o arquivo continua em assets/)" onClick={() => onRemove(a.id)}>
+            {kindOf(a) !== 'audio' && (
+              <button className="icon-btn" title="Ver grande" onClick={() => openPreview(attachmentUrl(a))}>
+                <Maximize2 size={14} />
+              </button>
+            )}
+            <button className="icon-btn danger" title="Remover do bloco (o arquivo continua em assets/)" onClick={() => onRemove(a.id)}>
               <Trash2 size={14} />
             </button>
           </div>
@@ -98,12 +160,13 @@ function AttachmentManager({
         </button>
       </div>
       {msg && <div className="pop-msg">{msg}</div>}
-      <div className="pop-hint">Dica: com o cursor no prompt, Ctrl+V cola a imagem direto. Também dá pra arrastar arquivos pro prompt.</div>
+      <div className="pop-hint">Dica: com o cursor no bloco, Ctrl+V cola a imagem direto. Também dá pra arrastar arquivos (ou itens das Pastas) pra cá.</div>
     </div>
   )
 }
 
-export function PromptView({ node, updateAttributes }: NodeViewProps) {
+/** Clipe + popover + prévias na margem esquerda; usado por Prompt e Sonora. */
+function useAttachments({ node, updateAttributes }: Pick<NodeViewProps, 'node' | 'updateAttributes'>) {
   const atts: Attachment[] = node.attrs.attachments ?? []
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -114,6 +177,34 @@ export function PromptView({ node, updateAttributes }: NodeViewProps) {
   const setStatus = (id: string, status: AttachmentStatus) =>
     updateAttributes({ attachments: atts.map((a) => (a.id === id ? { ...a, status } : a)) })
 
+  const button = (
+    <div className="attach-anchor" contentEditable={false} ref={ref}>
+      <button className={'icon-btn attach' + (atts.length ? ' has' : '')} title="Anexos" onClick={() => setOpen((o) => !o)}>
+        <Paperclip size={15} />
+        {atts.length > 0 && <span className="badge">{atts.length}</span>}
+      </button>
+      {open && <AttachmentManager atts={atts} onAdd={add} onRemove={remove} onStatus={setStatus} />}
+    </div>
+  )
+
+  // prévias: ficam na margem esquerda da página (ou embaixo, se a tela for estreita)
+  const thumbs =
+    atts.length > 0 ? (
+      <div className="thumbs" contentEditable={false} data-more={atts.length > 1 ? `+${atts.length - 1}` : undefined}>
+        {atts.map((a) => (
+          <div key={a.id} className={'thumb k-' + kindOf(a) + ' st-' + (a.status ?? 'ref')}>
+            <MediaThumb a={a} />
+            {a.status && a.status !== 'ref' && <span className="thumb-status">{ATTACHMENT_STATUS.find((s) => s.id === a.status)?.label}</span>}
+          </div>
+        ))}
+      </div>
+    ) : null
+
+  return { button, thumbs }
+}
+
+export function PromptView({ node, updateAttributes }: NodeViewProps) {
+  const { button, thumbs } = useAttachments({ node, updateAttributes })
   return (
     <NodeViewWrapper className="blk blk-prompt" data-type="prompt">
       <div className="blk-body">
@@ -128,25 +219,38 @@ export function PromptView({ node, updateAttributes }: NodeViewProps) {
           <span className="bracket" contentEditable={false}>
             ]
           </span>
-          <div className="attach-anchor" contentEditable={false} ref={ref}>
-            <button className={'icon-btn attach' + (atts.length ? ' has' : '')} title="Anexos" onClick={() => setOpen((o) => !o)}>
-              <Paperclip size={15} />
-              {atts.length > 0 && <span className="badge">{atts.length}</span>}
-            </button>
-            {open && <AttachmentManager atts={atts} onAdd={add} onRemove={remove} onStatus={setStatus} />}
-          </div>
+          {button}
         </div>
-        {atts.length > 0 && (
-          <div className="thumbs" contentEditable={false}>
-            {atts.map((a) => (
-              <div key={a.id} className={'thumb st-' + (a.status ?? 'ref')}>
-                <img src={attachmentUrl(a)} title={a.name} onClick={() => openPreview(attachmentUrl(a))} />
-                {a.status && a.status !== 'ref' && <span className="thumb-status">{ATTACHMENT_STATUS.find((s) => s.id === a.status)?.label}</span>}
-              </div>
-            ))}
-          </div>
-        )}
+        {thumbs}
       </div>
+    </NodeViewWrapper>
+  )
+}
+
+/** Sonora: trecho mostrado com som original (jornal, gameplay, série), sem narração por cima. */
+export function SonoraView({ node, updateAttributes }: NodeViewProps) {
+  const { button, thumbs } = useAttachments({ node, updateAttributes })
+  return (
+    <NodeViewWrapper className="blk blk-sonora" data-type="sonora">
+      <div className="blk-chip" contentEditable={false}>
+        <Tv size={14} />
+        <span>SONORA</span>
+        <input
+          type="number"
+          min={0}
+          step={0.5}
+          value={node.attrs.seconds}
+          onChange={(e) => updateAttributes({ seconds: Number(e.target.value) || 0 })}
+          title="Duração (também dá pra esticar na timeline)"
+        />
+        <span className="unit">s</span>
+      </div>
+      <div className="blk-main">
+        <NodeViewContent className="blk-text" />
+        <Placeholder show={node.content.size === 0} text="o que aparece aqui (trecho de jornal, gameplay, série…)" />
+      </div>
+      {button}
+      {thumbs}
     </NodeViewWrapper>
   )
 }

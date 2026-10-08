@@ -4,8 +4,12 @@ import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
 import type { JSONContent } from '@tiptap/core'
-import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save } from 'lucide-react'
-import { Prompt, Transition, SoundUp, Chapter, ScriptKeys, convertBracketLines } from '../editor/nodes'
+import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose } from 'lucide-react'
+import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, convertBracketLines } from '../editor/nodes'
+import { Timestamps, setTimestamps } from '../editor/timestamps'
+import { FilterBar } from './FilterBar'
+import { InsertPanel } from './InsertPanel'
+import { FoldersPanel, FILE_MIME } from './FoldersPanel'
 import { PlaybackHighlight } from '../editor/highlight'
 import { SpellCheck, misspelledAt, setSpellLanguage, spellSuggestions, acceptWord } from '../editor/spell'
 import { Timeline } from './Timeline'
@@ -23,6 +27,7 @@ import {
   toMarkdown,
   uid,
   type Attachment,
+  type BlockType,
   type Clip,
   type Format,
   type LibraryItem,
@@ -85,7 +90,10 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [formatId, setFormatId] = useState(data.formatId)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [panelOpen, setPanelOpen] = useState(true)
-  const [tab, setTab] = useState<'library' | 'formats'>('library')
+  const [tab, setTab] = useState<'library' | 'folders' | 'formats'>('library')
+  const [leftOpen, setLeftOpen] = useState(() => stored('typos.left', true))
+  const [hidden, setHidden] = useState<BlockType[]>(() => stored('typos.hidden', []))
+  const [showTimes, setShowTimes] = useState(() => stored('typos.times', false))
   const [menu, setMenu] = useState<{ x: number; y: number; pos: number } | null>(null)
   const [snippet, setSnippet] = useState<(SnippetDraft & { node?: JSONContent }) | null>(null)
 
@@ -117,7 +125,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     const ed = editorRef.current
     if (!ed || !atts.length) return
     const node = ed.state.doc.nodeAt(pos)
-    if (node?.type.name === 'prompt') {
+    if (node?.type.name === 'prompt' || node?.type.name === 'sonora') {
       ed.view.dispatch(ed.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, attachments: [...node.attrs.attachments, ...atts] }))
     } else {
       ed.chain().insertContentAt(pos, { type: 'prompt', attrs: { attachments: atts } }).run()
@@ -163,7 +171,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       Transition,
       SoundUp,
       Chapter,
+      Sonora,
       ScriptKeys,
+      Timestamps,
       PlaybackHighlight,
       SpellCheck
     ],
@@ -187,12 +197,19 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           if (item) insertSnippet(item, dropPosition(view, event.clientX, event.clientY))
           return true
         }
-        const files = Array.from(dt.files).filter((f) => f.type.startsWith('image/'))
-        if (!files.length) return false
+        // arquivo arrastado das Pastas, ou imagem/áudio/vídeo do Explorer
+        const folderFile = dt.getData(FILE_MIME)
+        const paths = folderFile
+          ? [folderFile]
+          : Array.from(dt.files)
+              .filter((f) => /^(image|audio|video)\//.test(f.type))
+              .map((f) => api.pathForFile(f))
+        if (!paths.length) return false
         event.preventDefault()
         const hit = blockAtCoords(view, event.clientX, event.clientY)
-        const target = hit?.node.type.name === 'prompt' ? hit.pos : dropPosition(view, event.clientX, event.clientY)
-        api.importPaths(dirRef.current, files.map((f) => api.pathForFile(f))).then((atts: Attachment[]) => attachTo(target, atts))
+        const holds = hit && (hit.node.type.name === 'prompt' || hit.node.type.name === 'sonora')
+        const target = holds ? hit.pos : dropPosition(view, event.clientX, event.clientY)
+        api.importPaths(dirRef.current, paths).then((atts: Attachment[]) => attachTo(target, atts))
         return true
       },
       handlePaste: (view, event) => {
@@ -227,6 +244,27 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const stats = useMemo(() => (doc ? computeStats(doc, wpm) : null), [doc, wpm])
   const timing = useMemo(() => (doc ? buildTiming(doc, wpm) : null), [doc, wpm])
   const overLimit = !!(stats && format?.maxSeconds && stats.seconds > format.maxSeconds)
+
+  useEffect(() => {
+    if (timing) setTimestamps(editor, showTimes, timing.blockStarts)
+  }, [editor, showTimes, timing])
+
+  useEffect(() => {
+    remember('typos.left', leftOpen)
+    remember('typos.hidden', hidden)
+    remember('typos.times', showTimes)
+  }, [leftOpen, hidden, showTimes])
+
+  /** clique num arquivo das Pastas: anexa no bloco atual (prompt/sonora) ou cria um prompt abaixo */
+  const insertFile = async (path: string) => {
+    const ed = editorRef.current
+    if (!ed) return
+    const atts: Attachment[] = await api.importPaths(dirRef.current, [path])
+    const { $from } = ed.state.selection
+    if ($from.depth < 1) return attachTo(ed.state.doc.content.size, atts)
+    const holds = ['prompt', 'sonora'].includes($from.node(1).type.name)
+    attachTo(holds ? $from.before(1) : $from.after(1), atts)
+  }
 
   const snapshot = useCallback(() => {
     const ed = editorRef.current
@@ -396,9 +434,12 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   }
 
   return (
-    <div className={'workspace' + (panelOpen ? ' with-panel' : '') + (timelineOpen ? ' with-timeline' : '')}>
+    <div className="workspace" style={gridLayout(leftOpen, panelOpen, timelineOpen)}>
       <header className="topbar">
         <div className="tb-left">
+          <button className="icon-btn" title="Painel Inserir" onClick={() => setLeftOpen((o) => !o)}>
+            {leftOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
+          </button>
           <button className="icon-btn" title="Voltar pros roteiros" onClick={async () => (await save(), onClose())}>
             <Home size={17} />
           </button>
@@ -411,19 +452,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             placeholder="Nome do roteiro"
           />
         </div>
-        <div className="tb-blocks">
-          {BLOCKS.map((b) => (
-            <button
-              key={b.type}
-              className={'blk-btn t-' + b.type + (currentBlock === b.type ? ' active' : '')}
-              title={`${b.label} (${b.key})`}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setBlock(b.type)}
-            >
-              {b.label}
-            </button>
-          ))}
-        </div>
+        <FilterBar hidden={hidden} onHidden={setHidden} showTimes={showTimes} onShowTimes={setShowTimes} />
         <div className="tb-right">
           <select className="format-select" value={formatId} onChange={(e) => setFormatId(e.target.value)} title={`Formato do vídeo · corretor: ${langLabel(lang)} (muda em Formatos)`}>
             {formats.map((f) => (
@@ -463,9 +492,11 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         </div>
       </header>
 
+      {leftOpen && <InsertPanel editor={editor} />}
+
       <main className="editor-scroll" onContextMenu={onContextMenu}>
         <div className={'page aspect-' + (format?.aspect ?? '16:9').replace(':', 'x')}>
-          <EditorContent editor={editor} className="script" />
+          <EditorContent editor={editor} className={'script' + hidden.map((h) => ' hide-' + h).join('')} />
         </div>
       </main>
 
@@ -474,6 +505,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           <div className="tabs">
             <button className={tab === 'library' ? 'active' : ''} onClick={() => setTab('library')}>
               Biblioteca
+            </button>
+            <button className={tab === 'folders' ? 'active' : ''} onClick={() => setTab('folders')}>
+              Pastas
             </button>
             <button className={tab === 'formats' ? 'active' : ''} onClick={() => setTab('formats')}>
               Formatos
@@ -486,6 +520,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
               onEdit={(i) => setSnippet({ id: i.id, title: i.title, cover: i.cover })}
               onDelete={(i) => onLibraryChange(library.filter((x) => x.id !== i.id))}
             />
+          ) : tab === 'folders' ? (
+            <FoldersPanel onInsert={insertFile} />
           ) : (
             <FormatsPanel formats={formats} activeId={formatId} onChange={onFormatsChange} onSelect={setFormatId} />
           )}
@@ -526,6 +562,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             <span className="stat t-prompt">{stats.prompts} prompts</span>
             <span className="stat t-transition">{stats.transitions} transições</span>
             <span className="stat t-soundUp">{stats.soundUps} sobe som</span>
+            <span className="stat t-sonora">{stats.sonoras} sonoras</span>
           </>
         )}
       </footer>
@@ -613,4 +650,33 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       {snippet && <SnippetModal draft={snippet} onCancel={() => setSnippet(null)} onSave={(d) => saveSnippet({ ...snippet, ...d })} />}
     </div>
   )
+}
+
+function stored<T>(key: string, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key)
+    return v === null ? fallback : (JSON.parse(v) as T)
+  } catch {
+    return fallback
+  }
+}
+
+function remember(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    /* sem storage */
+  }
+}
+
+/** grade da tela: [Inserir] | texto | [painel direito], com timeline opcional embaixo */
+function gridLayout(left: boolean, right: boolean, timeline: boolean): React.CSSProperties {
+  const cols = [left && '230px', '1fr', right && '320px'].filter(Boolean) as string[]
+  const mid = [left && 'left', 'main', right && 'side'].filter(Boolean) as string[]
+  const row = (name: string) => '"' + cols.map(() => name).join(' ') + '"'
+  return {
+    gridTemplateColumns: cols.join(' '),
+    gridTemplateRows: '52px 1fr ' + (timeline ? 'auto ' : '') + '30px',
+    gridTemplateAreas: [row('top'), '"' + mid.join(' ') + '"', timeline && row('timeline'), row('status')].filter(Boolean).join(' ')
+  }
 }

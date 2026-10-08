@@ -1,6 +1,6 @@
 import { Node, Extension, mergeAttributes, InputRule, textblockTypeInputRule, type Editor } from '@tiptap/core'
 import { ReactNodeViewRenderer } from '@tiptap/react'
-import { PromptView, TransitionView, SoundUpView } from './views'
+import { PromptView, TransitionView, SoundUpView, SonoraView } from './views'
 
 /** Backspace no começo de um bloco especial volta ele pra fala comum. */
 const backspaceToParagraph =
@@ -118,6 +118,37 @@ export const SoundUp = Node.create({
   }
 })
 
+/** Trecho mostrado com som original, sem narração (jornal, gameplay, série…). Ocupa tempo na timeline. */
+export const Sonora = Node.create({
+  name: 'sonora',
+  group: 'block',
+  content: 'inline*',
+  defining: true,
+
+  addAttributes() {
+    return {
+      seconds: {
+        default: 5,
+        parseHTML: (el) => Number(el.getAttribute('data-seconds')) || 5,
+        renderHTML: (a) => ({ 'data-seconds': a.seconds })
+      },
+      attachments: jsonAttr('data-attachments', [])
+    }
+  },
+  parseHTML() {
+    return [{ tag: 'div[data-type="sonora"]' }]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'sonora' }), 0]
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(SonoraView)
+  },
+  addKeyboardShortcuts() {
+    return { Backspace: backspaceToParagraph(this.name) }
+  }
+})
+
 export const Chapter = Node.create({
   name: 'chapter',
   group: 'block',
@@ -146,7 +177,8 @@ export const ScriptKeys = Extension.create({
       'Mod-2': () => this.editor.commands.setNode('prompt'),
       'Mod-3': () => this.editor.commands.setNode('transition'),
       'Mod-4': () => this.editor.commands.setNode('soundUp'),
-      'Mod-5': () => this.editor.commands.setNode('chapter')
+      'Mod-5': () => this.editor.commands.setNode('chapter'),
+      'Mod-6': () => this.editor.commands.setNode('sonora')
     }
   }
 })

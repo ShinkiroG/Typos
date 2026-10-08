@@ -16,11 +16,42 @@ export interface Attachment {
   path: string
   name: string
   external?: boolean
+  /** anexos antigos não têm: são imagens */
+  kind?: MediaKind
   /** fluxo de aprovação: referência solta → aprovada → pedir recorte / pedir pra regerar */
   status?: AttachmentStatus
 }
 
 export type AttachmentStatus = 'ref' | 'aprovado' | 'recortar' | 'regerar'
+
+export type MediaKind = 'image' | 'audio' | 'video'
+export const mediaKindOf = (path: string): MediaKind => {
+  const e = path.toLowerCase().split('.').pop() ?? ''
+  if (['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'opus'].includes(e)) return 'audio'
+  if (['mp4', 'webm', 'mov', 'm4v'].includes(e)) return 'video'
+  return 'image'
+}
+export const kindOf = (a: Attachment) => a.kind ?? mediaKindOf(a.path)
+
+// ---------- prévia de áudio: um player só pro app inteiro ----------
+const previewPlayer = typeof Audio !== 'undefined' ? new Audio() : null
+let previewUrl = ''
+const notifyAudio = () =>
+  window.dispatchEvent(new CustomEvent('typos:audio', { detail: { url: previewUrl, playing: !!previewPlayer && !previewPlayer.paused } }))
+previewPlayer?.addEventListener('ended', notifyAudio)
+previewPlayer?.addEventListener('pause', notifyAudio)
+previewPlayer?.addEventListener('play', notifyAudio)
+
+export function toggleAudioPreview(url: string) {
+  if (!previewPlayer) return
+  if (previewUrl === url && !previewPlayer.paused) previewPlayer.pause()
+  else {
+    previewUrl = url
+    previewPlayer.src = url
+    previewPlayer.play().catch(() => null)
+  }
+}
+export const isPreviewing = (url: string) => !!previewPlayer && previewUrl === url && !previewPlayer.paused
 
 export const ATTACHMENT_STATUS: { id: AttachmentStatus; label: string; hint: string }[] = [
   { id: 'ref', label: 'Referência', hint: 'só referência visual' },
@@ -92,15 +123,19 @@ export interface ProjectData {
   updatedAt: string
 }
 
-export type BlockType = 'paragraph' | 'prompt' | 'transition' | 'soundUp' | 'chapter'
+export type BlockType = 'paragraph' | 'prompt' | 'transition' | 'soundUp' | 'sonora' | 'chapter'
 
 export const BLOCKS: { type: BlockType; label: string; key: string }[] = [
   { type: 'paragraph', label: 'Fala', key: 'Ctrl+1' },
   { type: 'prompt', label: 'Prompt', key: 'Ctrl+2' },
   { type: 'transition', label: 'Transição', key: 'Ctrl+3' },
   { type: 'soundUp', label: 'Sobe som', key: 'Ctrl+4' },
-  { type: 'chapter', label: 'Capítulo', key: 'Ctrl+5' }
+  { type: 'chapter', label: 'Capítulo', key: 'Ctrl+5' },
+  { type: 'sonora', label: 'Sonora', key: 'Ctrl+6' }
 ]
+
+/** blocos que não são fala mas ocupam tempo no vídeo */
+export const TIMED_PAUSES = ['soundUp', 'sonora']
 
 export const blockLabel = (type: string) => BLOCKS.find((b) => b.type === type)?.label ?? type
 
@@ -160,12 +195,13 @@ export interface Stats {
   prompts: number
   transitions: number
   soundUps: number
+  sonoras: number
 }
 
 export const countWords = (text: string) => text.trim().split(/\s+/).filter(Boolean).length
 
 export function computeStats(doc: PMNode, wpm: number): Stats {
-  const s: Stats = { words: 0, seconds: 0, chapters: 0, prompts: 0, transitions: 0, soundUps: 0 }
+  const s: Stats = { words: 0, seconds: 0, chapters: 0, prompts: 0, transitions: 0, soundUps: 0, sonoras: 0 }
   let pause = 0
   doc.forEach((n) => {
     switch (n.type.name) {
@@ -183,6 +219,10 @@ export function computeStats(doc: PMNode, wpm: number): Stats {
         break
       case 'soundUp':
         s.soundUps++
+        pause += Number(n.attrs.seconds) || 0
+        break
+      case 'sonora':
+        s.sonoras++
         pause += Number(n.attrs.seconds) || 0
         break
     }
@@ -211,7 +251,7 @@ export function toMarkdown(data: ProjectData, format: Format | undefined, stats:
   out.push(`- Duração estimada: ${formatTime(stats.seconds)} (${stats.words} palavras faladas a ${wpm} ppm)`)
   out.push(`- Pasta do roteiro: os caminhos abaixo são relativos a esta pasta.`)
   out.push(`- Gerado pelo Typos em ${new Date().toLocaleString('pt-BR')}. Não edite este arquivo; a fonte é o roteiro.json.`, '')
-  out.push('Legenda: linhas sem marcação = fala/narração. [PROMPT] = instrução de motion. [TRANSIÇÃO] e [SOBE SOM] = edição. `(m:ss)` = tempo estimado na timeline.')
+  out.push('Legenda: linhas sem marcação = fala/narração. [PROMPT] = instrução de motion. [TRANSIÇÃO] e [SOBE SOM] = edição. [SONORA] = trecho mostrado com som original, sem narração. `(m:ss)` = tempo estimado na timeline.')
   out.push('Imagens: [APROVADA] usar como está · [RECORTAR] recortar os elementos (salvar PNG transparente em assets/recortes/ com o mesmo nome) · [REGERAR] refazer no ChatGPT.', '')
 
   let chapter = 0
@@ -238,6 +278,12 @@ export function toMarkdown(data: ProjectData, format: Format | undefined, stats:
       case 'soundUp':
         out.push(`${at} [SOBE SOM ${n.attrs?.seconds}s] ${text}`, '')
         break
+      case 'sonora': {
+        out.push(`${at} [SONORA ${n.attrs?.seconds}s, sem narração] ${text}`)
+        for (const a of (n.attrs?.attachments ?? []) as Attachment[]) out.push(`  - anexo: ${a.path}${STATUS_TAG[a.status ?? ''] ?? ''}`)
+        out.push('')
+        break
+      }
     }
   })
 
@@ -312,9 +358,9 @@ export function buildTiming(doc: PMNode, wpm: number): Timing {
         t += d
       }
       segments.push({ kind: name, pos: offset, start, end: t, label })
-    } else if (name === 'soundUp') {
+    } else if (name === 'soundUp' || name === 'sonora') {
       const d = Number(node.attrs.seconds) || 0
-      segments.push({ kind: name, pos: offset, start: t, end: t + d, label: label || 'sobe som' })
+      segments.push({ kind: name, pos: offset, start: t, end: t + d, label: label || (name === 'sonora' ? 'sonora' : 'sobe som') })
       t += d
     } else {
       segments.push({ kind: name, pos: offset, start: t, end: t, label })

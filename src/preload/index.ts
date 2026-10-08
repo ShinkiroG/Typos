@@ -27,6 +27,14 @@ const api = {
   pickLibraryCover: (): Promise<string | null> => ipcRenderer.invoke('library:pickCover'),
   coverFromFile: (path: string): Promise<string> => ipcRenderer.invoke('library:coverFromFile', path),
 
+  loadFolders: (): Promise<{ id: string; name: string; path: string }[]> => ipcRenderer.invoke('folders:load'),
+  saveFolders: (folders: unknown) => ipcRenderer.invoke('folders:save', folders),
+  pickFolder: (): Promise<string | null> => ipcRenderer.invoke('folders:pick'),
+  scanFolder: (
+    path: string
+  ): Promise<{ path: string; name: string; rel: string; kind: 'image' | 'audio' | 'video' }[] | { error: string }> =>
+    ipcRenderer.invoke('folders:scan', path),
+
   loadFormats: () => ipcRenderer.invoke('formats:load'),
   saveFormats: (formats: unknown) => ipcRenderer.invoke('formats:save', formats),
 

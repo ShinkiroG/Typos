@@ -20,7 +20,11 @@ function Lightbox() {
   if (!src) return null
   return (
     <div className="lightbox" onClick={() => setSrc(null)}>
-      <img src={src} />
+      {/\.(mp4|webm|mov|m4v)(#|$)/i.test(decodeURIComponent(src)) ? (
+        <video src={src} controls autoPlay onClick={(e) => e.stopPropagation()} />
+      ) : (
+        <img src={src} />
+      )}
     </div>
   )
 }

@@ -16,6 +16,14 @@ const PROJECT_FILE = 'roteiro.json'
 const MARKDOWN_FILE = 'roteiro.md'
 const ASSETS_DIR = 'assets'
 const IMAGE_EXT = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']
+const AUDIO_EXT = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac', '.opus']
+const VIDEO_EXT = ['.mp4', '.webm', '.mov', '.m4v']
+const MEDIA_EXT = [...IMAGE_EXT, ...AUDIO_EXT, ...VIDEO_EXT]
+type MediaKind = 'image' | 'audio' | 'video'
+const mediaKind = (p: string): MediaKind | null => {
+  const e = extname(p).toLowerCase()
+  return IMAGE_EXT.includes(e) ? 'image' : AUDIO_EXT.includes(e) ? 'audio' : VIDEO_EXT.includes(e) ? 'video' : null
+}
 
 const DEFAULT_FORMATS = [
   { id: 'long', name: 'Longo / Horizontal', aspect: '16:9', wpm: 150, maxSeconds: null, lang: 'pt-BR' },
@@ -61,8 +69,7 @@ async function writeUnique(bytes: Uint8Array, original: string, destDir: string)
   return name
 }
 
-const isImage = (p: string) => IMAGE_EXT.includes(extname(p).toLowerCase())
-const attachment = (rel: string) => ({ id: randomUUID(), path: rel, name: rel.split('/').pop() })
+const attachment = (rel: string, name?: string) => ({ id: randomUUID(), path: rel, name: name ?? rel.split('/').pop(), kind: mediaKind(rel) ?? 'image' })
 
 // ---------- recentes ----------
 type Recent = { dir: string; title: string; openedAt: string }
@@ -351,19 +358,23 @@ ipcMain.handle('shell:open', (_e, path: string) => shell.openPath(path))
 // ---------- anexos (copiados pra <projeto>/assets) ----------
 ipcMain.handle('asset:pick', async (_e, dir: string) => {
   const r = await dialog.showOpenDialog(win!, {
-    title: 'Anexar imagens de referência',
+    title: 'Anexar referências (imagem, áudio ou vídeo)',
     properties: ['openFile', 'multiSelections'],
-    filters: [{ name: 'Imagens', extensions: IMAGE_EXT.map((e) => e.slice(1)) }]
+    filters: [{ name: 'Imagem, áudio ou vídeo', extensions: MEDIA_EXT.map((e) => e.slice(1)) }]
   })
   if (r.canceled) return []
   return importPaths(dir, r.filePaths)
 })
 
+/** Copia mídia pra dentro do projeto (áudio vai pra assets/audio). */
 async function importPaths(dir: string, paths: string[]) {
   const out = []
-  for (const p of paths.filter(isImage)) {
-    const name = await copyUnique(p, join(dir, ASSETS_DIR))
-    out.push(attachment(`${ASSETS_DIR}/${name}`))
+  for (const p of paths) {
+    const kind = mediaKind(p)
+    if (!kind) continue
+    const sub = kind === 'audio' ? `${ASSETS_DIR}/audio` : ASSETS_DIR
+    const name = await copyUnique(p, join(dir, ...sub.split('/')))
+    out.push(attachment(`${sub}/${name}`, basename(p)))
   }
   return out
 }
@@ -404,7 +415,6 @@ ipcMain.handle('formats:load', () => readJson(settingsFile('formats.json'), DEFA
 ipcMain.handle('formats:save', (_e, formats: unknown) => writeJson(settingsFile('formats.json'), formats))
 
 // ---------- áudio (copiado pra <projeto>/assets/audio) ----------
-const AUDIO_EXT = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac', '.opus']
 const isAudio = (p: string) => AUDIO_EXT.includes(extname(p).toLowerCase())
 const AUDIO_DIR = `${ASSETS_DIR}/audio`
 
@@ -449,4 +459,36 @@ ipcMain.handle('sfx:generate', async (_e, dir: string, text: string, seconds: nu
   } catch (err) {
     return { error: `Não consegui falar com a ElevenLabs: ${String(err)}` }
   }
+})
+
+// ---------- pastas de mídia (SFX, referências…): o app escaneia e mostra no painel ----------
+type MediaFolder = { id: string; name: string; path: string }
+
+ipcMain.handle('folders:load', () => readJson<MediaFolder[]>(settingsFile('folders.json'), []))
+ipcMain.handle('folders:save', (_e, folders: MediaFolder[]) => writeJson(settingsFile('folders.json'), folders))
+ipcMain.handle('folders:pick', async () => {
+  const r = await dialog.showOpenDialog(win!, { title: 'Escolher pasta de mídia (ex.: SFX)', properties: ['openDirectory'] })
+  return r.canceled || !r.filePaths[0] ? null : r.filePaths[0]
+})
+
+/** Lista imagens/áudios/vídeos da pasta (com subpastas, até 2000 arquivos). */
+ipcMain.handle('folders:scan', async (_e, root: string) => {
+  const out: { path: string; name: string; rel: string; kind: MediaKind }[] = []
+  const walk = async (dir: string, depth: number) => {
+    if (depth > 6 || out.length >= 2000) return
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue
+      const p = join(dir, e.name)
+      if (e.isDirectory()) await walk(p, depth + 1)
+      else {
+        const kind = mediaKind(p)
+        if (kind) out.push({ path: p, name: e.name, rel: p.slice(root.length + 1), kind })
+      }
+      if (out.length >= 2000) return
+    }
+  }
+  if (!existsSync(root)) return { error: 'A pasta não existe mais.' }
+  await walk(root, 0)
+  return out.sort((a, b) => a.rel.localeCompare(b.rel, 'pt-BR', { numeric: true }))
 })
