@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Download, X } from 'lucide-react'
-import { api, type Format, type LibraryItem, type ProjectData } from './lib'
+import { api, uid, type Format, type LibraryItem, type ProjectData } from './lib'
 import { Welcome } from './components/Welcome'
 import { Workspace } from './components/Workspace'
 import { SettingsModal } from './components/SettingsModal'
@@ -61,7 +61,7 @@ function UpdateBanner() {
 }
 
 export default function App() {
-  const [session, setSession] = useState<{ dir: string; data: ProjectData } | null>(null)
+  const [session, setSession] = useState<{ key: string; dir: string; data: ProjectData; draft: boolean } | null>(null)
   const [formats, setFormats] = useState<Format[]>([])
   const [library, setLibrary] = useState<LibraryItem[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -93,9 +93,11 @@ export default function App() {
       <UpdateBanner />
       {session && formats.length ? (
         <Workspace
-          key={session.dir}
+          key={session.key}
           dir={session.dir}
           data={session.data}
+          draft={session.draft}
+          onSavedAs={(dir) => setSession((s) => (s ? { ...s, dir, draft: false } : s))}
           formats={formats}
           onFormatsChange={changeFormats}
           library={library}
@@ -105,9 +107,9 @@ export default function App() {
           registerFlush={registerFlush}
         />
       ) : (
-        <Welcome onOpen={(dir, data) => setSession({ dir, data })} onOpenSettings={() => setSettingsOpen(true)} />
+        <Welcome onOpen={(dir, data, draft) => setSession({ key: uid(), dir, data, draft })} onOpenSettings={() => setSettingsOpen(true)} />
       )}
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsModal currentDir={session?.dir} onClose={() => setSettingsOpen(false)} />}
       <Lightbox />
     </>
   )

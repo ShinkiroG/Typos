@@ -1,5 +1,5 @@
-import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell } from 'electron'
-import { join, basename, extname, dirname } from 'path'
+import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, session } from 'electron'
+import { join, basename, extname, dirname, resolve, sep } from 'path'
 import { promises as fs, existsSync } from 'fs'
 import { pathToFileURL } from 'url'
 import { randomUUID } from 'crypto'
@@ -160,41 +160,36 @@ ipcMain.handle('update:check', () => checkManually())
 ipcMain.handle('update:installNow', () => installDownloadedNow())
 
 // ---------- projetos ----------
-ipcMain.handle('project:new', async (): Promise<Result<{ dir: string; data: unknown } | null>> => {
-  const settings = await loadSettings()
-  const parent = settings.lastParent && existsSync(settings.lastParent) ? settings.lastParent : app.getPath('documents')
-  const r = await dialog.showSaveDialog(win!, {
-    title: 'Criar novo roteiro (escolha a pasta e o nome)',
-    buttonLabel: 'Criar roteiro',
-    defaultPath: join(parent, 'Novo roteiro'),
-    properties: ['createDirectory', 'showOverwriteConfirmation']
-  })
-  if (r.canceled || !r.filePath) return null
-  const dir = r.filePath
-  if (existsSync(join(dir, PROJECT_FILE))) return { error: 'Já existe um roteiro nessa pasta. Use "Abrir".' }
-  await fs.mkdir(join(dir, ASSETS_DIR), { recursive: true })
+// Roteiro novo nasce como rascunho em <userData>/autosaves e salva sozinho lá.
+// "Salvar…" copia a pasta inteira pro lugar escolhido e apaga o rascunho.
+const draftsDir = () => join(userDir(), 'autosaves')
+const isDraft = (dir: string) => resolve(dir).toLowerCase().startsWith(resolve(draftsDir()).toLowerCase() + sep)
+
+function emptyProject(title: string) {
   const now = new Date().toISOString()
-  const data = {
+  return {
     version: 1,
-    title: basename(dir),
+    title,
     formatId: 'long',
     doc: {
       type: 'doc',
-      content: [
-        { type: 'chapter', content: [{ type: 'text', text: 'Gancho' }] },
-        { type: 'paragraph' }
-      ]
+      content: [{ type: 'chapter', content: [{ type: 'text', text: 'Gancho' }] }, { type: 'paragraph' }]
     },
     createdAt: now,
     updatedAt: now
   }
+}
+
+ipcMain.handle('project:new', async () => {
+  const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+  const dir = join(draftsDir(), `rascunho-${stamp}-${randomUUID().slice(0, 4)}`)
+  await fs.mkdir(join(dir, ASSETS_DIR), { recursive: true })
+  const data = emptyProject('Sem título')
   await writeJson(join(dir, PROJECT_FILE), data)
-  await touchRecent(dir, data.title)
-  await rememberParent(dir)
-  return { dir, data }
+  return { dir, data, draft: true }
 })
 
-ipcMain.handle('project:open', async (_e, dir?: string): Promise<Result<{ dir: string; data: any } | null>> => {
+ipcMain.handle('project:open', async (_e, dir?: string): Promise<Result<{ dir: string; data: any; draft: boolean } | null>> => {
   if (!dir) {
     const r = await dialog.showOpenDialog(win!, { title: 'Abrir pasta do roteiro', properties: ['openDirectory'] })
     if (r.canceled || !r.filePaths[0]) return null
@@ -204,16 +199,44 @@ ipcMain.handle('project:open', async (_e, dir?: string): Promise<Result<{ dir: s
   if (!existsSync(file)) return { error: `Essa pasta não tem um ${PROJECT_FILE}.` }
   const data = await readJson<any>(file, null)
   if (!data) return { error: `Não consegui ler o ${PROJECT_FILE}.` }
-  await touchRecent(dir, data.title ?? basename(dir))
-  return { dir, data }
+  if (!isDraft(dir)) await touchRecent(dir, data.title ?? basename(dir))
+  return { dir, data, draft: isDraft(dir) }
 })
 
 ipcMain.handle('project:save', async (_e, dir: string, data: any, markdown: string): Promise<Result<true>> => {
   try {
     await writeJson(join(dir, PROJECT_FILE), data)
     await fs.writeFile(join(dir, MARKDOWN_FILE), markdown, 'utf8')
-    await touchRecent(dir, data.title)
+    if (!isDraft(dir)) await touchRecent(dir, data.title)
     return true
+  } catch (err) {
+    return { error: String(err) }
+  }
+})
+
+/** Salvar como: copia a pasta do roteiro (com assets) pra onde o usuário escolher. */
+ipcMain.handle('project:saveAs', async (_e, dir: string, data: any, markdown: string): Promise<Result<{ dir: string } | null>> => {
+  const settings = await loadSettings()
+  const parent = settings.lastParent && existsSync(settings.lastParent) ? settings.lastParent : app.getPath('documents')
+  const name = String(data.title || 'Roteiro').replace(/[<>:"/\\|?*]+/g, '').trim() || 'Roteiro'
+  const r = await dialog.showSaveDialog(win!, {
+    title: 'Salvar roteiro (escolha a pasta e o nome)',
+    buttonLabel: 'Salvar',
+    defaultPath: join(parent, name),
+    properties: ['createDirectory', 'showOverwriteConfirmation']
+  })
+  if (r.canceled || !r.filePath) return null
+  const target = r.filePath
+  if (resolve(target) === resolve(dir)) return { dir }
+  if (existsSync(join(target, PROJECT_FILE))) return { error: 'Já existe um roteiro nessa pasta. Escolha outro nome.' }
+  try {
+    await fs.cp(dir, target, { recursive: true })
+    await writeJson(join(target, PROJECT_FILE), data)
+    await fs.writeFile(join(target, MARKDOWN_FILE), markdown, 'utf8')
+    if (isDraft(dir)) await fs.rm(dir, { recursive: true, force: true })
+    await touchRecent(target, data.title)
+    await rememberParent(target)
+    return { dir: target }
   } catch (err) {
     return { error: String(err) }
   }
@@ -221,7 +244,103 @@ ipcMain.handle('project:save', async (_e, dir: string, data: any, markdown: stri
 
 ipcMain.handle('project:recent', async () => {
   const list = await readJson<Recent[]>(settingsFile('recent.json'), [])
-  return list.filter((r) => existsSync(join(r.dir, PROJECT_FILE)))
+  return list.filter((r) => !isDraft(r.dir) && existsSync(join(r.dir, PROJECT_FILE)))
+})
+
+ipcMain.handle('project:removeRecent', async (_e, dir: string) => {
+  const list = await readJson<Recent[]>(settingsFile('recent.json'), [])
+  await writeJson(settingsFile('recent.json'), list.filter((r) => r.dir !== dir))
+})
+
+const docHasText = (doc: any): boolean =>
+  !!doc && (typeof doc.text === 'string' ? doc.text.trim().length > 0 : (doc.content ?? []).some(docHasText))
+
+/** Rascunhos não salvos. Rascunhos vazios (nada escrito, nada anexado) são apagados aqui. */
+ipcMain.handle('project:drafts', async (_e, keep?: string) => {
+  const out: { dir: string; title: string; updatedAt: string; preview: string }[] = []
+  let names: string[] = []
+  try {
+    names = await fs.readdir(draftsDir())
+  } catch {
+    return out
+  }
+  for (const n of names) {
+    const dir = join(draftsDir(), n)
+    const data = await readJson<any>(join(dir, PROJECT_FILE), null)
+    const hasAssets = (await dirSize(join(dir, ASSETS_DIR))) > 0
+    const titled = data && data.title && data.title !== 'Sem título'
+    if (!data || (!hasAssets && !titled && !(data.doc?.content ?? []).slice(1).some(docHasText))) {
+      if (resolve(dir) !== resolve(keep ?? '')) await fs.rm(dir, { recursive: true, force: true }).catch(() => null)
+      continue
+    }
+    const preview = (data.doc?.content ?? [])
+      .filter((b: any) => b.type === 'paragraph')
+      .map((b: any) => (b.content ?? []).map((c: any) => c.text ?? '').join(''))
+      .join(' ')
+      .slice(0, 90)
+    out.push({ dir, title: data.title, updatedAt: data.updatedAt, preview })
+  }
+  return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+})
+
+ipcMain.handle('project:deleteDraft', async (_e, dir: string) => {
+  if (isDraft(dir)) await fs.rm(dir, { recursive: true, force: true })
+})
+
+// ---------- armazenamento: rascunhos, cache, recentes ----------
+async function dirSize(dir: string): Promise<number> {
+  let total = 0
+  let entries: import('fs').Dirent[] = []
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true })
+  } catch {
+    return 0
+  }
+  for (const e of entries) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) total += await dirSize(p)
+    else total += (await fs.stat(p).catch(() => ({ size: 0 }))).size
+  }
+  return total
+}
+
+/** Sobras de atualização: zip baixado no %TEMP% e cache do electron-updater. */
+async function updateLeftovers() {
+  const tmp = app.getPath('temp')
+  const files = (await fs.readdir(tmp).catch(() => [] as string[]))
+    .filter((n) => /^Typos-.*-portable\.zip$/i.test(n) || n === 'typos-update.ps1')
+    .map((n) => join(tmp, n))
+  const updaterCache = join(process.env.LOCALAPPDATA ?? tmp, 'typos-updater')
+  return { files, updaterCache }
+}
+
+ipcMain.handle('storage:info', async (_e, keep?: string) => {
+  const drafts = (await fs.readdir(draftsDir()).catch(() => [] as string[])).filter((n) => resolve(join(draftsDir(), n)) !== resolve(keep ?? ''))
+  let draftBytes = 0
+  for (const n of drafts) draftBytes += await dirSize(join(draftsDir(), n))
+  const { files, updaterCache } = await updateLeftovers()
+  let updateBytes = await dirSize(updaterCache)
+  for (const f of files) updateBytes += (await fs.stat(f).catch(() => ({ size: 0 }))).size
+  const cacheBytes = (await session.defaultSession.getCacheSize()) + updateBytes
+  const recent = (await readJson<Recent[]>(settingsFile('recent.json'), [])).length
+  return { drafts: drafts.length, draftBytes, cacheBytes, recent }
+})
+
+ipcMain.handle('storage:clear', async (_e, what: 'drafts' | 'cache' | 'recent', keep?: string) => {
+  if (what === 'drafts') {
+    for (const n of await fs.readdir(draftsDir()).catch(() => [] as string[])) {
+      const dir = join(draftsDir(), n)
+      if (resolve(dir) !== resolve(keep ?? '')) await fs.rm(dir, { recursive: true, force: true }).catch(() => null)
+    }
+  } else if (what === 'cache') {
+    await session.defaultSession.clearCache()
+    await session.defaultSession.clearCodeCaches({}).catch(() => null)
+    const { files, updaterCache } = await updateLeftovers()
+    for (const f of files) await fs.rm(f, { force: true }).catch(() => null)
+    await fs.rm(updaterCache, { recursive: true, force: true }).catch(() => null)
+  } else if (what === 'recent') {
+    await writeJson(settingsFile('recent.json'), [])
+  }
 })
 
 ipcMain.handle('shell:open', (_e, path: string) => shell.openPath(path))

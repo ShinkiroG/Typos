@@ -4,7 +4,16 @@ const api = {
   newProject: () => ipcRenderer.invoke('project:new'),
   openProject: (dir?: string) => ipcRenderer.invoke('project:open', dir),
   saveProject: (dir: string, data: unknown, markdown: string) => ipcRenderer.invoke('project:save', dir, data, markdown),
+  saveProjectAs: (dir: string, data: unknown, markdown: string): Promise<{ dir: string } | { error: string } | null> =>
+    ipcRenderer.invoke('project:saveAs', dir, data, markdown),
   recentProjects: () => ipcRenderer.invoke('project:recent'),
+  removeRecent: (dir: string) => ipcRenderer.invoke('project:removeRecent', dir),
+  drafts: (keep?: string): Promise<{ dir: string; title: string; updatedAt: string; preview: string }[]> =>
+    ipcRenderer.invoke('project:drafts', keep),
+  deleteDraft: (dir: string) => ipcRenderer.invoke('project:deleteDraft', dir),
+  storageInfo: (keep?: string): Promise<{ drafts: number; draftBytes: number; cacheBytes: number; recent: number }> =>
+    ipcRenderer.invoke('storage:info', keep),
+  clearStorage: (what: 'drafts' | 'cache' | 'recent', keep?: string) => ipcRenderer.invoke('storage:clear', what, keep),
   openPath: (path: string) => ipcRenderer.invoke('shell:open', path),
 
   pickAssets: (dir: string) => ipcRenderer.invoke('asset:pick', dir),

@@ -4,7 +4,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
 import type { JSONContent } from '@tiptap/core'
-import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send } from 'lucide-react'
+import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Chapter, ScriptKeys, convertBracketLines } from '../editor/nodes'
 import { PlaybackHighlight } from '../editor/highlight'
 import { Timeline } from './Timeline'
@@ -32,6 +32,9 @@ import { SnippetModal, type SnippetDraft } from './SnippetModal'
 interface Props {
   dir: string
   data: ProjectData
+  /** rascunho em autosaves/ (ainda não foi salvo num lugar escolhido) */
+  draft: boolean
+  onSavedAs: (dir: string) => void
   formats: Format[]
   onFormatsChange: (f: Format[]) => void
   library: LibraryItem[]
@@ -69,8 +72,11 @@ const afterCurrentBlock = (editor: Editor) => {
   return $from.depth >= 1 ? $from.after(1) : editor.state.doc.content.size
 }
 
-export function Workspace({ dir, data, formats, onFormatsChange, library, onLibraryChange, onClose, onOpenSettings, registerFlush }: Props) {
+export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChange, library, onLibraryChange, onClose, onOpenSettings, registerFlush }: Props) {
   setProjectDir(dir)
+  // a pasta muda depois do "Salvar…"; handlers criados uma vez leem daqui
+  const dirRef = useRef(dir)
+  dirRef.current = dir
 
   const [title, setTitle] = useState(data.title)
   const [formatId, setFormatId] = useState(data.formatId)
@@ -101,6 +107,7 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
   const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm })
   metaRef.current = { title, formatId, format, clips, customWpm, wpm }
   const timer = useRef<number | undefined>(undefined)
+  const saveRef = useRef<() => Promise<void>>(async () => {})
 
   const attachTo = useCallback((pos: number, atts: Attachment[]) => {
     const ed = editorRef.current
@@ -119,13 +126,13 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
       if (!ed) return
       const node: JSONContent = structuredClone(item.node)
       const ext = ((node.attrs?.attachments ?? []) as Attachment[]).filter((a) => a.external)
-      if (ext.length) node.attrs!.attachments = await api.importPaths(dir, ext.map((a) => a.path))
+      if (ext.length) node.attrs!.attachments = await api.importPaths(dirRef.current, ext.map((a) => a.path))
       ed.chain()
         .insertContentAt(at ?? afterCurrentBlock(ed), node)
         .focus()
         .run()
     },
-    [dir]
+    []
   )
 
   const editor = useEditor({
@@ -160,7 +167,7 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
     onUpdate: () => {
       setSaveState('dirty')
       window.clearTimeout(timer.current)
-      timer.current = window.setTimeout(() => save(), 1000)
+      timer.current = window.setTimeout(() => saveRef.current(), 1000)
     },
     editorProps: {
       attributes: { spellcheck: 'true' },
@@ -179,7 +186,7 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
         event.preventDefault()
         const hit = blockAtCoords(view, event.clientX, event.clientY)
         const target = hit?.node.type.name === 'prompt' ? hit.pos : dropPosition(view, event.clientX, event.clientY)
-        api.importPaths(dir, files.map((f) => api.pathForFile(f))).then((atts: Attachment[]) => attachTo(target, atts))
+        api.importPaths(dirRef.current, files.map((f) => api.pathForFile(f))).then((atts: Attachment[]) => attachTo(target, atts))
         return true
       },
       handlePaste: (view, event) => {
@@ -191,7 +198,7 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
           const target = inPrompt ? $from.before(1) : $from.depth >= 1 ? $from.after(1) : view.state.doc.content.size
           ;(async () => {
             const atts: Attachment[] = []
-            for (const f of files) atts.push(await api.importBuffer(dir, f.name || 'colado.png', new Uint8Array(await f.arrayBuffer())))
+            for (const f of files) atts.push(await api.importBuffer(dirRef.current, f.name || 'colado.png', new Uint8Array(await f.arrayBuffer())))
             attachTo(target, atts)
           })()
           return true
@@ -215,10 +222,9 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
   const timing = useMemo(() => (doc ? buildTiming(doc, wpm) : null), [doc, wpm])
   const overLimit = !!(stats && format?.maxSeconds && stats.seconds > format.maxSeconds)
 
-  const save = useCallback(async () => {
+  const snapshot = useCallback(() => {
     const ed = editorRef.current
-    if (!ed || ed.isDestroyed) return
-    window.clearTimeout(timer.current)
+    if (!ed || ed.isDestroyed) return null
     const { title, formatId, format, clips, customWpm, wpm } = metaRef.current
     const out: ProjectData = {
       ...data,
@@ -229,11 +235,30 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
       doc: ed.getJSON(),
       updatedAt: new Date().toISOString()
     }
-    setSaveState('saving')
     const md = toMarkdown(out, format, computeStats(ed.state.doc, wpm), buildTiming(ed.state.doc, wpm), wpm)
-    const r = await api.saveProject(dir, out, md)
+    return { out, md }
+  }, [data])
+
+  const save = useCallback(async () => {
+    window.clearTimeout(timer.current)
+    const snap = snapshot()
+    if (!snap) return
+    setSaveState('saving')
+    const r = await api.saveProject(dirRef.current, snap.out, snap.md)
     setSaveState(r && typeof r === 'object' && 'error' in r ? 'error' : 'saved')
-  }, [data, dir])
+  }, [snapshot])
+  saveRef.current = save
+
+  const saveAs = useCallback(async () => {
+    await save()
+    const snap = snapshot()
+    if (!snap) return
+    const r = await api.saveProjectAs(dirRef.current, snap.out, snap.md)
+    if (!r) return
+    if ('error' in r) return setToast(r.error)
+    onSavedAs(r.dir)
+    setToast('Salvo em ' + r.dir)
+  }, [save, snapshot, onSavedAs])
 
   // título/formato também salvam
   const first = useRef(true)
@@ -280,7 +305,8 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key.toLowerCase() === 's') {
         e.preventDefault()
-        save()
+        if (draft || e.shiftKey) saveAs()
+        else save()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -288,7 +314,7 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
       window.removeEventListener('keydown', onKey)
       registerFlush(null)
     }
-  }, [save, registerFlush])
+  }, [save, saveAs, draft, registerFlush])
 
   useEffect(() => {
     if (!menu) return
@@ -357,7 +383,14 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
           <button className="icon-btn" title="Voltar pros roteiros" onClick={async () => (await save(), onClose())}>
             <Home size={17} />
           </button>
-          <input className="title-input" value={title} onChange={(e) => setTitle(e.target.value)} spellCheck={false} />
+          <input
+            className="title-input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onFocus={(e) => draft && title === 'Sem título' && e.target.select()}
+            spellCheck={false}
+            placeholder="Nome do roteiro"
+          />
         </div>
         <div className="tb-blocks">
           {BLOCKS.map((b) => (
@@ -380,10 +413,18 @@ export function Workspace({ dir, data, formats, onFormatsChange, library, onLibr
               </option>
             ))}
           </select>
-          <span className={'save-state ' + saveState} title="Salva sozinho (Ctrl+S força)">
+          {draft ? (
+            <button className="btn small primary" title="Escolher onde salvar (Ctrl+S)" onClick={saveAs}>
+              <Save size={14} /> Salvar…
+            </button>
+          ) : null}
+          <span
+            className={'save-state ' + saveState + (draft ? ' draft' : '')}
+            title={draft ? 'Rascunho: salva sozinho; use "Salvar…" pra escolher a pasta' : 'Salva sozinho (Ctrl+S força · Ctrl+Shift+S salva como)'}
+          >
             {saveState === 'saving' && <Loader2 size={13} className="spin" />}
             {saveState === 'saved' && <Check size={13} />}
-            {{ saved: 'Salvo', dirty: 'Editando…', saving: 'Salvando', error: 'Erro ao salvar' }[saveState]}
+            {draft && saveState === 'saved' ? 'Rascunho' : { saved: 'Salvo', dirty: 'Editando…', saving: 'Salvando', error: 'Erro ao salvar' }[saveState]}
           </span>
           <button className="btn small claude-btn" title="Salva e copia um pedido pronto pra colar no Claude" onClick={sendToClaude}>
             <Send size={14} /> Claude
