@@ -37,6 +37,9 @@ const api = {
   ): Promise<{ path: string; name: string; rel: string; kind: 'image' | 'audio' | 'video' }[] | { error: string }> =>
     ipcRenderer.invoke('folders:scan', path),
 
+  /** miniatura pequena (data URL) feita pelo Windows; null se não houver */
+  thumb: (path: string, size: number): Promise<string | null> => ipcRenderer.invoke('thumb:get', path, size),
+
   loadFormats: () => ipcRenderer.invoke('formats:load'),
   saveFormats: (formats: unknown) => ipcRenderer.invoke('formats:save', formats),
 

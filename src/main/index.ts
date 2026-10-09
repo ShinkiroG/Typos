@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, session } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, session, nativeImage } from 'electron'
 import { join, basename, extname, dirname, resolve, sep } from 'path'
 import { promises as fs, existsSync } from 'fs'
 import { pathToFileURL } from 'url'
@@ -493,4 +493,26 @@ ipcMain.handle('folders:scan', async (_e, root: string) => {
   if (!existsSync(root)) return { error: 'A pasta não existe mais.' }
   await walk(root, 0)
   return out.sort((a, b) => a.rel.localeCompare(b.rel, 'pt-BR', { numeric: true }))
+})
+
+// ---------- miniaturas (as mesmas do Explorer do Windows: rápidas, pequenas, com cache do sistema) ----------
+const thumbCache = new Map<string, string | null>()
+
+ipcMain.handle('thumb:get', async (_e, path: string, size: number) => {
+  const key = `${size}|${path}`
+  if (thumbCache.has(key)) return thumbCache.get(key)
+  let url: string | null = null
+  try {
+    const img = await nativeImage.createThumbnailFromPath(path, { width: size, height: size })
+    if (!img.isEmpty()) url = img.toDataURL()
+  } catch {
+    // sem miniatura do sistema: tenta abrir a imagem e reduzir (vídeo/áudio sem miniatura ficam sem)
+    if (mediaKind(path) === 'image') {
+      const img = nativeImage.createFromPath(path)
+      if (!img.isEmpty()) url = img.resize({ width: size, quality: 'good' }).toDataURL()
+    }
+  }
+  if (thumbCache.size > 3000) thumbCache.clear()
+  thumbCache.set(key, url)
+  return url
 })
