@@ -12,6 +12,7 @@ import {
   wordAt,
   ASSET_COLORS,
   ASSET_KINDS,
+  KIND_PALETTE,
   DEFAULT_TRACKS,
   TIMED_PAUSES,
   type AssetKind,
@@ -88,7 +89,8 @@ function placeBlock(tr: Transaction, point: { pos: number; split: boolean }, nod
       pos -= 1
     }
     tr.split(pos)
-    return tr.insert(pos + 1, node)
+    const marked = node.type.name === 'sonora' ? node.type.create({ ...node.attrs, split: true }, node.content) : node
+    return tr.insert(pos + 1, marked)
   }
   return tr.insert(pos, node)
 }
@@ -115,7 +117,17 @@ export function Timeline({
   const [selected, setSelected] = useState<string | null>(null)
   /** bloco de texto selecionado na timeline (fala/pausa/sobe som), guardado pela posição e tipo */
   const [selSeg, setSelSeg] = useState<{ pos: number; kind: string } | null>(null)
-  const [tlMenu, setTlMenu] = useState<{ x: number; y: number; seg?: { pos: number; kind: string }; clipId?: string } | null>(null)
+  const [tlMenu, setTlMenu] = useState<{
+    x: number
+    y: number
+    seg?: { pos: number; kind: string }
+    clipId?: string
+    /** botão direito numa faixa vazia: 'pause' = faixa de pausas, número = faixa de áudio */
+    lane?: 'pause' | number
+    t?: number
+  } | null>(null)
+  /** bloco com o nome sendo editado direto na timeline */
+  const [renamingClip, setRenamingClip] = useState<string | null>(null)
   const [loadedTick, setLoadedTick] = useState(0)
   const [wordIdx, setWordIdx] = useState(-1)
   const [sfxOpen, setSfxOpen] = useState(false)
@@ -195,7 +207,7 @@ export function Timeline({
   const createAsset = (kind: AssetKind) => {
     const label = ASSET_KINDS.find((k) => k.id === kind)!.label
     const n = assets.filter((a) => a.kind === kind).length + 1
-    onAssetsChange([...assets, { id: uid(), name: `${label} ${n}`, kind, color: ASSET_COLORS[assets.length % ASSET_COLORS.length] }])
+    onAssetsChange([...assets, { id: uid(), name: `${label} ${n}`, kind, color: KIND_PALETTE[kind][(n - 1) % KIND_PALETTE[kind].length] }])
   }
   const patchAsset = (id: string, p: Partial<TimelineAsset>) => onAssetsChange(assets.map((a) => (a.id === id ? { ...a, ...p } : a)))
   const renameAsset = (id: string, name: string) => {
@@ -382,6 +394,55 @@ export function Timeline({
     editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, seconds: Math.round(seconds * 10) / 10 }))
   }
 
+  /** Apaga todas as pausas do roteiro (os blocos Pausa; sobe som fica). */
+  const clearPauses = () => {
+    if (!editor) return
+    const found: number[] = []
+    editor.state.doc.forEach((n, pos) => n.type.name === 'sonora' && found.push(pos))
+    if (!found.length) return
+    const tr = editor.state.tr
+    for (const pos of found.reverse()) removePause(tr, pos)
+    editor.view.dispatch(tr)
+  }
+
+  /** Botão direito numa faixa de áudio: cria um bloco (asset novo, sem arquivo) já com o nome em edição. */
+  const createBlock = (kind: 'music' | 'sfx', lane: number, t: number) => {
+    const label = kind === 'music' ? 'Música' : 'SFX'
+    const same = assets.filter((a) => a.kind === kind)
+    const palette = KIND_PALETTE[kind]
+    const asset: TimelineAsset = { id: uid(), name: `${label} ${same.length + 1}`, kind, color: palette[same.length % palette.length] }
+    // música vai até o próximo bloco da faixa (ou até o fim do roteiro); SFX é curto
+    const next = clipsRef.current.filter((c) => c.lane === lane && c.start > t).sort((a, b) => a.start - b.start)[0]
+    const end = next ? next.start : Math.max(timingRef.current.total, t + 10)
+    const duration = kind === 'music' ? Math.max(3, end - t) : 2
+    const clip: Clip = {
+      id: uid(),
+      path: '',
+      name: asset.name,
+      kind,
+      assetId: asset.id,
+      lane,
+      start: t,
+      offset: 0,
+      duration,
+      sourceDuration: 3600,
+      gain: kind === 'music' ? 0.2 : 1,
+      keys: []
+    }
+    onAssetsChange([...assets, asset])
+    onClipsChange([...clipsRef.current, clip])
+    setSelected(clip.id)
+    setSelSeg(null)
+    setRenamingClip(clip.id)
+  }
+
+  const renameClip = (c: Clip, name: string) => {
+    const v = name.trim()
+    if (!v) return
+    if (c.assetId) renameAsset(c.assetId, v)
+    else update(c.id, { name: v })
+  }
+
   const createSonora = (start: number, seconds: number) => {
     if (!editor) return
     const node = editor.schema.nodes.sonora.create({ seconds: Math.round(seconds * 10) / 10 })
@@ -449,7 +510,10 @@ export function Timeline({
     if (!editor) return
     const node = editor.state.doc.nodeAt(seg.pos)
     if (!node || node.type.name !== seg.kind) return
-    editor.view.dispatch(editor.state.tr.delete(seg.pos, seg.pos + node.nodeSize))
+    const tr = editor.state.tr
+    if (node.type.name === 'sonora') removePause(tr, seg.pos)
+    else tr.delete(seg.pos, seg.pos + node.nodeSize)
+    editor.view.dispatch(tr)
     setSelSeg(null)
   }
 
@@ -777,7 +841,8 @@ export function Timeline({
         </div>
       </div>
 
-      {sel && (
+      {/* a barra do bloco fica sempre no lugar: selecionar/desselecionar não faz a timeline pular */}
+      {sel ? (
         <ClipInspector
           clip={sel}
           onGain={(gain) => update(sel.id, { gain })}
@@ -785,6 +850,10 @@ export function Timeline({
           onClearKeys={() => update(sel.id, { keys: [] })}
           onRemove={() => remove(sel.id)}
         />
+      ) : (
+        <div className="tl-inspector empty">
+          Clique num bloco de áudio pra ajustar volume e fade · botão direito nas faixas pra criar pausa, música ou SFX
+        </div>
       )}
       {error && (
         <div className="tl-error" onClick={() => setError('')}>
@@ -958,16 +1027,14 @@ export function Timeline({
           <div
             className="tl-pauselane"
             style={{ top: RULER_H + TEXT_H, height: PAUSE_H }}
-            title="Arraste aqui para criar uma PAUSA"
-            onPointerDown={(e) => {
-              if (e.button !== 0) return
+            title="Botão direito: criar pausa"
+            onContextMenu={(e) => {
+              e.preventDefault()
               const rect = e.currentTarget.getBoundingClientRect()
-              const t0 = Math.max(0, (e.clientX - rect.left) / pps)
-              drag.current = { mode: 'pauseCreate', rect, t0 }
-              setGhost({ start: t0, end: t0 })
+              setTlMenu({ x: e.clientX, y: e.clientY, lane: 'pause', t: Math.max(0, (e.clientX - rect.left) / pps) })
             }}
           >
-            <span className="tl-pauselane-hint">Arraste aqui para criar uma PAUSA.</span>
+            <span className="tl-pauselane-hint">Botão direito para criar uma PAUSA.</span>
           </div>
           {ghost && (
             <div className="tl-ghost" style={{ left: ghost.start * pps, width: Math.max(4, (ghost.end - ghost.start) * pps), top: RULER_H + 4, height: TEXT_H + PAUSE_H - 8 }}>
@@ -976,10 +1043,22 @@ export function Timeline({
           )}
 
           {Array.from({ length: lanes }, (_, i) => (
-            <div key={i} className="tl-lane" style={{ top: RULER_H + TEXT_H + PAUSE_H + i * LANE_H, height: LANE_H }} onPointerDown={() => {
+            <div
+              key={i}
+              className="tl-lane"
+              style={{ top: RULER_H + TEXT_H + PAUSE_H + i * LANE_H, height: LANE_H }}
+              title="Botão direito: criar bloco de música ou SFX"
+              onPointerDown={(e) => {
+                if (e.button !== 0) return
                 setSelected(null)
                 setSelSeg(null)
-              }} />
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                const rect = e.currentTarget.getBoundingClientRect()
+                setTlMenu({ x: e.clientX, y: e.clientY, lane: i, t: Math.max(0, (e.clientX - rect.left) / pps) })
+              }}
+            />
           ))}
 
           {clips.map((c) => (
@@ -992,6 +1071,12 @@ export function Timeline({
               selected={c.id === selected}
               label={assetName(c)}
               color={assetColor(c)}
+              renaming={renamingClip === c.id}
+              onStartRename={() => setRenamingClip(c.id)}
+              onRename={(name) => {
+                if (name !== null) renameClip(c, name)
+                setRenamingClip(null)
+              }}
               peaks={engine.get(c.path)?.peaks}
               loadedTick={loadedTick}
               onContextMenu={(e) => {
@@ -1024,6 +1109,57 @@ export function Timeline({
 
       {tlMenu && (
         <div className="ctx-menu" style={{ left: tlMenu.x, top: tlMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+          {tlMenu.lane === 'pause' && (
+            <>
+              <button
+                onClick={() => {
+                  createSonora(tlMenu.t ?? 0, 1)
+                  setTlMenu(null)
+                }}
+              >
+                Criar pausa aqui (1s)
+              </button>
+              <button
+                className="danger"
+                onClick={() => {
+                  clearPauses()
+                  setTlMenu(null)
+                }}
+              >
+                Limpar todas as pausas
+              </button>
+            </>
+          )}
+          {typeof tlMenu.lane === 'number' && (
+            <>
+              <button
+                onClick={() => {
+                  createBlock('music', tlMenu.lane as number, tlMenu.t ?? 0)
+                  setTlMenu(null)
+                }}
+              >
+                Criar bloco de música
+              </button>
+              <button
+                onClick={() => {
+                  createBlock('sfx', tlMenu.lane as number, tlMenu.t ?? 0)
+                  setTlMenu(null)
+                }}
+              >
+                Criar bloco de SFX
+              </button>
+            </>
+          )}
+          {tlMenu.clipId && (
+            <button
+              onClick={() => {
+                setRenamingClip(tlMenu.clipId!)
+                setTlMenu(null)
+              }}
+            >
+              Renomear
+            </button>
+          )}
           {tlMenu.seg && TIMED_PAUSES.includes(tlMenu.seg.kind) && (
             <button
               onClick={() => {
@@ -1044,17 +1180,19 @@ export function Timeline({
               Ritmo automático
             </button>
           ) : null}
-          <button
-            className="danger"
-            onClick={() => {
-              if (tlMenu.seg) deleteSeg(tlMenu.seg)
-              else if (tlMenu.clipId) remove(tlMenu.clipId)
-              setTlMenu(null)
-            }}
-          >
-            Excluir
-            <span className="ctx-key">Delete</span>
-          </button>
+          {(tlMenu.seg || tlMenu.clipId) && (
+            <button
+              className="danger"
+              onClick={() => {
+                if (tlMenu.seg) deleteSeg(tlMenu.seg)
+                else if (tlMenu.clipId) remove(tlMenu.clipId)
+                setTlMenu(null)
+              }}
+            >
+              Excluir
+              <span className="ctx-key">Delete</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -1088,9 +1226,48 @@ interface ClipViewProps {
   onContextMenu: (e: React.MouseEvent) => void
   label: string
   color?: string
+  renaming: boolean
+  onStartRename: () => void
+  /** null = cancelou */
+  onRename: (name: string | null) => void
 }
 
-function ClipView({ clip: c, pps, top, height, selected, label, color, peaks, loadedTick, onPointerDown, onKeyDown, onAddKey, onRemoveKey, onContextMenu }: ClipViewProps) {
+function ClipView({
+  clip: c,
+  pps,
+  top,
+  height,
+  selected,
+  label,
+  color,
+  renaming,
+  onStartRename,
+  onRename,
+  peaks,
+  loadedTick,
+  onPointerDown,
+  onKeyDown,
+  onAddKey,
+  onRemoveKey,
+  onContextMenu
+}: ClipViewProps) {
+  const nameEl = renaming ? (
+    <input
+      className="tl-clip-rename"
+      autoFocus
+      defaultValue={label}
+      onFocus={(e) => e.currentTarget.select()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation()
+        if (e.key === 'Enter') e.currentTarget.blur()
+        if (e.key === 'Escape') onRename(null)
+      }}
+      onBlur={(e) => onRename(e.currentTarget.value)}
+    />
+  ) : (
+    label
+  )
   const canvas = useRef<HTMLCanvasElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const w = Math.max(4, c.duration * pps)
@@ -1104,7 +1281,7 @@ function ClipView({ clip: c, pps, top, height, selected, label, color, peaks, lo
     cv.height = h
     const g = cv.getContext('2d')!
     g.clearRect(0, 0, cw, h)
-    g.fillStyle = c.kind === 'sfx' ? 'rgba(255, 170, 120, 0.55)' : 'rgba(140, 170, 255, 0.55)'
+    g.fillStyle = c.kind === 'sfx' ? 'rgba(34, 211, 238, 0.55)' : c.kind === 'soundUp' ? 'rgba(244, 114, 182, 0.55)' : 'rgba(245, 197, 66, 0.55)'
     const from = c.offset * PEAKS_PER_SEC
     const span = c.duration * PEAKS_PER_SEC
     for (let x = 0; x < cw; x++) {
@@ -1131,12 +1308,14 @@ function ClipView({ clip: c, pps, top, height, selected, label, color, peaks, lo
     return (
       <div
         className={'tl-clip placeholder' + (selected ? ' selected' : '')}
-        style={{ left: c.start * pps, top, width: w, height, ['--ac' as any]: color ?? '#7c8cff' }}
+        style={{ left: c.start * pps, top, width: w, height, ['--ac' as any]: color ?? KIND_PALETTE[c.kind][0] }}
         onPointerDown={(e) => e.button === 0 && onPointerDown(e, 'move')}
         onContextMenu={onContextMenu}
         title={`${label} · ainda sem arquivo (vincule em Assets)`}
       >
-        <div className="tl-clip-name">{label}</div>
+        <div className="tl-clip-name" onDoubleClick={onStartRename} title="Duplo clique: renomear">
+          {nameEl}
+        </div>
         <div className="tl-clip-body placeholder-body" style={{ height: h }}>
           sem arquivo
         </div>
@@ -1152,9 +1331,9 @@ function ClipView({ clip: c, pps, top, height, selected, label, color, peaks, lo
       onPointerDown={(e) => e.button === 0 && onPointerDown(e, 'move')}
       onContextMenu={onContextMenu}
     >
-      <div className="tl-clip-name">
+      <div className="tl-clip-name" onDoubleClick={onStartRename} title="Duplo clique: renomear">
         {color && <span className="asset-dot" />}
-        {label} <span className="muted">· {Math.round(c.gain * 100)}%</span>
+        {nameEl} <span className="muted">· {Math.round(c.gain * 100)}%</span>
       </div>
       <div
         className="tl-clip-body"
@@ -1386,4 +1565,18 @@ function AssetsPopover({
       })}
     </div>
   )
+}
+
+/** Apaga uma pausa; se ela tinha dividido uma fala, junta as duas metades de volta (com espaço). */
+function removePause(tr: Transaction, pos: number) {
+  const node = tr.doc.nodeAt(pos)
+  if (!node) return
+  tr.delete(pos, pos + node.nodeSize)
+  if (!node.attrs.split) return
+  const $p = tr.doc.resolve(pos)
+  const before = $p.nodeBefore
+  const after = $p.nodeAfter
+  if (before?.type.name !== 'paragraph' || after?.type.name !== 'paragraph') return
+  tr.insertText(' ', pos - 1)
+  tr.join(pos + 1)
 }

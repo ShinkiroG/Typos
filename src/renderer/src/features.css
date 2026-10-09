@@ -757,3 +757,89 @@
   font-family: var(--font-console);
   font-size: 14px;
 }
+
+/* ---------- trilha na margem do texto ---------- */
+.page {
+  position: relative;
+}
+.track-gutter {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+.tg-bar {
+  position: absolute;
+  width: 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bc) 75%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--bc) 40%, transparent);
+  pointer-events: auto;
+}
+.tg-bar.k-sfx {
+  width: 4px;
+  background: repeating-linear-gradient(180deg, var(--bc) 0 4px, transparent 4px 7px);
+}
+.tg-label {
+  position: absolute;
+  right: 10px;
+  top: 0;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--bc);
+  white-space: nowrap;
+  max-height: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tg-bar.k-sfx .tg-label {
+  font-size: 9px;
+}
+/* prévias de anexo ficam mais pra esquerda que as barras da trilha */
+@container (min-width: 1060px) {
+  .blk .thumbs {
+    right: calc(100% + 64px);
+  }
+}
+@container (min-width: 1260px) {
+  .blk .thumbs {
+    right: calc(100% + 70px);
+  }
+}
+
+/* nome do bloco sendo editado na timeline */
+.tl-clip-rename {
+  width: calc(100% - 8px);
+  background: var(--bg);
+  border: 1px solid var(--ac, var(--accent));
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 11px;
+  padding: 1px 4px;
+  outline: none;
+}
+
+.tl-inspector {
+  min-height: 34px;
+}
+.tl-inspector.empty {
+  color: #5b6372;
+  font-size: 11px;
+}
+
+/* música amarelada, SFX ciano (blocos com arquivo) */
+.tl-clip.k-music {
+  background: #3a3218;
+  border-color: #8a7224;
+}
+.tl-clip.k-sfx {
+  background: #123540;
+  border-color: #1f8ea3;
+}

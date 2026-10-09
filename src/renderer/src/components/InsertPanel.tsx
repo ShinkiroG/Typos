@@ -4,8 +4,8 @@ import { BLOCKS, type BlockType } from '../lib'
 
 const ITEMS: { type: BlockType; icon: React.ReactNode; hint: string }[] = [
   { type: 'chapter', icon: <Heading size={16} />, hint: 'divide o vídeo em partes' },
-  { type: 'paragraph', icon: <MessageSquareText size={16} />, hint: 'o texto narrado' },
   { type: 'prompt', icon: <Brackets size={16} />, hint: 'instrução de motion / imagem' },
+  { type: 'paragraph', icon: <MessageSquareText size={16} />, hint: 'o texto narrado' },
   { type: 'transition', icon: <ArrowLeftRight size={16} />, hint: 'troca de cena' },
   { type: 'soundUp', icon: <Music size={16} />, hint: 'a trilha sobe, narração pausa' },
   { type: 'sonora', icon: <Tv size={16} />, hint: 'a narração para: respiro ou trecho mostrado' }
@@ -73,6 +73,7 @@ export function InsertPanel({ editor }: { editor: Editor | null }) {
         </li>
         <li>Botão direito: corretor, salvar na biblioteca, trocar tipo</li>
         <li>Na timeline: arraste a fala pra direita e o vão vira pausa; estique a borda pra mudar o ritmo</li>
+        <li>Botão direito nas faixas da timeline: criar pausa, bloco de música ou SFX</li>
       </ul>
     </aside>
   )

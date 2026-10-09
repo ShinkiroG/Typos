@@ -91,6 +91,13 @@ export const ASSET_KINDS: { id: AssetKind; label: string }[] = [
 
 export const ASSET_COLORS = ['#7c8cff', '#f472b6', '#f7b955', '#4fe0c4', '#5eb3ff', '#a99bff', '#ff8a5c', '#9be15d']
 
+/** cores por tipo: música em tons amarelados, SFX em ciano, sobe som em rosa */
+export const KIND_PALETTE: Record<AssetKind, string[]> = {
+  music: ['#f5c542', '#e8b230', '#ffd866', '#d9a521', '#f2d07a'],
+  sfx: ['#22d3ee', '#5ee7f5', '#0fb5cc', '#67e8f9'],
+  soundUp: ['#f472b6', '#f9a8d4', '#ec4899']
+}
+
 /** Asset do projeto: "Música 1", "Sobe som A"… pode existir sem arquivo e ganhar um depois. */
 export interface TimelineAsset {
   id: string
@@ -159,11 +166,11 @@ export interface ProjectData {
 export type BlockType = 'paragraph' | 'prompt' | 'transition' | 'soundUp' | 'sonora' | 'chapter'
 
 export const BLOCKS: { type: BlockType; label: string; key: string }[] = [
-  { type: 'paragraph', label: 'Fala', key: 'Ctrl+1' },
+  { type: 'chapter', label: 'Capítulo', key: 'Ctrl+1' },
   { type: 'prompt', label: 'Prompt', key: 'Ctrl+2' },
-  { type: 'transition', label: 'Transição', key: 'Ctrl+3' },
-  { type: 'soundUp', label: 'Sobe som', key: 'Ctrl+4' },
-  { type: 'chapter', label: 'Capítulo', key: 'Ctrl+5' },
+  { type: 'paragraph', label: 'Fala', key: 'Ctrl+3' },
+  { type: 'transition', label: 'Transição', key: 'Ctrl+4' },
+  { type: 'soundUp', label: 'Sobe som', key: 'Ctrl+5' },
   { type: 'sonora', label: 'Pausa', key: 'Ctrl+6' }
 ]
 
@@ -292,8 +299,28 @@ export function toMarkdown(data: ProjectData, format: Format | undefined, stats:
   out.push('Legenda: linhas sem marcação = fala/narração. [PROMPT] = instrução de motion. [TRANSIÇÃO] e [SOBE SOM] = edição. [PAUSA] = a narração para (respiro ou trecho mostrado com som original). `(m:ss)` = tempo estimado na timeline.')
   out.push('Imagens: [APROVADA] usar como está · [RECORTAR] recortar os elementos (salvar PNG transparente em assets/recortes/ com o mesmo nome) · [REGERAR] refazer no ChatGPT.', '')
 
+  // cada música/SFX é anotada no bloco em que começa (o último bloco que começa antes dela)
+  const blocks = data.doc.content ?? []
+  const allClips = data.timeline?.clips ?? []
+  const trackNames = data.timeline?.tracks ?? []
+  const cues = new Map<number, string[]>()
+  for (const c of [...allClips].sort((a, b) => a.start - b.start)) {
+    let idx = 0
+    blocks.forEach((b, i) => {
+      const timed = b.type === 'paragraph' || b.type === 'sonora' || b.type === 'soundUp'
+      if (timed && (timing.blockStarts[i] ?? 0) <= c.start + 1e-6) idx = i
+    })
+    const kind = ASSET_KINDS.find((k) => k.id === c.kind)?.label.toUpperCase() ?? 'ÁUDIO'
+    const track = trackNames[c.lane]?.name ?? DEFAULT_TRACKS[c.lane] ?? `Faixa ${c.lane + 1}`
+    const line = `  ♪ [${kind}] "${c.name}" começa aqui (${formatTime(c.start)} → ${formatTime(c.start + c.duration)}, faixa "${track}"${c.path ? '' : ', ainda sem arquivo'})`
+    cues.set(idx, [...(cues.get(idx) ?? []), line])
+  }
+
   let chapter = 0
   ;(data.doc.content ?? []).forEach((n, i) => {
+    // música/SFX que começa neste trecho aparece logo antes da fala
+    const cue = cues.get(i)
+    if (cue) out.push(...cue)
     const text = jsonText(n).trim()
     const at = `(${formatTime(timing.blockStarts[i] ?? 0)})`
     switch (n.type) {

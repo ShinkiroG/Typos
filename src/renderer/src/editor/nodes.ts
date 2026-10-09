@@ -132,6 +132,12 @@ export const Sonora = Node.create({
         parseHTML: (el) => Number(el.getAttribute('data-seconds')) || 5,
         renderHTML: (a) => ({ 'data-seconds': a.seconds })
       },
+      /** a pausa foi criada no meio de uma fala (a fala foi dividida): ao apagar, as metades se juntam de novo */
+      split: {
+        default: false,
+        parseHTML: (el) => el.getAttribute('data-split') === 'true',
+        renderHTML: (a) => (a.split ? { 'data-split': 'true' } : {})
+      },
       attachments: jsonAttr('data-attachments', [])
     }
   },
@@ -192,11 +198,12 @@ export const ScriptKeys = Extension.create({
   name: 'scriptKeys',
   addKeyboardShortcuts() {
     return {
-      'Mod-1': () => this.editor.commands.setNode('paragraph'),
+      // mesma ordem do painel Inserir: Capítulo, Prompt, Fala, Transição, Sobe som, Pausa
+      'Mod-1': () => this.editor.commands.setNode('chapter'),
       'Mod-2': () => this.editor.commands.setNode('prompt'),
-      'Mod-3': () => this.editor.commands.setNode('transition'),
-      'Mod-4': () => this.editor.commands.setNode('soundUp'),
-      'Mod-5': () => this.editor.commands.setNode('chapter'),
+      'Mod-3': () => this.editor.commands.setNode('paragraph'),
+      'Mod-4': () => this.editor.commands.setNode('transition'),
+      'Mod-5': () => this.editor.commands.setNode('soundUp'),
       'Mod-6': () => this.editor.commands.setNode('sonora')
     }
   }

@@ -9,6 +9,7 @@ import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock
 import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming, convertBracketLines } from '../editor/nodes'
 import { Timestamps, setTimestamps } from '../editor/timestamps'
 import { FilterBar } from './FilterBar'
+import { TrackGutter } from './TrackGutter'
 import { InsertPanel } from './InsertPanel'
 import { FoldersPanel, FILE_MIME } from './FoldersPanel'
 import { PlaybackHighlight } from '../editor/highlight'
@@ -97,6 +98,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [leftOpen, setLeftOpen] = useState(() => stored('typos.left', true))
   const [hidden, setHidden] = useState<BlockType[]>(() => stored('typos.hidden', []))
   const [showTimes, setShowTimes] = useState(() => stored('typos.times', false))
+  const [showTrack, setShowTrack] = useState(() => stored('typos.trackGutter', true))
   const [menu, setMenu] = useState<{ x: number; y: number; pos: number } | null>(null)
   const [snippet, setSnippet] = useState<(SnippetDraft & { node?: JSONContent }) | null>(null)
 
@@ -385,7 +387,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     remember('typos.left', leftOpen)
     remember('typos.hidden', hidden)
     remember('typos.times', showTimes)
-  }, [leftOpen, hidden, showTimes])
+    remember('typos.trackGutter', showTrack)
+  }, [leftOpen, hidden, showTimes, showTrack])
 
   /** clique num arquivo das Pastas: anexa no bloco atual (prompt/sonora) ou cria um prompt abaixo */
   const insertFile = async (path: string) => {
@@ -584,7 +587,14 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             placeholder="Nome do roteiro"
           />
         </div>
-        <FilterBar hidden={hidden} onHidden={setHidden} showTimes={showTimes} onShowTimes={setShowTimes} />
+        <FilterBar
+          hidden={hidden}
+          onHidden={setHidden}
+          showTimes={showTimes}
+          onShowTimes={setShowTimes}
+          showTrack={showTrack}
+          onShowTrack={setShowTrack}
+        />
         <div className="tb-right">
           <select className="format-select" value={formatId} onChange={(e) => setFormatId(e.target.value)} title={`Formato do vídeo · corretor: ${langLabel(lang)} (muda em Formatos)`}>
             {formats.map((f) => (
@@ -628,6 +638,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
 
       <main className="editor-scroll" onContextMenu={onContextMenu}>
         <div className={'page aspect-' + (format?.aspect ?? '16:9').replace(':', 'x')}>
+          {showTrack && timing && <TrackGutter editor={editor} timing={timing} clips={clips} assets={assets} />}
           {/* título do roteiro no topo da página (o mesmo do campo lá em cima) */}
           <input
             className="page-title"

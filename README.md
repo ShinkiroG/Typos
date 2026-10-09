@@ -24,11 +24,12 @@ Funciona tanto na versão instalada quanto na do .zip.
 
 | Atalho | Bloco | Digitando |
 |---|---|---|
-| Ctrl+1 | Fala | padrão |
+| Ctrl+1 | Capítulo | `# ` no começo da linha |
 | Ctrl+2 | Prompt (motion/Claude) | `[texto]` numa linha |
-| Ctrl+3 | Transição | — |
-| Ctrl+4 | Sobe som | — |
-| Ctrl+5 | Capítulo | `# ` no começo da linha |
+| Ctrl+3 | Fala | padrão |
+| Ctrl+4 | Transição | — |
+| Ctrl+5 | Sobe som | — |
+| Ctrl+6 | Pausa | — |
 
 - Colar um roteiro com linhas `[instrução]` converte automaticamente.
 - **Imagens**: Ctrl+V com o cursor no prompt, arrastar o arquivo ou 📎. Cada imagem tem um status: Referência, Aprovada, **Recortar** ou **Regerar**.

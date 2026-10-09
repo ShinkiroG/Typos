@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { Eye, Clock } from 'lucide-react'
+import { Eye, Clock, AudioLines } from 'lucide-react'
 import { BLOCKS, type BlockType } from '../lib'
 
 interface Props {
@@ -7,6 +7,8 @@ interface Props {
   onHidden: (h: BlockType[]) => void
   showTimes: boolean
   onShowTimes: (v: boolean) => void
+  showTrack: boolean
+  onShowTrack: (v: boolean) => void
 }
 
 const ALL = BLOCKS.map((b) => b.type)
@@ -15,7 +17,7 @@ const ALL = BLOCKS.map((b) => b.type)
  * Filtros de visualização do texto. Clique liga/desliga; Shift+clique deixa só ele
  * (Shift+clique de novo no mesmo volta como estava); Ctrl+clique esconde só ele.
  */
-export function FilterBar({ hidden, onHidden, showTimes, onShowTimes }: Props) {
+export function FilterBar({ hidden, onHidden, showTimes, onShowTimes, showTrack, onShowTrack }: Props) {
   // filtros de antes do Shift+clique, pra poder voltar
   const beforeSolo = useRef<{ type: BlockType; hidden: BlockType[] } | null>(null)
 
@@ -66,6 +68,14 @@ export function FilterBar({ hidden, onHidden, showTimes, onShowTimes }: Props) {
         onClick={() => onShowTimes(!showTimes)}
       >
         <Clock size={13} /> Tempos
+      </button>
+      <button
+        className={'filter-btn t-time' + (showTrack ? ' on' : '')}
+        title="Mostrar na margem do texto qual música/SFX toca em cada trecho"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onShowTrack(!showTrack)}
+      >
+        <AudioLines size={13} /> Trilha
       </button>
     </div>
   )
