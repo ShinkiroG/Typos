@@ -39,7 +39,8 @@ export function setTimestamps(editor: Editor | null, enabled: boolean, starts: n
     let i = 0
     state.doc.forEach((node, offset) => {
       const t = starts[i++] ?? 0
-      if (!node.isTextblock) return
+      // linha vazia não tem fala (e o chip ficaria em cima do "Fala…")
+      if (!node.isTextblock || node.content.size === 0) return
       decos.push(Decoration.widget(offset + 1, () => widget(t), { side: -1, key: `ts-${offset}-${t.toFixed(1)}`, ignoreSelection: true }))
     })
   }

@@ -68,12 +68,14 @@ export function AiLineAssist({ editor, dir, aspect, save, onImage, scrollEl, pag
       const node = editor.state.doc.nodeAt(pos)
       if (!node) return null
       const page = pageEl.getBoundingClientRect()
-      const boxed = !['paragraph', 'chapter'].includes(node.type.name)
+      // linha vazia também vai pro canto: no começo dela ficaria em cima do "Fala…"
+      const boxed = !['paragraph', 'chapter'].includes(node.type.name) || node.content.size === 0
       if (boxed) {
         const dom = editor.view.nodeDOM(pos) as HTMLElement | null
         if (!dom) return null
         const r = dom.getBoundingClientRect()
-        return { pos, x: r.right - page.left + 10, y: r.top - page.top + 6 }
+        // por dentro da borda direita (por fora seria cortado quando o texto ocupa a largura toda)
+        return { pos, x: r.right - page.left - 30, y: r.top - page.top + 6 }
       }
       const c = editor.view.coordsAtPos(pos + node.nodeSize - 1)
       return { pos, x: c.right - page.left + 8, y: (c.top + c.bottom) / 2 - page.top - 11 }
