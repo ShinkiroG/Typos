@@ -10,6 +10,7 @@ import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming,
 import { Timestamps, setTimestamps } from '../editor/timestamps'
 import { FilterBar } from './FilterBar'
 import { TrackGutter } from './TrackGutter'
+import { AiLineAssist } from './AiLineAssist'
 import { InsertPanel } from './InsertPanel'
 import { FoldersPanel, FILE_MIME } from './FoldersPanel'
 import { PlaybackHighlight } from '../editor/highlight'
@@ -99,6 +100,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [hidden, setHidden] = useState<BlockType[]>(() => stored('typos.hidden', []))
   const [showTimes, setShowTimes] = useState(() => stored('typos.times', false))
   const [showTrack, setShowTrack] = useState(() => stored('typos.trackGutter', true))
+  // elementos da área do texto (o ícone de IA se posiciona na página e segue o mouse no scroll)
+  const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null)
+  const [pageEl, setPageEl] = useState<HTMLDivElement | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; pos: number } | null>(null)
   const [snippet, setSnippet] = useState<(SnippetDraft & { node?: JSONContent }) | null>(null)
 
@@ -705,8 +709,17 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
 
       {leftOpen && <InsertPanel editor={editor} />}
 
-      <main className="editor-scroll" onContextMenu={onContextMenu}>
-        <div className={'page aspect-' + (format?.aspect ?? '16:9').replace(':', 'x')}>
+      <main className="editor-scroll" onContextMenu={onContextMenu} ref={setScrollEl}>
+        <div className={'page aspect-' + (format?.aspect ?? '16:9').replace(':', 'x')} ref={setPageEl}>
+          <AiLineAssist
+            editor={editor}
+            dir={dir}
+            aspect={format?.aspect ?? '16:9'}
+            save={save}
+            onImage={(pos) => aiImage(pos)}
+            scrollEl={scrollEl}
+            pageEl={pageEl}
+          />
           {showTrack && timing && <TrackGutter editor={editor} timing={timing} clips={clips} assets={assets} />}
           {/* título do roteiro no topo da página (o mesmo do campo lá em cima) */}
           <input
