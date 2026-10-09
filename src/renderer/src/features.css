@@ -743,3 +743,17 @@
   background: #3a2033;
   border-color: #7a3463;
 }
+
+/* placeholder dos blocos numa linha só (não quebra palavra por palavra nem invade a linha de baixo) */
+.blk-placeholder {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+/* prompt vazio: reserva espaço pro texto de exemplo entre os colchetes */
+.prompt-text-wrap:has(> .blk-placeholder) {
+  min-width: 31ch;
+  font-family: var(--font-console);
+  font-size: 14px;
+}
