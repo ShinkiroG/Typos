@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto'
 import { loadSettings, saveSettings } from './settings'
 import { initUpdater, checkManually, installDownloadedNow, installMode } from './updater'
 import { initSpell } from './spell'
+import { initAi } from './ai'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer
 protocol.registerSchemesAsPrivileged([
@@ -154,6 +155,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => app.quit())
 
 initSpell()
+initAi()
 
 // ---------- configurações e atualizações ----------
 ipcMain.handle('settings:get', async () => {

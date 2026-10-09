@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw, Check, KeyRound, Trash2, HardDrive } from 'lucide-react'
 import { api } from '../lib'
+import { AiSection } from './AiSection'
 
 type Info = Awaited<ReturnType<typeof api.getSettings>>
 
@@ -163,6 +164,8 @@ export function SettingsModal({ onClose, currentDir }: { onClose: () => void; cu
           )}
           {!info.hasElevenLabsKey && saved && <p className="muted small">{saved}</p>}
         </section>
+
+        <AiSection />
 
         <StorageSection currentDir={currentDir} />
 

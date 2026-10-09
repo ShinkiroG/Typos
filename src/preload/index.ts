@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
+type AiProvider = 'claude-code' | 'anthropic' | 'openai'
+
 const api = {
   newProject: () => ipcRenderer.invoke('project:new'),
   openProject: (dir?: string) => ipcRenderer.invoke('project:open', dir),
@@ -61,6 +63,23 @@ const api = {
   spellSuggest: (lang: string, word: string): Promise<string[]> => ipcRenderer.invoke('spell:suggest', lang, word),
   spellAdd: (word: string) => ipcRenderer.invoke('spell:add', word),
   spellLanguages: (): Promise<string[]> => ipcRenderer.invoke('spell:languages'),
+
+  // IA (qualquer fornecedor): o app pede a tarefa, o main escolhe a conexão configurada
+  aiStatus: (): Promise<{
+    providers: { id: AiProvider; label: string; caps: ('text' | 'image')[]; configured: boolean; detail: string }[]
+    routes: { text: AiProvider | null; image: AiProvider | null }
+    models: { anthropicModel: string; openaiTextModel: string; openaiImageModel: string; claudeCodePath: string }
+  }> => ipcRenderer.invoke('ai:status'),
+  aiSet: (patch: Record<string, string | null>) => ipcRenderer.invoke('ai:set', patch),
+  aiTest: (id: AiProvider): Promise<{ ok: boolean; message: string }> => ipcRenderer.invoke('ai:test', id),
+  aiText: (job: { instruction: string; input: string; dir?: string }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
+    ipcRenderer.invoke('ai:text', job),
+  aiImage: (
+    dir: string,
+    prompt: string,
+    aspect: string
+  ): Promise<{ attachment: { id: string; path: string; name: string; kind: 'image' }; provider: AiProvider } | { error: string }> =>
+    ipcRenderer.invoke('ai:image', dir, prompt, aspect),
 
   /** o main pede pra salvar antes de fechar/atualizar */
   onFlush: (cb: () => Promise<void>) => {

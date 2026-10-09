@@ -843,3 +843,138 @@
   background: #123540;
   border-color: #1f8ea3;
 }
+
+/* ---------- Configurações → IA ---------- */
+.modal.settings {
+  width: 560px;
+  max-height: 88vh;
+  overflow-y: auto;
+}
+.ai-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  background: var(--bg-3);
+}
+.ai-card p {
+  margin: 4px 0 8px;
+  word-break: break-all;
+}
+.ai-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ai-head .btn {
+  margin-left: auto;
+}
+.ai-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #4a5160;
+}
+.ai-dot.on {
+  background: #6ad49b;
+  box-shadow: 0 0 6px #6ad49b;
+}
+.ai-caps {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.ai-test {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.ai-test.ok {
+  color: #6ad49b;
+}
+.ai-test.bad {
+  color: #ff8a8a;
+}
+.ai-install {
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+.ai-install code,
+.ai-routes code {
+  font-family: var(--font-console);
+  color: var(--c-prompt);
+}
+.ai-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.ai-field input,
+.ai-routes select {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.ai-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.ai-routes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.ai-routes label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+/* ---------- IA ---------- */
+.ctx-menu button.ctx-ai {
+  color: #e6c8ff;
+}
+.modal.ai-modal {
+  width: 620px;
+}
+.ai-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.ai-compare small {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.ai-compare p {
+  font-family: var(--font-script);
+  font-size: 15px;
+  line-height: 1.5;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 4px 0 0;
+}
+.ai-compare .ai-new {
+  border-color: #6a4fa8;
+}

@@ -531,6 +531,75 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
 
   const menuNode = menu && menu.pos >= 0 ? editor?.state.doc.nodeAt(menu.pos) : null
 
+  // ---------- IA: o app pede a tarefa; quem responde é a conexão escolhida em Configurações → IA ----------
+  type AiJob = {
+    kind: 'revise' | 'image'
+    pos: number
+    original: string
+    status: 'running' | 'done' | 'error'
+    result?: string
+    error?: string
+    provider?: string
+  }
+  const [aiJob, setAiJob] = useState<AiJob | null>(null)
+  const PROVIDER_LABEL: Record<string, string> = { 'claude-code': 'Claude Code', anthropic: 'Claude (API)', openai: 'ChatGPT (API)' }
+
+  const neighborText = (pos: number, dir: -1 | 1) => {
+    const ed = editorRef.current
+    if (!ed) return ''
+    const list: string[] = []
+    let idx = -1
+    ed.state.doc.forEach((n, off) => {
+      if (off === pos) idx = list.length
+      list.push(n.type.name === 'paragraph' ? n.textContent : '')
+    })
+    for (let i = idx + dir; i >= 0 && i < list.length; i += dir) if (list[i].trim()) return list[i]
+    return ''
+  }
+
+  const aiRevise = async (pos: number) => {
+    const node = editorRef.current?.state.doc.nodeAt(pos)
+    if (!node) return
+    const original = node.textContent
+    setAiJob({ kind: 'revise', pos, original, status: 'running' })
+    await save()
+    const r = await api.aiText({
+      instruction:
+        'Você é editor de roteiro de YouTube. Reescreva a FALA abaixo pra soar natural quando narrada: mais clara, com ritmo e gancho, mantendo o sentido, o tom e o tamanho parecido. Não invente fatos. Devolva só a fala reescrita.',
+      input: `FALA:\n${original}\n\nCONTEXTO (não reescrever):\nantes: ${neighborText(pos, -1) || '(início)'}\ndepois: ${neighborText(pos, 1) || '(fim)'}`,
+      dir: dirRef.current
+    })
+    setAiJob((j) => (j && j.pos === pos ? ('error' in r ? { ...j, status: 'error', error: r.error } : { ...j, status: 'done', result: r.text, provider: r.provider }) : j))
+  }
+
+  const aiImage = async (pos: number) => {
+    const node = editorRef.current?.state.doc.nodeAt(pos)
+    if (!node) return
+    const original = node.textContent.trim()
+    setAiJob({ kind: 'image', pos, original, status: 'running' })
+    if (!original) {
+      setAiJob({ kind: 'image', pos, original, status: 'error', error: 'Escreva no prompt o que a imagem deve mostrar.' })
+      return
+    }
+    const r = await api.aiImage(dirRef.current, original, format?.aspect ?? '16:9')
+    if ('error' in r) return setAiJob((j) => j && { ...j, status: 'error', error: r.error })
+    attachTo(pos, [r.attachment as Attachment])
+    setAiJob((j) => j && { ...j, status: 'done', result: r.attachment.path, provider: r.provider })
+  }
+
+  /** troca o texto do bloco pela sugestão (se o bloco não mudou enquanto a IA pensava) */
+  const applyRevision = () => {
+    const ed = editorRef.current
+    if (!ed || !aiJob?.result) return
+    const node = ed.state.doc.nodeAt(aiJob.pos)
+    if (!node || node.textContent !== aiJob.original) {
+      setToast('A fala mudou enquanto a IA respondia; copie a sugestão e cole você mesmo.')
+      return
+    }
+    ed.view.dispatch(ed.state.tr.replaceWith(aiJob.pos + 1, aiJob.pos + node.nodeSize - 1, ed.schema.text(aiJob.result)))
+    setAiJob(null)
+  }
+
   const startSaveSnippet = () => {
     if (!menuNode) return
     const atts = (menuNode.attrs.attachments ?? []) as Attachment[]
@@ -784,6 +853,28 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           )}
           {menuNode && (
             <>
+          {menuNode.type.name === 'paragraph' && menuNode.textContent.trim() && (
+            <button
+              className="ctx-ai"
+              onClick={() => {
+                aiRevise(menu.pos)
+                setMenu(null)
+              }}
+            >
+              ✨ Revisar fala com IA
+            </button>
+          )}
+          {(menuNode.type.name === 'prompt' || menuNode.type.name === 'sonora') && (
+            <button
+              className="ctx-ai"
+              onClick={() => {
+                aiImage(menu.pos)
+                setMenu(null)
+              }}
+            >
+              ✨ Gerar imagem de referência com IA
+            </button>
+          )}
           <button onClick={startSaveSnippet}>Salvar na biblioteca…</button>
           <div className="ctx-sep" />
           <div className="ctx-label">Transformar em</div>
@@ -809,6 +900,59 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       )}
 
       {toast && <div className="toast">{toast}</div>}
+      {aiJob && (
+        <div className="modal-backdrop" onMouseDown={() => aiJob.status !== 'running' && setAiJob(null)}>
+          <div className="modal ai-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <h3>{aiJob.kind === 'revise' ? '✨ Revisar fala' : '✨ Imagem de referência'}</h3>
+            {aiJob.status === 'running' && (
+              <p className="muted">
+                <Loader2 size={14} className="spin" /> A IA está trabalhando… (pode levar alguns segundos)
+              </p>
+            )}
+            {aiJob.status === 'error' && (
+              <>
+                <p className="error">{aiJob.error}</p>
+                <p className="muted small">Configure as conexões em ⚙ Configurações → IA.</p>
+              </>
+            )}
+            {aiJob.status === 'done' && aiJob.kind === 'revise' && (
+              <div className="ai-compare">
+                <div>
+                  <small>Original</small>
+                  <p>{aiJob.original}</p>
+                </div>
+                <div>
+                  <small>Sugestão · {PROVIDER_LABEL[aiJob.provider ?? ''] ?? aiJob.provider}</small>
+                  <p className="ai-new">{aiJob.result}</p>
+                </div>
+              </div>
+            )}
+            {aiJob.status === 'done' && aiJob.kind === 'image' && (
+              <p className="ok">Imagem gerada por {PROVIDER_LABEL[aiJob.provider ?? ''] ?? aiJob.provider} e anexada ao bloco ({aiJob.result}).</p>
+            )}
+            <div className="modal-actions">
+              {aiJob.status === 'done' && aiJob.kind === 'revise' && (
+                <>
+                  <button className="btn" onClick={() => navigator.clipboard.writeText(aiJob.result ?? '')}>
+                    Copiar
+                  </button>
+                  <button className="btn" onClick={() => (aiJob.kind === 'revise' ? aiRevise(aiJob.pos) : aiImage(aiJob.pos))}>
+                    Tentar de novo
+                  </button>
+                  <button className="btn primary" onClick={applyRevision}>
+                    Aplicar
+                  </button>
+                </>
+              )}
+              {aiJob.status !== 'running' && (
+                <button className="btn" onClick={() => setAiJob(null)}>
+                  Fechar
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {snippet && <SnippetModal draft={snippet} onCancel={() => setSnippet(null)} onSave={(d) => saveSnippet({ ...snippet, ...d })} />}
     </div>
   )
