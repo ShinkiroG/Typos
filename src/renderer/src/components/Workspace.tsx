@@ -11,6 +11,9 @@ import { Timestamps, setTimestamps } from '../editor/timestamps'
 import { FilterBar } from './FilterBar'
 import { TrackGutter } from './TrackGutter'
 import { AiLineAssist } from './AiLineAssist'
+import { AiChatPanel } from './AiChatPanel'
+import { ReviewPane } from './ReviewPane'
+import { docToLines, requestDraft } from '../review'
 import { InsertPanel } from './InsertPanel'
 import { FoldersPanel, FILE_MIME } from './FoldersPanel'
 import { PlaybackHighlight } from '../editor/highlight'
@@ -95,7 +98,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [formatId, setFormatId] = useState(data.formatId)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [panelOpen, setPanelOpen] = useState(true)
-  const [tab, setTab] = useState<'library' | 'folders' | 'formats'>('library')
+  const [tab, setTab] = useState<'ai' | 'library' | 'folders' | 'formats'>('library')
   const [leftOpen, setLeftOpen] = useState(() => stored('typos.left', true))
   const [hidden, setHidden] = useState<BlockType[]>(() => stored('typos.hidden', []))
   const [showTimes, setShowTimes] = useState(() => stored('typos.times', false))
@@ -107,6 +110,12 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [snippet, setSnippet] = useState<(SnippetDraft & { node?: JSONContent }) | null>(null)
 
   const [clips, setClips] = useState<Clip[]>(data.timeline?.clips ?? [])
+  const [notes, setNotes] = useState(data.notes ?? '')
+  // revisão lado a lado (rascunho da IA × roteiro atual)
+  const [review, setReview] = useState<{ original: JSONContent[]; draft: JSONContent[]; request: string; provider?: string; busy: boolean } | null>(null)
+  // larguras dos painéis (arrastando a borda)
+  const [leftW, setLeftW] = useState(() => stored('typos.leftW', 230))
+  const [rightW, setRightW] = useState(() => stored('typos.rightW', 320))
   const [tracks, setTracks] = useState<Track[]>(data.timeline?.tracks ?? [])
   const [assets, setAssets] = useState<TimelineAsset[]>(data.timeline?.assets ?? [])
   const [customWpm, setCustomWpm] = useState<number | null>(data.wpm ?? null)
@@ -127,8 +136,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const editorRef = useRef<Editor | null>(null)
   const libraryRef = useRef(library)
   libraryRef.current = library
-  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets })
-  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets }
+  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets, notes })
+  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes }
 
   // ---------- desfazer/refazer da tela inteira (texto + timeline) ----------
   // O texto usa o histórico do editor; os clipes de áudio guardam cópias. A pilha "ordem"
@@ -392,7 +401,54 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     remember('typos.hidden', hidden)
     remember('typos.times', showTimes)
     remember('typos.trackGutter', showTrack)
-  }, [leftOpen, hidden, showTimes, showTrack])
+    remember('typos.leftW', leftW)
+    remember('typos.rightW', rightW)
+  }, [leftOpen, hidden, showTimes, showTrack, leftW, rightW])
+
+  /** arrastar a borda de um painel muda a largura dele */
+  const startResize = (side: 'left' | 'right', e: React.PointerEvent) => {
+    e.preventDefault()
+    const x0 = e.clientX
+    const w0 = side === 'left' ? leftW : rightW
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - x0
+      if (side === 'left') setLeftW(Math.min(520, Math.max(170, w0 + dx)))
+      else setRightW(Math.min(720, Math.max(260, w0 - dx)))
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.classList.remove('resizing')
+    }
+    document.body.classList.add('resizing')
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
+  // ---------- revisão lado a lado ----------
+  const currentBlocks = () => (editorRef.current?.getJSON().content ?? []) as JSONContent[]
+  const openReview = (draftBlocks: JSONContent[], request: string, provider?: string) =>
+    setReview({ original: currentBlocks(), draft: draftBlocks, request, provider, busy: false })
+
+  /** troca o roteiro inteiro pela versão unificada, numa transação só (Ctrl+Z desfaz) */
+  const applyReview = (blocks: JSONContent[]) => {
+    const ed = editorRef.current
+    if (!ed) return
+    const nodes = blocks.map((b) => ed.schema.nodeFromJSON(b))
+    ed.view.dispatch(ed.state.tr.replaceWith(0, ed.state.doc.content.size, nodes))
+    setReview(null)
+    setToast('Revisão unificada. Ctrl+Z desfaz.')
+  }
+
+  const reviseDraft = async (request: string) => {
+    if (!review) return
+    setReview({ ...review, busy: true })
+    const r = await requestDraft(docToLines(review.draft), request, dirRef.current, true)
+    if ('error' in r) {
+      setReview((v) => v && { ...v, busy: false })
+      setToast(r.error)
+    } else setReview((v) => v && { ...v, draft: r.blocks, request, provider: r.provider, busy: false })
+  }
 
   /** clique num arquivo das Pastas: anexa no bloco atual (prompt/sonora) ou cria um prompt abaixo */
   const insertFile = async (path: string) => {
@@ -408,13 +464,14 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const snapshot = useCallback(() => {
     const ed = editorRef.current
     if (!ed || ed.isDestroyed) return null
-    const { title, formatId, format, clips, customWpm, wpm, tracks, assets } = metaRef.current
+    const { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes } = metaRef.current
     const out: ProjectData = {
       ...data,
       title,
       formatId,
       wpm: customWpm,
       timeline: { clips, tracks, assets },
+      notes,
       doc: ed.getJSON(),
       updatedAt: new Date().toISOString()
     }
@@ -453,7 +510,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     setSaveState('dirty')
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => save(), 800)
-  }, [title, formatId, clips, customWpm, tracks, assets, save])
+  }, [title, formatId, clips, customWpm, tracks, assets, notes, save])
 
   useEffect(() => {
     try {
@@ -642,7 +699,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   }
 
   return (
-    <div className="workspace" style={gridLayout(leftOpen, panelOpen, timelineOpen)}>
+    <div className="workspace" style={gridLayout(leftOpen, panelOpen, timelineOpen, leftW, rightW)}>
       <header className="topbar">
         <div className="tb-left">
           <button className="icon-btn" title="Painel Inserir" onClick={() => setLeftOpen((o) => !o)}>
@@ -707,10 +764,23 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         </div>
       </header>
 
-      {leftOpen && <InsertPanel editor={editor} />}
+      {leftOpen && <InsertPanel editor={editor} notes={notes} onNotes={setNotes} onResizeStart={(e) => startResize('left', e)} />}
 
       <main className="editor-scroll" onContextMenu={onContextMenu} ref={setScrollEl}>
-        <div className={'page aspect-' + (format?.aspect ?? '16:9').replace(':', 'x')} ref={setPageEl}>
+        {review && (
+          <ReviewPane
+            original={review.original}
+            draft={review.draft}
+            wpm={wpm}
+            request={review.request}
+            provider={review.provider}
+            busy={review.busy}
+            onApply={applyReview}
+            onDiscard={() => setReview(null)}
+            onRequestChanges={reviseDraft}
+          />
+        )}
+        <div className={'page aspect-' + (format?.aspect ?? '16:9').replace(':', 'x')} ref={setPageEl} style={review ? { display: 'none' } : undefined}>
           <AiLineAssist
             editor={editor}
             dir={dir}
@@ -742,7 +812,11 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
 
       {panelOpen && (
         <aside className="side">
+          <div className="panel-resize left" onPointerDown={(e) => startResize('right', e)} title="Arraste pra mudar a largura" />
           <div className="tabs">
+            <button className={tab === 'ai' ? 'active' : ''} onClick={() => setTab('ai')} title="Conversar com a IA sobre o roteiro inteiro">
+              ✨ IA
+            </button>
             <button className={tab === 'library' ? 'active' : ''} onClick={() => setTab('library')}>
               Biblioteca
             </button>
@@ -753,7 +827,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
               Formatos
             </button>
           </div>
-          {tab === 'library' ? (
+          {tab === 'ai' ? (
+            <AiChatPanel dir={dir} getLines={() => docToLines(currentBlocks())} save={save} onDraft={openReview} />
+          ) : tab === 'library' ? (
             <LibraryPanel
               items={library}
               onInsert={(i) => insertSnippet(i)}
@@ -989,8 +1065,8 @@ function remember(key: string, value: unknown) {
 }
 
 /** grade da tela: [Inserir] | texto | [painel direito], com timeline opcional embaixo */
-function gridLayout(left: boolean, right: boolean, timeline: boolean): React.CSSProperties {
-  const cols = [left && '230px', '1fr', right && '320px'].filter(Boolean) as string[]
+function gridLayout(left: boolean, right: boolean, timeline: boolean, leftW = 230, rightW = 320): React.CSSProperties {
+  const cols = [left && `${leftW}px`, 'minmax(0, 1fr)', right && `${rightW}px`].filter(Boolean) as string[]
   const mid = [left && 'left', 'main', right && 'side'].filter(Boolean) as string[]
   const row = (name: string) => '"' + cols.map(() => name).join(' ') + '"'
   return {

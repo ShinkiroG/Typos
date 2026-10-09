@@ -26,7 +26,9 @@ export function Welcome({
     api.recentProjects().then(setRecent)
     api.drafts().then(setDrafts)
   }
-  useEffect(refresh, [])
+  useEffect(() => {
+    refresh()
+  }, [])
 
   const handle = (r: any) => {
     if (!r) return

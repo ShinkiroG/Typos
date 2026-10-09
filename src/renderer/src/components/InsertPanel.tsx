@@ -33,9 +33,21 @@ export function insertBlock(editor: Editor | null, type: BlockType) {
     .run()
 }
 
-export function InsertPanel({ editor }: { editor: Editor | null }) {
+export function InsertPanel({
+  editor,
+  notes,
+  onNotes,
+  onResizeStart
+}: {
+  editor: Editor | null
+  notes: string
+  onNotes: (v: string) => void
+  onResizeStart: (e: React.PointerEvent) => void
+}) {
   return (
     <aside className="left-panel">
+      <div className="panel-resize right" onPointerDown={onResizeStart} title="Arraste pra mudar a largura" />
+      <div className="left-scroll">
       <div className="lp-title">Inserir</div>
       {ITEMS.map((it) => {
         const b = BLOCKS.find((x) => x.type === it.type)!
@@ -75,6 +87,17 @@ export function InsertPanel({ editor }: { editor: Editor | null }) {
         <li>Na timeline: arraste a fala pra direita e o vão vira pausa; estique a borda pra mudar o ritmo</li>
         <li>Botão direito nas faixas da timeline: criar pausa, bloco de música ou SFX</li>
       </ul>
+
+      <div className="lp-title lp-notes-title">Anotações</div>
+      <textarea
+        className="lp-notes"
+        value={notes}
+        onChange={(e) => onNotes(e.target.value)}
+        onKeyDown={(e) => e.stopPropagation()}
+        placeholder="Ideias soltas, links, lembretes… (salva junto do roteiro)"
+        spellCheck
+      />
+      </div>
     </aside>
   )
 }

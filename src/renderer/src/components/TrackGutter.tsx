@@ -69,7 +69,9 @@ export function TrackGutter({ editor, timing, clips, assets }: { editor: Editor 
     )
   }, [editor, timing, clips, assets])
 
-  useLayoutEffect(measure, [measure])
+  useLayoutEffect(() => {
+    measure()
+  }, [measure])
 
   // texto mudou de tamanho (janela, filtros, imagens carregando) → remede
   useEffect(() => {

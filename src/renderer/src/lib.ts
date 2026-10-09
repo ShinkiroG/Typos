@@ -159,6 +159,8 @@ export interface ProjectData {
   /** palavras/min deste roteiro; vazio = usa o do formato */
   wpm?: number | null
   timeline?: TimelineData
+  /** anotações livres do autor (painel da esquerda) */
+  notes?: string
   createdAt: string
   updatedAt: string
 }
@@ -371,6 +373,7 @@ export function toMarkdown(data: ProjectData, format: Format | undefined, stats:
       )
     }
   }
+  if (data.notes?.trim()) out.push('', '## Anotações do autor', '', data.notes.trim())
   return out.join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
