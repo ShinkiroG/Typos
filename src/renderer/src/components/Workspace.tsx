@@ -30,6 +30,8 @@ import {
   type Attachment,
   type BlockType,
   type Clip,
+  type Track,
+  type TimelineAsset,
   type Format,
   type LibraryItem,
   type ProjectData
@@ -99,6 +101,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [snippet, setSnippet] = useState<(SnippetDraft & { node?: JSONContent }) | null>(null)
 
   const [clips, setClips] = useState<Clip[]>(data.timeline?.clips ?? [])
+  const [tracks, setTracks] = useState<Track[]>(data.timeline?.tracks ?? [])
+  const [assets, setAssets] = useState<TimelineAsset[]>(data.timeline?.assets ?? [])
   const [customWpm, setCustomWpm] = useState<number | null>(data.wpm ?? null)
   const [timelineOpen, setTimelineOpen] = useState(() => {
     try {
@@ -117,32 +121,69 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const editorRef = useRef<Editor | null>(null)
   const libraryRef = useRef(library)
   libraryRef.current = library
-  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm })
-  metaRef.current = { title, formatId, format, clips, customWpm, wpm }
+  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets })
+  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets }
 
   // ---------- desfazer/refazer da tela inteira (texto + timeline) ----------
   // O texto usa o histórico do editor; os clipes de áudio guardam cópias. A pilha "ordem"
   // diz de quem foi a última ação, pra Ctrl+Z desfazer na ordem certa.
   const undoOrder = useRef<('doc' | 'clips')[]>([])
   const redoOrder = useRef<('doc' | 'clips')[]>([])
-  const clipPast = useRef<Clip[][]>([])
-  const clipFuture = useRef<Clip[][]>([])
-  const lastClipEdit = useRef(0)
+  type TlSnap = { clips: Clip[]; tracks: Track[]; assets: TimelineAsset[] }
+  const clipPast = useRef<TlSnap[]>([])
+  const clipFuture = useRef<TlSnap[]>([])
+  const tlSnap = (): TlSnap => ({ clips: metaRef.current.clips, tracks: metaRef.current.tracks, assets: metaRef.current.assets })
+  // cada clique/arraste (ou cada campo digitado) é um "gesto"; mudanças no mesmo gesto viram um passo só
+  const gesture = useRef({ id: 0, kind: '', target: null as EventTarget | null, at: 0 })
+  const recordedGesture = useRef(-1)
+  useEffect(() => {
+    const onPointer = () => {
+      gesture.current = { id: gesture.current.id + 1, kind: 'pointer', target: null, at: Date.now() }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      const g = gesture.current
+      const now = Date.now()
+      if (g.kind === 'key' && g.target === e.target && now - g.at < 1500) {
+        g.at = now
+        return
+      }
+      gesture.current = { id: g.id + 1, kind: 'key', target: e.target, at: now }
+    }
+    window.addEventListener('pointerdown', onPointer, true)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('pointerdown', onPointer, true)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [])
   const applyingHistory = useRef(false)
 
-  /** muda os clipes guardando o estado anterior (um arraste inteiro vira um passo só) */
-  const changeClips = useCallback((next: Clip[]) => {
-    const now = Date.now()
-    const sameGesture = undoOrder.current[undoOrder.current.length - 1] === 'clips' && now - lastClipEdit.current < 700
+  /** guarda o estado da timeline antes de mudar (um arraste inteiro vira um passo só) */
+  const recordTimeline = useCallback(() => {
+    const sameGesture = undoOrder.current[undoOrder.current.length - 1] === 'clips' && recordedGesture.current === gesture.current.id
     if (!sameGesture) {
-      clipPast.current.push(metaRef.current.clips)
+      clipPast.current.push(tlSnap())
       undoOrder.current.push('clips')
     }
-    lastClipEdit.current = now
+    recordedGesture.current = gesture.current.id
     clipFuture.current = []
     redoOrder.current = []
-    setClips(next)
   }, [])
+  const changeClips = useCallback((next: Clip[]) => {
+    recordTimeline()
+    metaRef.current.clips = next // chamadas seguidas no mesmo gesto enxergam o valor novo
+    setClips(next)
+  }, [recordTimeline])
+  const changeTracks = useCallback((next: Track[]) => {
+    recordTimeline()
+    metaRef.current.tracks = next
+    setTracks(next)
+  }, [recordTimeline])
+  const changeAssets = useCallback((next: TimelineAsset[]) => {
+    recordTimeline()
+    metaRef.current.assets = next
+    setAssets(next)
+  }, [recordTimeline])
   const timer = useRef<number | undefined>(undefined)
   const saveRef = useRef<() => Promise<void>>(async () => {})
 
@@ -306,14 +347,17 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           const dst = dir === 'undo' ? clipFuture : clipPast
           const snap = src.current.pop()
           if (snap) {
-            dst.current.push(metaRef.current.clips)
-            setClips(snap)
+            dst.current.push(tlSnap())
+            setClips(snap.clips)
+            setTracks(snap.tracks)
+            setAssets(snap.assets)
           }
         }
       } finally {
         applyingHistory.current = false
       }
       to.current.push(kind)
+      recordedGesture.current = -1
     },
     [editor]
   )
@@ -357,13 +401,13 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const snapshot = useCallback(() => {
     const ed = editorRef.current
     if (!ed || ed.isDestroyed) return null
-    const { title, formatId, format, clips, customWpm, wpm } = metaRef.current
+    const { title, formatId, format, clips, customWpm, wpm, tracks, assets } = metaRef.current
     const out: ProjectData = {
       ...data,
       title,
       formatId,
       wpm: customWpm,
-      timeline: { clips },
+      timeline: { clips, tracks, assets },
       doc: ed.getJSON(),
       updatedAt: new Date().toISOString()
     }
@@ -402,7 +446,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     setSaveState('dirty')
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => save(), 800)
-  }, [title, formatId, clips, customWpm, save])
+  }, [title, formatId, clips, customWpm, tracks, assets, save])
 
   useEffect(() => {
     try {
@@ -639,6 +683,10 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             timing={timing}
             clips={clips}
             onClipsChange={changeClips}
+            tracks={tracks}
+            onTracksChange={changeTracks}
+            assets={assets}
+            onAssetsChange={changeAssets}
             wpm={wpm}
             formatWpm={format?.wpm ?? 150}
             customWpm={customWpm !== null}

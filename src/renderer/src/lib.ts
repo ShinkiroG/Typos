@@ -63,9 +63,12 @@ export const ATTACHMENT_STATUS: { id: AttachmentStatus; label: string; hint: str
 /** Clipe de áudio na timeline. Keyframes de volume ficam no tempo da FONTE, então cortar/aparar não mexe no envelope. */
 export interface Clip {
   id: string
+  /** '' = bloco de um asset ainda sem arquivo (placeholder) */
   path: string
   name: string
-  kind: 'music' | 'sfx'
+  kind: AssetKind
+  /** veio de um asset do projeto (o nome e o arquivo seguem o asset) */
+  assetId?: string
   lane: number
   /** início na timeline (s) */
   start: number
@@ -78,9 +81,39 @@ export interface Clip {
   keys: { t: number; v: number }[]
 }
 
+export type AssetKind = 'music' | 'soundUp' | 'sfx'
+
+export const ASSET_KINDS: { id: AssetKind; label: string }[] = [
+  { id: 'music', label: 'Música' },
+  { id: 'soundUp', label: 'Sobe som' },
+  { id: 'sfx', label: 'SFX' }
+]
+
+export const ASSET_COLORS = ['#7c8cff', '#f472b6', '#f7b955', '#4fe0c4', '#5eb3ff', '#a99bff', '#ff8a5c', '#9be15d']
+
+/** Asset do projeto: "Música 1", "Sobe som A"… pode existir sem arquivo e ganhar um depois. */
+export interface TimelineAsset {
+  id: string
+  name: string
+  kind: AssetKind
+  color: string
+  /** arquivo vinculado (relativo ao projeto), se já tiver */
+  path?: string
+}
+
+/** Nome de cada faixa (linha) da timeline, na ordem. */
+export interface Track {
+  id: string
+  name: string
+}
+
 export interface TimelineData {
   clips: Clip[]
+  tracks?: Track[]
+  assets?: TimelineAsset[]
 }
+
+export const DEFAULT_TRACKS = ['Música', 'Sobe som']
 
 export interface Format {
   id: string
@@ -295,12 +328,19 @@ export function toMarkdown(data: ProjectData, format: Format | undefined, stats:
   const clips = [...(data.timeline?.clips ?? [])].sort((a, b) => a.start - b.start)
   if (clips.length) {
     out.push('', '## Trilha de áudio', '')
+    const tracks = data.timeline?.tracks ?? []
     for (const c of clips) {
+      const kindLabel = ASSET_KINDS.find((k) => k.id === c.kind)?.label ?? 'Áudio'
+      const where = ` · faixa "${tracks[c.lane]?.name ?? DEFAULT_TRACKS[c.lane] ?? `Faixa ${c.lane + 1}`}"`
+      if (!c.path) {
+        out.push(`- ${kindLabel} "${c.name}" (ainda sem arquivo)${where} · entra ${formatTime(c.start)} · dura ${c.duration.toFixed(1)}s`)
+        continue
+      }
       const keys = c.keys.length
         ? ' · volume: ' + c.keys.map((k) => `${formatTime(c.start + k.t - c.offset)}→${Math.round(k.v * 100)}%`).join(', ')
         : ''
       out.push(
-        `- ${c.kind === 'sfx' ? 'SFX' : 'Música'} "${c.name}" (${c.path}) · entra ${formatTime(c.start)} · dura ${c.duration.toFixed(1)}s · começa em ${c.offset.toFixed(1)}s do arquivo · volume ${Math.round(c.gain * 100)}%${keys}`
+        `- ${kindLabel} "${c.name}" (${c.path})${where} · entra ${formatTime(c.start)} · dura ${c.duration.toFixed(1)}s · começa em ${c.offset.toFixed(1)}s do arquivo · volume ${Math.round(c.gain * 100)}%${keys}`
       )
     }
   }

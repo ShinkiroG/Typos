@@ -3,7 +3,25 @@ import type { Editor } from '@tiptap/react'
 import { Play, Pause, SkipBack, Music, Sparkles, Scissors, Trash2, ZoomIn, ZoomOut, Eraser, Loader2, RotateCcw } from 'lucide-react'
 import { AudioEngine, PEAKS_PER_SEC } from '../timeline/engine'
 import { highlightKey, type HighlightRange } from '../editor/highlight'
-import { api, clipEnd, envelopeAt, formatTime, uid, wordAt, TIMED_PAUSES, type Clip, type Timing, type Segment } from '../lib'
+import {
+  api,
+  clipEnd,
+  envelopeAt,
+  formatTime,
+  uid,
+  wordAt,
+  ASSET_COLORS,
+  ASSET_KINDS,
+  DEFAULT_TRACKS,
+  TIMED_PAUSES,
+  type AssetKind,
+  type Clip,
+  type Timing,
+  type Segment,
+  type TimelineAsset,
+  type Track
+} from '../lib'
+import { Boxes, Plus, Link2, X as XIcon } from 'lucide-react'
 import { FILE_MIME } from './FoldersPanel'
 import type { Transaction } from '@tiptap/pm/state'
 
@@ -23,7 +41,16 @@ interface Props {
   formatWpm: number
   customWpm: boolean
   onWpmChange: (wpm: number | null) => void
+  tracks: Track[]
+  onTracksChange: (t: Track[]) => void
+  assets: TimelineAsset[]
+  onAssetsChange: (a: TimelineAsset[]) => void
 }
+
+const ASSET_MIME = 'application/x-typos-asset'
+const HEAD_W = 118
+/** duração inicial de um bloco de asset sem arquivo */
+const PLACEHOLDER_SECONDS: Record<AssetKind, number> = { music: 20, soundUp: 4, sfx: 2 }
 
 type Drag =
   | { mode: 'move' | 'trimL' | 'trimR'; id: string; x0: number; y0: number; clip0: Clip }
@@ -66,7 +93,21 @@ function placeBlock(tr: Transaction, point: { pos: number; split: boolean }, nod
   return tr.insert(pos, node)
 }
 
-export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, formatWpm, customWpm, onWpmChange }: Props) {
+export function Timeline({
+  editor,
+  dir,
+  timing,
+  clips,
+  onClipsChange,
+  wpm,
+  formatWpm,
+  customWpm,
+  onWpmChange,
+  tracks,
+  onTracksChange,
+  assets,
+  onAssetsChange
+}: Props) {
   const engine = useMemo(() => new AudioEngine(), [])
   const [pps, setPps] = useState(() => Number(localStorage.getItem('typos.pps')) || 40)
   const [height, setHeight] = useState(() => Number(localStorage.getItem('typos.tlHeight')) || 300)
@@ -109,7 +150,7 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
   // carrega os áudios (e desenha as ondas quando chegam)
   useEffect(() => {
     for (const c of clips)
-      if (!engine.get(c.path))
+      if (c.path && !engine.get(c.path))
         engine
           .load(c)
           .then(() => setLoadedTick((n) => n + 1))
@@ -125,7 +166,96 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
 
   const contentEnd = Math.max(timing.total, ...clips.map(clipEnd), 10)
   const width = (contentEnd + 15) * pps
-  const lanes = Math.max(2, ...clips.map((c) => c.lane + 2))
+  const lanes = Math.max(tracks.length || DEFAULT_TRACKS.length, ...clips.map((c) => c.lane + 1))
+  const trackName = (i: number) => tracks[i]?.name ?? DEFAULT_TRACKS[i] ?? `Faixa ${i + 1}`
+  const fullTracks = (): Track[] => Array.from({ length: lanes }, (_, i) => tracks[i] ?? { id: uid(), name: trackName(i) })
+  const renameTrack = (i: number, name: string) => {
+    const t = fullTracks()
+    t[i] = { ...t[i], name }
+    onTracksChange(t)
+  }
+  const addTrack = () => onTracksChange([...fullTracks(), { id: uid(), name: `Faixa ${lanes + 1}` }])
+  const removeTrack = (i: number) => {
+    if (clipsRef.current.some((c) => c.lane === i)) {
+      setError('Essa faixa tem blocos. Mova ou apague os blocos antes de remover a faixa.')
+      return
+    }
+    const t = fullTracks()
+    t.splice(i, 1)
+    onTracksChange(t)
+    onClipsChange(clipsRef.current.map((c) => (c.lane > i ? { ...c, lane: c.lane - 1 } : c)))
+  }
+  const headsRef = useRef<HTMLDivElement>(null)
+
+  // ---------- assets do projeto ("Música 1", "Sobe som A"…), com ou sem arquivo ----------
+  const [assetsOpen, setAssetsOpen] = useState(false)
+  const assetName = (c: Clip) => (c.assetId ? assets.find((a) => a.id === c.assetId)?.name : undefined) ?? c.name
+  const assetColor = (c: Clip) => (c.assetId ? assets.find((a) => a.id === c.assetId)?.color : undefined)
+
+  const createAsset = (kind: AssetKind) => {
+    const label = ASSET_KINDS.find((k) => k.id === kind)!.label
+    const n = assets.filter((a) => a.kind === kind).length + 1
+    onAssetsChange([...assets, { id: uid(), name: `${label} ${n}`, kind, color: ASSET_COLORS[assets.length % ASSET_COLORS.length] }])
+  }
+  const patchAsset = (id: string, p: Partial<TimelineAsset>) => onAssetsChange(assets.map((a) => (a.id === id ? { ...a, ...p } : a)))
+  const renameAsset = (id: string, name: string) => {
+    patchAsset(id, { name })
+    onClipsChange(clipsRef.current.map((c) => (c.assetId === id ? { ...c, name } : c)))
+  }
+  const deleteAsset = (a: TimelineAsset) => {
+    const used = clipsRef.current.filter((c) => c.assetId === a.id).length
+    if (used && !confirm(`"${a.name}" está em ${used} bloco(s) na timeline. Apagar o asset e os blocos?`)) return
+    onAssetsChange(assets.filter((x) => x.id !== a.id))
+    if (used) onClipsChange(clipsRef.current.filter((c) => c.assetId !== a.id))
+  }
+  /** vincula um arquivo ao asset: todos os blocos dele passam a tocar esse áudio */
+  const linkAsset = async (a: TimelineAsset) => {
+    const [f] = await api.pickAudio(dir)
+    if (!f) return
+    try {
+      const { buffer } = await engine.load(f)
+      patchAsset(a.id, { path: f.path })
+      onClipsChange(
+        clipsRef.current.map((c) =>
+          c.assetId === a.id
+            ? { ...c, path: f.path, sourceDuration: buffer.duration, duration: Math.min(c.duration, buffer.duration - c.offset) }
+            : c
+        )
+      )
+    } catch (e: any) {
+      setError(String(e.message ?? e))
+    }
+  }
+  const placeAsset = async (a: TimelineAsset, at = engine.position(), lane?: number) => {
+    let duration = PLACEHOLDER_SECONDS[a.kind]
+    let sourceDuration = 3600
+    if (a.path) {
+      try {
+        const { buffer } = await engine.load({ path: a.path })
+        duration = sourceDuration = buffer.duration
+      } catch {
+        /* arquivo sumiu: entra como bloco sem som */
+      }
+    }
+    let l = lane ?? 0
+    if (lane === undefined) while (!laneFree(clipsRef.current, l, at, at + duration)) l++
+    const clip: Clip = {
+      id: uid(),
+      path: a.path ?? '',
+      name: a.name,
+      kind: a.kind,
+      assetId: a.id,
+      lane: l,
+      start: at,
+      offset: 0,
+      duration,
+      sourceDuration,
+      gain: a.kind === 'music' ? 0.2 : 1,
+      keys: []
+    }
+    onClipsChange([...clipsRef.current, clip])
+    setSelected(clip.id)
+  }
 
   // ---------- destaque no texto ----------
   const highlight = useCallback(
@@ -208,7 +338,7 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
       engine.pause()
       setPlaying(false)
     } else {
-      await Promise.all(clipsRef.current.map((c) => engine.load(c).catch(() => null)))
+      await Promise.all(clipsRef.current.filter((c) => c.path).map((c) => engine.load(c).catch(() => null)))
       await engine.play(clipsRef.current)
       setPlaying(true)
     }
@@ -611,6 +741,24 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
         </div>
 
         <div className="tl-tools">
+          <div className="assets-anchor">
+            <button className={'btn small' + (assetsOpen ? ' on' : '')} onClick={() => setAssetsOpen((o) => !o)} title="Músicas e sobe sons do projeto (com ou sem arquivo)">
+              <Boxes size={14} /> Assets
+            </button>
+            {assetsOpen && (
+              <AssetsPopover
+                assets={assets}
+                usage={(id) => clips.filter((c) => c.assetId === id).length}
+                onCreate={createAsset}
+                onRename={renameAsset}
+                onColor={(id, color) => patchAsset(id, { color })}
+                onLink={linkAsset}
+                onDelete={deleteAsset}
+                onPlace={(a) => placeAsset(a)}
+                onClose={() => setAssetsOpen(false)}
+              />
+            )}
+          </div>
           <button className="btn small" onClick={async () => addAudio(await api.pickAudio(dir), 'music')} title="Adicionar música (entra a 20% do volume)">
             <Music size={14} /> Música
           </button>
@@ -644,9 +792,35 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
         </div>
       )}
 
+      <div className="tl-body">
+      <div className="tl-heads" style={{ width: HEAD_W }}>
+        <div ref={headsRef}>
+          <div style={{ height: RULER_H }} />
+          <div className="tl-track-head fixed" style={{ height: TEXT_H }}>
+            Texto
+          </div>
+          <div className="tl-track-head fixed small" style={{ height: PAUSE_H }}>
+            Pausas
+          </div>
+          {Array.from({ length: lanes }, (_, i) => (
+            <div key={i} className="tl-track-head" style={{ height: LANE_H }}>
+              <input value={trackName(i)} onChange={(e) => renameTrack(i, e.target.value)} spellCheck={false} title="Nome da faixa" />
+              <button className="icon-btn" title="Remover faixa (precisa estar vazia)" onClick={() => removeTrack(i)}>
+                <XIcon size={12} />
+              </button>
+            </div>
+          ))}
+          <button className="tl-add-track" onClick={addTrack}>
+            <Plus size={12} /> Faixa
+          </button>
+        </div>
+      </div>
       <div
         className="tl-scroll"
         ref={scrollRef}
+        onScroll={(e) => {
+          if (headsRef.current) headsRef.current.style.transform = `translateY(${-e.currentTarget.scrollTop}px)`
+        }}
         onWheel={(e) => {
           if (!e.ctrlKey) return
           setPps((p) => Math.min(400, Math.max(4, p * (e.deltaY < 0 ? 1.15 : 1 / 1.15))))
@@ -654,6 +828,14 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
         onDragOver={(e) => e.preventDefault()}
         onDrop={async (e) => {
           e.preventDefault()
+          const assetId = e.dataTransfer.getData(ASSET_MIME)
+          if (assetId) {
+            const a = assets.find((x) => x.id === assetId)
+            const rect = (e.currentTarget.firstElementChild as HTMLElement).getBoundingClientRect()
+            const lane = Math.max(0, Math.floor((e.clientY - rect.top - (RULER_H + TEXT_H + PAUSE_H)) / LANE_H))
+            if (a) placeAsset(a, Math.max(0, (e.clientX - rect.left) / pps), lane)
+            return
+          }
           const folderFile = e.dataTransfer.getData(FILE_MIME)
           const paths = folderFile ? [folderFile] : Array.from(e.dataTransfer.files).map((f) => api.pathForFile(f))
           const rect = (e.currentTarget.firstElementChild as HTMLElement).getBoundingClientRect()
@@ -661,7 +843,7 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
           addAudio(await api.importAudioPaths(dir, paths), folderFile ? 'sfx' : 'music', at)
         }}
       >
-        <div className="tl-content" style={{ width, height: RULER_H + TEXT_H + PAUSE_H + lanes * LANE_H }}>
+        <div className="tl-content" style={{ width, height: RULER_H + TEXT_H + PAUSE_H + lanes * LANE_H + 34 }}>
           <div
             className="tl-ruler"
             style={{ height: RULER_H }}
@@ -808,6 +990,8 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
               top={RULER_H + TEXT_H + PAUSE_H + c.lane * LANE_H + 3}
               height={LANE_H - 6}
               selected={c.id === selected}
+              label={assetName(c)}
+              color={assetColor(c)}
               peaks={engine.get(c.path)?.peaks}
               loadedTick={loadedTick}
               onContextMenu={(e) => {
@@ -835,6 +1019,7 @@ export function Timeline({ editor, dir, timing, clips, onClipsChange, wpm, forma
 
           <div className="tl-playhead" ref={playheadRef} />
         </div>
+      </div>
       </div>
 
       {tlMenu && (
@@ -901,9 +1086,11 @@ interface ClipViewProps {
   onAddKey: (t: number, v: number) => void
   onRemoveKey: (index: number) => void
   onContextMenu: (e: React.MouseEvent) => void
+  label: string
+  color?: string
 }
 
-function ClipView({ clip: c, pps, top, height, selected, peaks, loadedTick, onPointerDown, onKeyDown, onAddKey, onRemoveKey, onContextMenu }: ClipViewProps) {
+function ClipView({ clip: c, pps, top, height, selected, label, color, peaks, loadedTick, onPointerDown, onKeyDown, onAddKey, onRemoveKey, onContextMenu }: ClipViewProps) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const w = Math.max(4, c.duration * pps)
@@ -940,15 +1127,34 @@ function ClipView({ clip: c, pps, top, height, selected, peaks, loadedTick, onPo
     [w, yOf(envelopeAt(c.keys, c.offset + c.duration))]
   ]
 
+  if (!c.path)
+    return (
+      <div
+        className={'tl-clip placeholder' + (selected ? ' selected' : '')}
+        style={{ left: c.start * pps, top, width: w, height, ['--ac' as any]: color ?? '#7c8cff' }}
+        onPointerDown={(e) => e.button === 0 && onPointerDown(e, 'move')}
+        onContextMenu={onContextMenu}
+        title={`${label} · ainda sem arquivo (vincule em Assets)`}
+      >
+        <div className="tl-clip-name">{label}</div>
+        <div className="tl-clip-body placeholder-body" style={{ height: h }}>
+          sem arquivo
+        </div>
+        <div className="tl-handle l" onPointerDown={(e) => onPointerDown(e, 'trimL')} />
+        <div className="tl-handle r" onPointerDown={(e) => onPointerDown(e, 'trimR')} />
+      </div>
+    )
+
   return (
     <div
       className={'tl-clip k-' + c.kind + (selected ? ' selected' : '')}
-      style={{ left: c.start * pps, top, width: w, height }}
+      style={{ left: c.start * pps, top, width: w, height, ...(color ? { ['--ac' as any]: color } : {}) }}
       onPointerDown={(e) => e.button === 0 && onPointerDown(e, 'move')}
       onContextMenu={onContextMenu}
     >
       <div className="tl-clip-name">
-        {c.name} <span className="muted">· {Math.round(c.gain * 100)}%</span>
+        {color && <span className="asset-dot" />}
+        {label} <span className="muted">· {Math.round(c.gain * 100)}%</span>
       </div>
       <div
         className="tl-clip-body"
@@ -1099,4 +1305,85 @@ function pauseBefore(doc: import('@tiptap/pm/model').Node, pos: number) {
     return null
   }
   return null
+}
+
+function AssetsPopover({
+  assets,
+  usage,
+  onCreate,
+  onRename,
+  onColor,
+  onLink,
+  onDelete,
+  onPlace,
+  onClose
+}: {
+  assets: TimelineAsset[]
+  usage: (id: string) => number
+  onCreate: (k: AssetKind) => void
+  onRename: (id: string, name: string) => void
+  onColor: (id: string, color: string) => void
+  onLink: (a: TimelineAsset) => void
+  onDelete: (a: TimelineAsset) => void
+  onPlace: (a: TimelineAsset) => void
+  onClose: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const down = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && !(e.target as HTMLElement).closest('.assets-anchor') && onClose()
+    document.addEventListener('mousedown', down)
+    return () => document.removeEventListener('mousedown', down)
+  }, [onClose])
+  return (
+    <div className="popover assets-pop" ref={ref}>
+      <div className="pop-head">Assets do projeto</div>
+      <p className="pop-hint" style={{ marginTop: 0 }}>
+        Crie e nomeie (ex.: "Música 2"). Arraste pra uma faixa ou clique em <Plus size={10} /> pra pôr no playhead. Dá pra vincular o arquivo depois.
+      </p>
+      {ASSET_KINDS.map((k) => {
+        const list = assets.filter((a) => a.kind === k.id)
+        return (
+          <div key={k.id} className="asset-group">
+            <div className="asset-group-head">
+              <span>{k.label}</span>
+              <button className="btn small" onClick={() => onCreate(k.id)}>
+                <Plus size={12} /> {k.label}
+              </button>
+            </div>
+            {list.map((a) => (
+              <div
+                key={a.id}
+                className="asset-row"
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(ASSET_MIME, a.id)
+                  e.dataTransfer.effectAllowed = 'copy'
+                }}
+              >
+                <button
+                  className="asset-color"
+                  style={{ background: a.color }}
+                  title="Trocar cor"
+                  onClick={() => onColor(a.id, ASSET_COLORS[(ASSET_COLORS.indexOf(a.color) + 1) % ASSET_COLORS.length])}
+                />
+                <input value={a.name} onChange={(e) => onRename(a.id, e.target.value)} spellCheck={false} />
+                <span className="asset-meta" title={a.path ?? 'sem arquivo'}>
+                  {a.path ? '♪' : '—'} {usage(a.id) ? `×${usage(a.id)}` : ''}
+                </span>
+                <button className="icon-btn" title={a.path ? 'Trocar arquivo' : 'Vincular arquivo de áudio'} onClick={() => onLink(a)}>
+                  <Link2 size={13} />
+                </button>
+                <button className="icon-btn" title="Pôr no playhead" onClick={() => onPlace(a)}>
+                  <Plus size={13} />
+                </button>
+                <button className="icon-btn danger" title="Apagar asset" onClick={() => onDelete(a)}>
+                  <XIcon size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )
+      })}
+    </div>
+  )
 }
