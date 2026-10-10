@@ -114,7 +114,7 @@ export function AudioSettings({ onClose }: { onClose: () => void }) {
 
   const pct = (v: number) => Math.max(0, Math.min(100, ((v + 60) / 60) * 100))
   const hint =
-    peak < -50 ? 'sem sinal — fale perto do microfone' : peak > -1 ? 'estourando! baixe o ganho do microfone' : peak > -6 ? 'alto, mas ok' : peak < -24 ? 'baixo — chegue mais perto ou suba o ganho' : 'bom nível pra narração'
+    peak < -50 ? 'sem sinal — fale perto do microfone' : peak > -2 ? 'estourando! baixe o ganho do microfone' : peak >= -8 ? 'ótimo pra voz' : peak > -16 ? 'um pouco baixo — dá pra subir o ganho' : 'baixo — chegue mais perto ou suba o ganho'
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
@@ -148,7 +148,7 @@ export function AudioSettings({ onClose }: { onClose: () => void }) {
             ))}
           </div>
           <p className="muted small">
-            Pico {peak <= -100 ? '—' : peak.toFixed(1) + ' dB'} · {hint}. O ideal pra voz é ficar entre −18 e −6 dB.
+            Pico {peak <= -100 ? '—' : peak.toFixed(1) + ' dB'} · {hint}. O ideal pra voz é o pico ficar entre −8 e −4 dB.
           </p>
           <label className="toggle-row">
             <input type="checkbox" checked={prefs.processing} onChange={(e) => save({ processing: e.target.checked })} />

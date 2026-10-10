@@ -437,16 +437,18 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
   }
 
   // ---------- normalizar a narração ----------
-  const loudTarget = data.loudTarget ?? -16
+  // alvo: pico (dBFS) ou volume percebido (LUFS)
+  const normSpec = data.norm ?? 'peak:-6'
+  const [normMode, normValue] = [normSpec.split(':')[0] as 'peak' | 'lufs', Number(normSpec.split(':')[1])]
   const [normMsg, setNormMsg] = useState('')
   /**
    * Mede o volume percebido (LUFS) de cada corte e acerta o volume dele pro alvo.
    * Sem corte selecionado: todos os cortes da narração (pasta Narração / faixas de narração).
    */
-  const normalize = async () => {
+  const normalize = async (only?: MontageClip[]) => {
     const d = dataRef.current
     const narrBins = new Set(d.bins.filter((b) => b.role === 'narration').map((b) => b.id))
-    const sel = d.clips.filter((c) => selected.includes(c.id))
+    const sel = only ?? d.clips.filter((c) => selected.includes(c.id))
     const targets = (sel.length ? sel : d.clips.filter((c) => narrBins.has(mediaRef.current.get(c.media)?.bin ?? '') || c.block !== undefined)).filter(
       (c) => mediaRef.current.get(c.media)?.hasAudio
     )
@@ -465,7 +467,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           skipped++
           continue
         }
-        const g = Math.max(-24, Math.min(24, loudTarget - l.i))
+        const g = Math.max(-24, Math.min(24, normMode === 'peak' ? normValue - l.tp : normValue - l.i))
         if (l.tp + g > -1) limited++
         gains.set(c.id, Math.round(g * 10) / 10)
       }
@@ -475,7 +477,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     if (!gains.size) return setNormMsg('Os cortes são curtos demais (ou mudos) pra medir.')
     change({ ...dataRef.current, clips: dataRef.current.clips.map((c) => (gains.has(c.id) ? { ...c, gainDb: gains.get(c.id) } : c)) })
     setNormMsg(
-      `${gains.size} corte(s) em ${loudTarget} LUFS` +
+      `${gains.size} corte(s) com ${normMode === 'peak' ? `pico em ${normValue} dB` : `${normValue} LUFS`}` +
         (limited ? ` · em ${limited} o limitador segura os picos` : '') +
         (skipped ? ` · ${skipped} curto(s)/mudo(s) ficaram como estavam` : '') +
         ' · Ctrl+Z desfaz'
@@ -1026,19 +1028,21 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           className="btn small"
           disabled={!!busy}
           title="Deixa a narração no volume ideal: mede cada corte (LUFS) e ajusta o volume dele. Com cortes selecionados, só neles."
-          onClick={normalize}
+          onClick={() => normalize()}
         >
           <Gauge size={13} /> Normalizar
         </button>
-        <select
-          className="mt-loud"
-          value={loudTarget}
-          title="Alvo de volume percebido"
-          onChange={(e) => change({ ...data, loudTarget: Number(e.target.value) }, 'loud-target')}
-        >
-          <option value={-14}>−14 LUFS · YouTube (voz sozinha)</option>
-          <option value={-16}>−16 LUFS · narração com trilha</option>
-          <option value={-19}>−19 LUFS · mais baixo / podcast</option>
+        <select className="mt-loud" value={normSpec} title="Alvo da normalização" onChange={(e) => change({ ...data, norm: e.target.value }, 'norm-target')}>
+          <optgroup label="Pico (voz: −4 a −8 dB)">
+            <option value="peak:-4">pico −4 dB</option>
+            <option value="peak:-6">pico −6 dB</option>
+            <option value="peak:-8">pico −8 dB</option>
+          </optgroup>
+          <optgroup label="Volume percebido (LUFS)">
+            <option value="lufs:-14">−14 LUFS · YouTube</option>
+            <option value="lufs:-16">−16 LUFS · com trilha</option>
+            <option value="lufs:-19">−19 LUFS · podcast</option>
+          </optgroup>
         </select>
         {normMsg && <span className="mt-norm-msg">{normMsg}</span>}
         {busy && !normMsg && (
@@ -1115,6 +1119,38 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
               >
                 Duplicar logo depois
               </button>
+              {targets.some((c) => media.get(c.media)?.hasAudio) && (
+                <>
+                  <div className="ctx-sep" />
+                  <div className="ctx-label">
+                    Volume{one ? ` · agora ${(one.gainDb ?? 0) > 0 ? '+' : ''}${(one.gainDb ?? 0).toFixed(1)} dB` : ''}
+                  </div>
+                  {[6, 3, -3, -6].map((db) => (
+                    <button
+                      key={db}
+                      onClick={act(() =>
+                        change({
+                          ...dataRef.current,
+                          clips: dataRef.current.clips.map((c) =>
+                            targets.some((t) => t.id === c.id) ? { ...c, gainDb: Math.round(Math.max(-30, Math.min(24, (c.gainDb ?? 0) + db)) * 10) / 10 } : c
+                          )
+                        })
+                      )}
+                    >
+                      {db > 0 ? 'Aumentar' : 'Diminuir'} {Math.abs(db)} dB
+                    </button>
+                  ))}
+                  <button onClick={act(() => normalize(targets))}>
+                    Normalizar áudio ({normMode === 'peak' ? `pico ${normValue} dB` : `${normValue} LUFS`})
+                  </button>
+                  <button
+                    disabled={!targets.some((c) => c.gainDb)}
+                    onClick={act(() => change({ ...dataRef.current, clips: dataRef.current.clips.map((c) => (targets.some((t) => t.id === c.id) ? { ...c, gainDb: 0 } : c)) }))}
+                  >
+                    Volume original (0 dB)
+                  </button>
+                </>
+              )}
               {one && prevOf(one) && (
                 <button onClick={act(() => patchClip(one.id, { splice: one.splice ? undefined : spliceLen }))}>
                   {one.splice ? 'Tirar a Emenda' : 'Emenda com o corte anterior'} <kbd>E</kbd>

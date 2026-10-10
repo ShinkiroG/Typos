@@ -38,6 +38,39 @@ const MIN_DUR = 0.04
 /** duração "infinita" de imagem parada */
 export const mediaLen = (m?: MontageMedia) => (!m ? 0 : m.kind === 'image' ? 3600 : m.duration)
 
+/**
+ * Soltar um corte em cima de outro (na mesma faixa) corta o de baixo, como num editor de vídeo:
+ * o pedaço coberto some de verdade (arrastar de volta deixa o vão, não o som antigo).
+ */
+export function overwrite(clips: MontageClip[], ids: string[]): MontageClip[] {
+  let out = clips
+  for (const id of ids) {
+    const top = out.find((c) => c.id === id)
+    if (!top) continue
+    const s = top.start
+    const e = clipEndT(top)
+    const next: MontageClip[] = []
+    for (const o of out) {
+      if (o.id === top.id || ids.includes(o.id) || o.track !== top.track) {
+        next.push(o)
+        continue
+      }
+      const os = o.start
+      const oe = clipEndT(o)
+      if (oe <= s + 0.001 || os >= e - 0.001) next.push(o) // não encosta
+      else if (os >= s - 0.001 && oe <= e + 0.001) continue // coberto inteiro: sai
+      else if (os < s && oe > e) {
+        // o de cima caiu no meio: o de baixo vira dois pedaços
+        next.push({ ...o, out: o.in + (s - os), fadeOut: 0 })
+        next.push({ ...o, id: uid(), start: e, in: o.in + (e - os), fadeIn: 0, splice: undefined })
+      } else if (os < s) next.push({ ...o, out: o.in + (s - os), fadeOut: 0 }) // perde o fim
+      else next.push({ ...o, start: e, in: o.in + (e - os), fadeIn: 0, splice: undefined }) // perde o começo
+    }
+    out = next
+  }
+  return out
+}
+
 export function splitClip(c: MontageClip, t: number): [MontageClip, MontageClip] | null {
   if (t <= c.start + MIN_DUR || t >= clipEndT(c) - MIN_DUR) return null
   const cut = c.in + (t - c.start)
@@ -65,6 +98,8 @@ export function EditTimeline(p: Props) {
     ids: string[]
     gesture: string
     main: string
+    /** último estado do arrasto (o React pode não ter redesenhado ainda quando solta) */
+    last?: MontageData
   } | null>(null)
 
   const timeAt = (clientX: number) => {
@@ -149,11 +184,19 @@ export function EditTimeline(p: Props) {
       const v = Math.max(0, Math.min(clipDur(o) / 2, base + (d.kind === 'fade-in' ? dt : -dt)))
       clips = clips.map((c) => (c.id === o.id ? { ...c, [key]: v < 0.01 ? 0 : v } : c))
     }
-    p.change({ ...d.orig, clips }, d.gesture)
+    d.last = { ...d.orig, clips }
+    p.change(d.last, d.gesture)
   }
 
   const onUp = () => {
+    const d = drag.current
     drag.current = null
+    // terminou de mover/aparar: o que ficou por baixo é cortado (mesmo passo do desfazer)
+    const cur = d?.last
+    if (d && cur && (d.kind === 'move' || d.kind === 'trim-l' || d.kind === 'trim-r')) {
+      const clips = overwrite(cur.clips, d.ids)
+      if (clips.length !== cur.clips.length || clips.some((c, i) => c !== cur.clips[i])) p.change({ ...cur, clips }, d.gesture)
+    }
   }
 
   // ---------- soltar mídia do painel ----------
@@ -254,6 +297,24 @@ export function EditTimeline(p: Props) {
                     onMenu={p.onClipMenu}
                   />
                 ))}
+              {data.clips
+                .filter((c) => c.track === tr.id && c.splice)
+                .map((c) => {
+                  const w = Math.max(14, c.splice! * pps)
+                  return (
+                    <svg
+                      key={'x' + c.id}
+                      className="mt-xfade"
+                      style={{ left: c.start * pps - w / 2, width: w }}
+                      viewBox="0 0 100 100"
+                      preserveAspectRatio="none"
+                    >
+                      <title>{`Emenda: crossfade de ${Math.round(c.splice! * 1000)} ms`}</title>
+                      <line x1="0" y1="10" x2="100" y2="90" vectorEffect="non-scaling-stroke" />
+                      <line x1="0" y1="90" x2="100" y2="10" vectorEffect="non-scaling-stroke" />
+                    </svg>
+                  )
+                })}
               {p.recording?.track === tr.id && (
                 <div className="mt-clip rec" ref={p.recClipRef} style={{ left: p.recording.start * pps, width: 2 }}>
                   <span className="mt-clip-name">● gravando…</span>
@@ -309,11 +370,20 @@ const ClipView = memo(function ClipView({
     >
       {m?.hasAudio && <Wave c={c} engine={engine} width={w} version={wavesVersion} />}
       <span className="mt-clip-name">{m?.name ?? '?'}</span>
-      {!!c.fadeIn && <div className="mt-fade in" style={{ width: c.fadeIn * pps }} />}
-      {!!c.fadeOut && <div className="mt-fade out" style={{ width: c.fadeOut * pps }} />}
+      {!!c.fadeIn && (
+        <svg className="mt-fade in" style={{ width: c.fadeIn * pps }} viewBox="0 0 100 100" preserveAspectRatio="none">
+          <polygon points="0,0 100,0 0,100" />
+          <line x1="0" y1="100" x2="100" y2="0" vectorEffect="non-scaling-stroke" />
+        </svg>
+      )}
+      {!!c.fadeOut && (
+        <svg className="mt-fade out" style={{ width: c.fadeOut * pps }} viewBox="0 0 100 100" preserveAspectRatio="none">
+          <polygon points="0,0 100,0 100,100" />
+          <line x1="0" y1="0" x2="100" y2="100" vectorEffect="non-scaling-stroke" />
+        </svg>
+      )}
       <div className="mt-knob in" data-role="fade-in" style={{ left: (c.fadeIn ?? 0) * pps }} title="Fade de entrada" />
       <div className="mt-knob out" data-role="fade-out" style={{ right: (c.fadeOut ?? 0) * pps }} title="Fade de saída" />
-      {!!c.splice && <div className="mt-splice" title={`Emenda (${Math.round(c.splice * 1000)} ms)`} />}
       <div className="mt-trim l" data-role="trim-l" />
       <div className="mt-trim r" data-role="trim-r" />
     </div>

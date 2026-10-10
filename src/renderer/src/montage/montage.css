@@ -466,15 +466,40 @@
   position: absolute;
   top: 0;
   bottom: 0;
+  height: 100%;
   pointer-events: none;
+  overflow: visible;
 }
 .mt-fade.in {
   left: 0;
-  background: linear-gradient(to top right, transparent 49%, rgba(0, 0, 0, 0.45) 51%);
 }
 .mt-fade.out {
   right: 0;
-  background: linear-gradient(to top left, transparent 49%, rgba(0, 0, 0, 0.45) 51%);
+}
+/* a parte "cortada" pelo fade fica escura; a linha é a rampa do volume */
+.mt-fade polygon {
+  fill: rgba(0, 0, 0, 0.5);
+}
+.mt-fade line {
+  stroke: #fff;
+  stroke-width: 1.5;
+  opacity: 0.85;
+}
+/* X da Emenda (crossfade) em cima da junção */
+.mt-xfade {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  height: calc(100% - 8px);
+  z-index: 3;
+  pointer-events: auto;
+  overflow: visible;
+  background: color-mix(in srgb, var(--c-prompt) 22%, transparent);
+  border-radius: 3px;
+}
+.mt-xfade line {
+  stroke: var(--c-prompt);
+  stroke-width: 2;
 }
 .mt-knob {
   position: absolute;
@@ -508,16 +533,6 @@
 }
 .mt-clip.blade .mt-trim {
   cursor: crosshair;
-}
-.mt-splice {
-  position: absolute;
-  left: -1px;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background: linear-gradient(to bottom, var(--c-prompt), transparent);
-  box-shadow: 0 0 6px var(--c-prompt);
-  pointer-events: none;
 }
 .mt-add-track {
   position: sticky;
