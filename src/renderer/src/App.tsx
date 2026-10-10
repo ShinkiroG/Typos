@@ -109,6 +109,14 @@ export default function App() {
           onClose={() => setSession(null)}
           onOpenSettings={() => setSettingsOpen(true)}
           registerFlush={registerFlush}
+          onSwitchProject={async (kind, dir) => {
+            // salva o que está aberto antes de trocar
+            await flush.current?.()
+            const r = kind === 'new' ? await api.newProject() : await api.openProject(dir)
+            if (!r) return
+            if (r.error) return alert(r.error)
+            setSession({ key: uid(), dir: r.dir, data: r.data, draft: !!r.draft })
+          }}
         />
       ) : (
         <Welcome onOpen={(dir, data, draft) => setSession({ key: uid(), dir, data, draft })} onOpenSettings={() => setSettingsOpen(true)} />

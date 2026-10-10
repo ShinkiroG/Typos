@@ -50,6 +50,8 @@ import { LibraryPanel, SNIPPET_MIME } from './LibraryPanel'
 import { FormatsPanel } from './FormatsPanel'
 import { Montage } from '../montage/Montage'
 import { RefModal, RefsPanel } from './References'
+import { MenuBar, type Menu } from './MenuBar'
+import { AudioSettings } from './AudioSettings'
 import { SnippetModal, type SnippetDraft } from './SnippetModal'
 
 interface Props {
@@ -65,6 +67,8 @@ interface Props {
   onClose: () => void
   onOpenSettings: () => void
   registerFlush: (fn: (() => Promise<void>) | null) => void
+  /** trocar de roteiro pelo menu Arquivo (novo / abrir / recente) */
+  onSwitchProject: (kind: 'new' | 'open', dir?: string) => void
 }
 
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error'
@@ -95,7 +99,7 @@ const afterCurrentBlock = (editor: Editor) => {
   return $from.depth >= 1 ? $from.after(1) : editor.state.doc.content.size
 }
 
-export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChange, library, onLibraryChange, onClose, onOpenSettings, registerFlush }: Props) {
+export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChange, library, onLibraryChange, onClose, onOpenSettings, registerFlush, onSwitchProject }: Props) {
   setProjectDir(dir)
   // a pasta muda depois do "Salvar…"; handlers criados uma vez leem daqui
   const dirRef = useRef(dir)
@@ -118,6 +122,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [refEdit, setRefEdit] = useState<{ from: number; to: number; text: string; id?: string; excerpt: string } | null>(null)
   const [refTip, setRefTip] = useState<{ x: number; y: number; text: string } | null>(null)
   const [refsOpen, setRefsOpen] = useState(false)
+  const [audioOpen, setAudioOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState<'keys' | 'about' | null>(null)
   const [snippet, setSnippet] = useState<(SnippetDraft & { node?: JSONContent }) | null>(null)
 
   const [clips, setClips] = useState<Clip[]>(data.timeline?.clips ?? [])
@@ -610,6 +616,87 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     return withTime.length
   }
 
+  const goMode = (m: 'script' | 'montage') => {
+    setMode(m)
+    if (m === 'montage') setMontageVisited(true)
+  }
+
+  // ---------- menus do topo ----------
+  const menus: Menu[] = [
+    {
+      label: 'Arquivo',
+      items: [
+        { label: 'Novo roteiro', shortcut: 'Ctrl+N', onClick: () => onSwitchProject('new') },
+        { label: 'Abrir pasta…', shortcut: 'Ctrl+O', onClick: () => onSwitchProject('open') },
+        {
+          label: 'Abrir recente',
+          items: async () =>
+            (await api.recentProjects())
+              .filter((r: { dir: string }) => r.dir !== dir)
+              .slice(0, 12)
+              .map((r: { dir: string; title: string }) => ({ label: r.title, onClick: () => onSwitchProject('open', r.dir) }))
+        },
+        { sep: true },
+        { label: 'Salvar', shortcut: 'Ctrl+S', onClick: () => (draft ? saveAs() : save()) },
+        { label: draft ? 'Salvar…' : 'Salvar como…', shortcut: 'Ctrl+Shift+S', onClick: () => saveAs() },
+        { label: 'Mudar pasta do projeto…', onClick: () => moveProject() },
+        { label: 'Abrir pasta do projeto', onClick: () => api.openPath(dir) },
+        { sep: true },
+        { label: 'Copiar referências pro rodapé', onClick: () => setRefsOpen(true) },
+        { label: 'Copiar pedido pro Claude', onClick: () => sendToClaude() },
+        { sep: true },
+        { label: 'Voltar pro início', onClick: async () => (await save(), onClose()) }
+      ]
+    },
+    {
+      label: 'Editar',
+      items: [
+        { label: 'Desfazer', shortcut: 'Ctrl+Z', onClick: () => historyStep('undo') },
+        { label: 'Refazer', shortcut: 'Ctrl+Shift+Z', onClick: () => historyStep('redo') },
+        { sep: true },
+        { label: 'Recortar', shortcut: 'Ctrl+X', onClick: () => document.execCommand('cut') },
+        { label: 'Copiar', shortcut: 'Ctrl+C', onClick: () => document.execCommand('copy') },
+        { label: 'Colar', shortcut: 'Ctrl+V', onClick: () => navigator.clipboard.readText().then((t) => editor?.chain().focus().insertContent(t).run()) },
+        { label: 'Selecionar tudo', shortcut: 'Ctrl+A', onClick: () => editor?.chain().focus().selectAll().run() },
+        { sep: true },
+        { label: 'Configurações…', shortcut: 'Ctrl+,', onClick: onOpenSettings }
+      ]
+    },
+    {
+      label: 'Exibir',
+      items: [
+        { label: 'Roteiro', checked: mode === 'script', onClick: () => goMode('script') },
+        { label: 'Montagem', checked: mode === 'montage', onClick: () => goMode('montage') },
+        { sep: true },
+        { label: 'Painel Inserir', checked: leftOpen, onClick: () => setLeftOpen((o) => !o) },
+        { label: 'Painel lateral', checked: panelOpen, onClick: () => setPanelOpen((o) => !o) },
+        { label: 'Timeline', checked: timelineOpen, onClick: () => setTimelineOpen((o) => !o) },
+        { sep: true },
+        { label: 'Tempos no texto', checked: showTimes, onClick: () => setShowTimes(!showTimes) },
+        { label: 'Trilha ao lado do texto', checked: showTrack, onClick: () => setShowTrack(!showTrack) },
+        { sep: true },
+        { label: 'Referências bibliográficas…', onClick: () => setRefsOpen(true) }
+      ]
+    },
+    {
+      label: 'Áudio',
+      items: [
+        { label: 'Configurar entrada e saída…', onClick: () => setAudioOpen(true) },
+        { sep: true },
+        { label: 'Gravar narração (na Montagem)', shortcut: 'R', onClick: () => goMode('montage') }
+      ]
+    },
+    {
+      label: 'Ajuda',
+      items: [
+        { label: 'Atalhos do teclado', onClick: () => setHelpOpen('keys') },
+        { label: 'Checar atualizações', onClick: () => api.checkUpdates() },
+        { sep: true },
+        { label: 'Sobre o Typos', onClick: () => setHelpOpen('about') }
+      ]
+    }
+  ]
+
   /** move a pasta do roteiro pra outro lugar (rascunho: é o mesmo que salvar) */
   const moveProject = async () => {
     if (draft) return saveAs()
@@ -705,6 +792,18 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   useEffect(() => {
     registerFlush(save)
     const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault()
+        onSwitchProject('new')
+      }
+      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'o') {
+        e.preventDefault()
+        onSwitchProject('open')
+      }
+      if (e.ctrlKey && e.key === ',') {
+        e.preventDefault()
+        onOpenSettings()
+      }
       if (e.ctrlKey && e.key.toLowerCase() === 's') {
         e.preventDefault()
         if (draft || e.shiftKey) saveAs()
@@ -867,6 +966,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     <div className="workspace" style={gridLayout(leftOpen, panelOpen, timelineOpen, leftW, rightW)}>
       <header className="topbar">
         <div className="tb-left">
+          <MenuBar menus={menus} />
           <button className="icon-btn" title="Painel Inserir" onClick={() => setLeftOpen((o) => !o)}>
             {leftOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
           </button>
@@ -906,10 +1006,10 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           <div className="ws-title">Montagem</div>
         )}
         <div className="tb-right">
-          <select className="format-select" value={formatId} onChange={(e) => setFormatId(e.target.value)} title={`Formato do vídeo · corretor: ${langLabel(lang)} (muda em Formatos)`}>
+          <select className="format-select" value={formatId} onChange={(e) => setFormatId(e.target.value)} title={`Formato: ${format?.name} · ${format?.aspect} · corretor ${langLabel(lang)} (muda em Formatos)`}>
             {formats.map((f) => (
               <option key={f.id} value={f.id}>
-                {f.name} · {f.aspect} · {formatLang(f) === 'off' ? 'sem corretor' : formatLang(f)}
+                {f.name}
               </option>
             ))}
           </select>
@@ -919,8 +1019,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
                 <Save size={14} /> Salvar…
               </button>
             ) : (
-              <button className="btn small" title="Salvar uma cópia em outra pasta e continuar nela (Ctrl+Shift+S)" onClick={saveAs}>
-                <Save size={14} /> Salvar como…
+              <button className="icon-btn" title="Salvar como… (Ctrl+Shift+S): uma cópia em outra pasta, e continua nela" onClick={saveAs}>
+                <Save size={16} />
               </button>
             )}
             <button className="icon-btn" title="Abrir pasta do projeto" onClick={() => api.openPath(dir)}>
@@ -947,9 +1047,6 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           <button className="icon-btn" title="Painel lateral" onClick={() => setPanelOpen((o) => !o)}>
             {panelOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
           </button>
-          <button className="icon-btn" title="Configurações" onClick={onOpenSettings}>
-            <Settings size={17} />
-          </button>
         </div>
       </header>
 
@@ -960,6 +1057,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             data={montage}
             onChange={setMontage}
             onSyncScript={syncFromMontage}
+            dir={dir}
+            wpm={wpm}
+            onAudioSettings={() => setAudioOpen(true)}
             lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
             getBlocks={() => {
               const out: { index: number; type: string; text: string; seconds?: number }[] = []
@@ -1272,6 +1372,49 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       )}
 
       {toast && <div className="toast">{toast}</div>}
+      {audioOpen && <AudioSettings onClose={() => setAudioOpen(false)} />}
+      {helpOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setHelpOpen(null)}>
+          <div className="modal help-modal" onMouseDown={(e) => e.stopPropagation()}>
+            {helpOpen === 'keys' ? (
+              <>
+                <h3>Atalhos do teclado</h3>
+                <div className="keys-grid">
+                  <b>Roteiro</b>
+                  <span>Ctrl+1…6</span><span>Capítulo, Prompt, Fala, Transição, Sobe som, Pausa</span>
+                  <span>Ctrl+P</span><span>tocar a timeline</span>
+                  <span>Ctrl+Z / Ctrl+Shift+Z</span><span>desfazer / refazer</span>
+                  <span>Botão direito</span><span>corretor, referência, IA, biblioteca, trocar tipo</span>
+                  <b>Arquivo</b>
+                  <span>Ctrl+N / Ctrl+O</span><span>novo roteiro / abrir pasta</span>
+                  <span>Ctrl+S / Ctrl+Shift+S</span><span>salvar / salvar como</span>
+                  <span>Ctrl+,</span><span>configurações</span>
+                  <b>Montagem</b>
+                  <span>Espaço</span><span>tocar / parar (e parar a gravação)</span>
+                  <span>R</span><span>gravar na faixa armada</span>
+                  <span>V / C</span><span>seleção / lâmina</span>
+                  <span>S</span><span>dividir no playhead</span>
+                  <span>E</span><span>Emenda no corte</span>
+                  <span>Delete / Shift+Delete</span><span>apagar / apagar e juntar</span>
+                  <span>← → / Shift+← →</span><span>quadro a quadro / de corte em corte</span>
+                  <span>+ / -</span><span>zoom</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3>Typos</h3>
+                <p>Editor de roteiro pra YouTube: fala, prompts de motion, transições, sobe som, pausas, montagem da narração e referências.</p>
+                <p className="muted small">github.com/ShinkiroG/Typos</p>
+              </>
+            )}
+            <div className="modal-actions">
+              <button className="btn primary" onClick={() => setHelpOpen(null)}>
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {refTip && (
         <div className="ref-tip" style={{ left: refTip.x, top: refTip.y }}>
           <b>📚 Referência</b>

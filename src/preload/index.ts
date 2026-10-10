@@ -100,6 +100,7 @@ const api = {
     ipcRenderer.invoke('media:probe', path),
   proxyAudio: (path: string): Promise<string | { error: string }> => ipcRenderer.invoke('media:proxy', path),
   mediaExists: (paths: string[]): Promise<boolean[]> => ipcRenderer.invoke('media:exists', paths),
+  saveRecording: (dir: string, bytes: Uint8Array): Promise<string | { error: string }> => ipcRenderer.invoke('media:saveRecording', dir, bytes),
   silences: (path: string): Promise<[number, number][] | { error: string }> => ipcRenderer.invoke('media:silences', path),
 
   // transcrição (Whisper local) pro corte automático

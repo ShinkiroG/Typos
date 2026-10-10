@@ -22,6 +22,11 @@ interface Props {
   scrollRef: React.RefObject<HTMLDivElement | null>
   /** muda quando chega uma onda nova */
   wavesVersion: number
+  /** faixa de áudio que recebe a gravação */
+  armed: string | null
+  onArm: (trackId: string) => void
+  recording: { track: string; start: number } | null
+  recClipRef: React.RefObject<HTMLDivElement | null>
 }
 
 const HEAD_W = 132
@@ -211,6 +216,13 @@ export function EditTimeline(p: Props) {
           <div key={tr.id} className={'mt-track k-' + tr.kind + (tr.muted ? ' muted' : '')}>
             <div className="mt-head">
               <span>{tr.name}</span>
+              {tr.kind === 'audio' && (
+                <button
+                  className={'mt-arm' + (p.armed === tr.id ? ' on' : '')}
+                  title={p.armed === tr.id ? 'Faixa armada: a gravação (R) entra aqui' : 'Armar esta faixa pra gravar o microfone'}
+                  onClick={() => p.onArm(tr.id)}
+                />
+              )}
               <button className="icon-btn" title={tr.muted ? 'Ligar faixa' : 'Silenciar/esconder faixa'} onClick={() => setTrack(tr.id, { muted: !tr.muted })}>
                 {tr.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
               </button>
@@ -239,6 +251,11 @@ export function EditTimeline(p: Props) {
                     onDown={onClipDown}
                   />
                 ))}
+              {p.recording?.track === tr.id && (
+                <div className="mt-clip rec" ref={p.recClipRef} style={{ left: p.recording.start * pps, width: 2 }}>
+                  <span className="mt-clip-name">● gravando…</span>
+                </div>
+              )}
             </div>
           </div>
         ))}

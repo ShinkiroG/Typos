@@ -21,10 +21,14 @@ import {
   Redo2,
   ChevronLeft,
   ChevronRight,
-  FileCheck2
+  FileCheck2,
+  Circle,
+  Square,
+  Settings2
 } from 'lucide-react'
 import { api, clipDur, clipEndT, fileUrl, uid, type MontageBin, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
+import { Recorder } from '../audio'
 import { EditTimeline, MEDIA_MIME, mediaLen, splitClip, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
 
@@ -48,11 +52,26 @@ interface Props {
   getBlocks: () => ScriptBlock[]
   /** grava os tempos da narração nos blocos do roteiro; devolve quantas falas mudaram */
   onSyncScript: (d: MontageData) => number
+  /** pasta do projeto (as gravações vão pra assets/gravacoes) */
+  dir: string
+  /** velocidade de fala (rolagem do teleprompter) */
+  wpm: number
+  /** abre a configuração de entrada/saída de áudio */
+  onAudioSettings: () => void
+}
+
+const LAYOUT_KEY = 'typos.montageLayout'
+const loadLayout = () => {
+  try {
+    return { pool: 300, insp: 280, tl: 300, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? '{}') }
+  } catch {
+    return { pool: 300, insp: 280, tl: 300 }
+  }
 }
 
 type WStatus = Awaited<ReturnType<typeof api.whisperStatus>>
 
-export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript }: Props) {
+export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript, dir, wpm, onAudioSettings }: Props) {
   const engine = useMemo(() => new MontageEngine(), [])
   const [wavesVersion, setWavesVersion] = useState(0)
   const [selected, setSelected] = useState<string[]>([])
@@ -64,6 +83,48 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript 
   const [ffmpeg, setFfmpeg] = useState<{ path: string; version: string; whisper: boolean } | null | undefined>(undefined)
   const [source, setSource] = useState<MontageMedia | null>(null)
   const [missing, setMissing] = useState<Set<string>>(new Set())
+
+  // tamanhos das áreas (arrastando as divisórias), lembrados neste PC
+  const [layout, setLayout] = useState(loadLayout)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const startSplit = (which: 'pool' | 'insp' | 'tl', e: React.PointerEvent) => {
+    e.preventDefault()
+    const box = rootRef.current!.getBoundingClientRect()
+    const el = e.currentTarget as HTMLElement
+    el.setPointerCapture(e.pointerId)
+    const move = (ev: PointerEvent) => {
+      setLayout((l: typeof layout) => {
+        const next = { ...l }
+        if (which === 'pool') next.pool = Math.max(200, Math.min(box.width * 0.45, ev.clientX - box.left))
+        if (which === 'insp') next.insp = Math.max(200, Math.min(box.width * 0.4, box.right - ev.clientX))
+        if (which === 'tl') next.tl = Math.max(120, Math.min(box.height - 200, box.bottom - ev.clientY - 40))
+        return next
+      })
+    }
+    const up = () => {
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      setLayout((l: typeof layout) => {
+        try {
+          localStorage.setItem(LAYOUT_KEY, JSON.stringify(l))
+        } catch {
+          /* sem storage */
+        }
+        return l
+      })
+    }
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+  }
+
+  // ---------- gravação ----------
+  const recRef = useRef<Recorder | null>(null)
+  const [armed, setArmed] = useState<string | null>(() => data.tracks.find((t) => t.kind === 'audio')?.id ?? null)
+  const [rec, setRec] = useState<{ track: string; start: number } | null>(null)
+  const recClipRef = useRef<HTMLDivElement>(null)
+  const meterRef = useRef<HTMLDivElement>(null)
+  const [prompter, setPrompter] = useState(() => localStorage.getItem('typos.prompter') !== '0')
+  const prompterRef = useRef<HTMLDivElement>(null)
 
   const [wstatus, setWstatus] = useState<WStatus | null>(null)
   const [busy, setBusy] = useState<{ label: string; pct: number | null } | null>(null)
@@ -224,6 +285,21 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript 
       if (playheadRef.current) playheadRef.current.style.transform = `translateX(${t * pps}px)`
       if (tcRef.current) tcRef.current.textContent = fmtTc(t)
       if (!source) syncPicture(t)
+      const r = recRef.current
+      if (r && meterRef.current) {
+        const db = r.level()
+        meterRef.current.style.width = `${Math.max(0, Math.min(100, ((db + 60) / 60) * 100))}%`
+        meterRef.current.dataset.hot = db > -3 ? 'red' : db > -12 ? 'yellow' : 'green'
+      }
+      if (r && recClipRef.current) recClipRef.current.style.width = `${Math.max(2, (t - (recStart.current ?? t)) * pps)}px`
+      const pr = prompterRef.current
+      if (r && pr && engine.playing) {
+        // rola no ritmo do roteiro (ppm do formato); a roda do mouse ajusta
+        const words = pr.textContent?.split(/\s+/).length ?? 1
+        const total = (words / Math.max(60, wpm)) * 60
+        const speed = (pr.scrollHeight - pr.clientHeight) / Math.max(10, total)
+        pr.scrollTop += speed / 60
+      }
       const sc = scrollRef.current
       if (engine.playing && sc) {
         const x = 132 + t * pps - sc.scrollLeft
@@ -286,6 +362,57 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript 
       if (Math.abs(v.currentTime - want) > 0.02) v.currentTime = want
     }
   }
+
+  const recStart = useRef<number | null>(null)
+  /** grava o microfone na faixa armada, a partir do playhead (a timeline toca junto) */
+  const startRec = async () => {
+    if (recRef.current) return stopRec()
+    const track = armed ?? data.tracks.find((t) => t.kind === 'audio')?.id
+    if (!track) return
+    if (!armed) setArmed(track)
+    setSource(null)
+    const r = new Recorder()
+    try {
+      await r.open()
+    } catch (err) {
+      alert('Não deu pra abrir o microfone. Confira em Áudio → Configurar entrada e saída (e nas Configurações de privacidade do Windows → Microfone).\n\n' + (err as Error).message)
+      return
+    }
+    recRef.current = r
+    const t0 = posRef.current
+    recStart.current = t0
+    r.start()
+    setRec({ track, start: t0 })
+    if (prompterRef.current) prompterRef.current.scrollTop = 0
+    await engine.play(dataRef.current, dur)
+    setPlaying(true)
+  }
+
+  const stopRec = async () => {
+    const r = recRef.current
+    const cur = rec ?? (recStart.current !== null && armed ? { track: armed, start: recStart.current } : null)
+    if (!r || !cur) return
+    const { wav, duration } = r.stop()
+    r.close()
+    recRef.current = null
+    recStart.current = null
+    engine.pause()
+    setPlaying(false)
+    setRec(null)
+    if (duration < 0.3) return
+    const path = await api.saveRecording(dir, wav)
+    if (typeof path !== 'string') return alert(path.error)
+    const bin = dataRef.current.bins.find((b) => b.role === 'narration') ?? dataRef.current.bins[0]
+    const m: MontageMedia = { id: uid(), bin: bin.id, path, name: path.split(/[\\/]/).pop() || 'gravacao.wav', kind: 'audio', duration, hasAudio: true, hasVideo: false }
+    const clip: MontageClip = { id: uid(), track: cur.track, media: m.id, start: cur.start, in: 0, out: duration }
+    change({ ...dataRef.current, media: [...dataRef.current.media, m], clips: [...dataRef.current.clips, clip] })
+    setSelected([clip.id])
+  }
+
+  // fechar a Montagem no meio da gravação não perde nada
+  useEffect(() => {
+    if (!active && recRef.current) stopRec()
+  }, [active])
 
   // ---------- edição ----------
   const sel = data.clips.filter((c) => selected.includes(c.id))
@@ -362,9 +489,10 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript 
         e.stopPropagation()
         fn()
       }
-      if (k === ' ') run(toggle)
+      if (k === ' ') run(recRef.current ? stopRec : toggle)
+      else if (k === 'r') run(startRec)
       else if (k === 'v') run(() => setTool('select'))
-      else if (k === 'b') run(() => setTool((t) => (t === 'blade' ? 'select' : 'blade')))
+      else if (k === 'c') run(() => setTool((t) => (t === 'blade' ? 'select' : 'blade')))
       else if (k === 's') run(splitAtPlayhead)
       else if (k === 'e') run(() => applySplice(false))
       else if (k === 'delete' || k === 'backspace') run(() => remove(e.shiftKey))
@@ -427,7 +555,14 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript 
   }
 
   return (
-    <div className="montage">
+    <div
+      className="montage"
+      ref={rootRef}
+      style={{ gridTemplateColumns: `${layout.pool}px minmax(0, 1fr) ${layout.insp}px`, gridTemplateRows: `minmax(120px, 1fr) 40px ${layout.tl}px` }}
+    >
+      <div className="mt-split v" style={{ left: layout.pool - 3, bottom: layout.tl + 40 }} onPointerDown={(e) => startSplit('pool', e)} title="Arraste pra mudar a largura" />
+      <div className="mt-split v" style={{ right: layout.insp - 3, bottom: layout.tl + 40 }} onPointerDown={(e) => startSplit('insp', e)} title="Arraste pra mudar a largura" />
+      <div className="mt-split h" style={{ bottom: layout.tl + 40 - 3 }} onPointerDown={(e) => startSplit('tl', e)} title="Arraste pra mudar a altura da timeline" />
       {/* ---------- mídia do projeto ---------- */}
       <section className="mt-pool">
         <div className="mt-bins">
@@ -613,6 +748,13 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript 
               <img ref={imgRef} alt="" style={{ visibility: 'hidden' }} />
             </>
           )}
+          {!source && prompter && rec && (
+            <div className="mt-prompter" ref={prompterRef}>
+              {getBlocks()
+                .filter((b) => (b.type === 'paragraph' || b.type === 'chapter') && b.text.trim())
+                .map((b) => (b.type === 'chapter' ? <h4 key={b.index}>{b.text}</h4> : <p key={b.index}>{b.text}</p>))}
+            </div>
+          )}
           {source && (
             <button className="btn small mt-source-back" onClick={() => setSource(null)}>
               <X size={12} /> {source.name} · voltar pra timeline
@@ -632,10 +774,36 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript 
           <button className="icon-btn" title="Próximo corte (Shift+→)" onClick={() => jumpCut(1)}>
             <ChevronRight size={15} />
           </button>
+          <button className={'mt-rec' + (rec ? ' on' : '')} title={rec ? 'Parar gravação (Espaço)' : 'Gravar na faixa armada (R)'} onClick={startRec}>
+            {rec ? <Square size={12} /> : <Circle size={13} />}
+          </button>
           <span className="mt-tc" ref={tcRef}>
             0:00.00
           </span>
           <span className="muted small">/ {fmtTc(Math.max(0, ...data.clips.map(clipEndT)))}</span>
+          {rec && (
+            <span className="mt-meter" title="Nível do microfone">
+              <i ref={meterRef} />
+            </span>
+          )}
+          <label className="mt-prompter-toggle" title="Mostra o roteiro no visualizador enquanto você grava">
+            <input
+              type="checkbox"
+              checked={prompter}
+              onChange={(e) => {
+                setPrompter(e.target.checked)
+                try {
+                  localStorage.setItem('typos.prompter', e.target.checked ? '1' : '0')
+                } catch {
+                  /* sem storage */
+                }
+              }}
+            />
+            Teleprompter
+          </label>
+          <button className="icon-btn" title="Áudio: microfone, saída e níveis" onClick={onAudioSettings}>
+            <Settings2 size={15} />
+          </button>
         </div>
       </section>
 
@@ -646,7 +814,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript 
             {sel.length > 1 ? `${sel.length} cortes selecionados. Delete apaga, Shift+Delete apaga e fecha o buraco, E aplica a Emenda.` : 'Clique num corte da timeline pra ver os detalhes.'}
             <div className="mt-keys">
               <b>Atalhos</b>
-              <span>Espaço tocar · V seleção · B lâmina · S dividir no playhead</span>
+              <span>Espaço tocar · V seleção · C lâmina · S dividir no playhead · R gravar</span>
               <span>E Emenda · Delete apagar · Shift+Delete apagar e juntar</span>
               <span>←/→ quadro · Shift+←/→ corte · +/- zoom · Ctrl+Z desfazer</span>
             </div>
@@ -668,7 +836,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript 
           <button className={tool === 'select' ? 'on' : ''} title="Seleção (V)" onClick={() => setTool('select')}>
             <MousePointer2 size={14} />
           </button>
-          <button className={tool === 'blade' ? 'on' : ''} title="Lâmina (B): clique no corte pra dividir" onClick={() => setTool('blade')}>
+          <button className={tool === 'blade' ? 'on' : ''} title="Lâmina (C): clique no corte pra dividir" onClick={() => setTool('blade')}>
             <Scissors size={14} />
           </button>
         </div>
@@ -736,6 +904,10 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript 
           playheadRef={playheadRef}
           scrollRef={scrollRef}
           wavesVersion={wavesVersion}
+          armed={armed}
+          onArm={(id) => setArmed((a) => (a === id ? null : id))}
+          recording={rec}
+          recClipRef={recClipRef}
         />
       </section>
     </div>

@@ -830,3 +830,18 @@ ipcMain.handle('project:move', async (_e, dir: string, title: string): Promise<R
     return { error: 'Não deu pra mover: ' + String(err) }
   }
 })
+
+// ---------- gravação do microfone (Montagem) ----------
+ipcMain.handle('media:saveRecording', async (_e, dir: string, bytes: Uint8Array): Promise<Result<string>> => {
+  try {
+    const dest = join(dir, ASSETS_DIR, 'gravacoes')
+    await fs.mkdir(dest, { recursive: true })
+    const d = new Date()
+    const p2 = (n: number) => String(n).padStart(2, '0')
+    const name = freeName(dest, `gravacao-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`, '.wav')
+    await fs.writeFile(join(dest, name), bytes)
+    return join(dest, name)
+  } catch (err) {
+    return { error: 'Não deu pra salvar a gravação: ' + String(err) }
+  }
+})

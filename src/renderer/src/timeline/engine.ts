@@ -1,3 +1,4 @@
+import { followOutput } from '../audio'
 import { absPath, clipEnd, envelopeAt, fileUrl, type Clip } from '../lib'
 
 /** Picos por segundo usados pra desenhar a forma de onda. */
@@ -22,7 +23,10 @@ export class AudioEngine {
   playing = false
 
   private context() {
-    if (!this.ctx) this.ctx = new AudioContext()
+    if (!this.ctx) {
+      this.ctx = new AudioContext()
+      followOutput(this.ctx)
+    }
     return this.ctx
   }
 

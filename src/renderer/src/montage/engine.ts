@@ -1,3 +1,4 @@
+import { followOutput } from '../audio'
 import { api, clipEndT, fileUrl, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 
 export const PEAKS_PER_SEC = 100
@@ -75,7 +76,10 @@ export class MontageEngine {
   onLoaded: (() => void) | null = null
 
   private context() {
-    if (!this.ctx) this.ctx = new AudioContext()
+    if (!this.ctx) {
+      this.ctx = new AudioContext()
+      followOutput(this.ctx)
+    }
     return this.ctx
   }
 
