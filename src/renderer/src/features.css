@@ -2299,3 +2299,9 @@ body.resizing * {
     padding: 5px 6px;
   }
 }
+
+/* negrito no roteiro = ênfase na fala */
+.ProseMirror strong {
+  font-weight: 800;
+  color: #fff;
+}

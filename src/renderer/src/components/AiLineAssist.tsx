@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Editor } from '@tiptap/react'
 import { Sparkles, Send, X, Loader2, Replace, ListPlus, Copy, Check, ImagePlus } from 'lucide-react'
-import { api, blockLabel } from '../lib'
+import { api, blockLabel, inlineMd, mdToJson } from '../lib'
 
 const PROVIDER_LABEL: Record<string, string> = { 'claude-code': 'Claude Code', anthropic: 'Claude (API)', openai: 'ChatGPT (API)' }
 
@@ -159,7 +159,7 @@ export function AiLineAssist({ editor, dir, aspect, save, onImage, scrollEl, pag
         'Se for uma pergunta, responda curto e direto.\n\nPEDIDO: ' +
         request,
       input:
-        `LINHA (${blockLabel(kind)}): ${node.textContent || '(vazia)'}\n\nANTES: ${before || '(início)'}\nDEPOIS: ${after || '(fim)'}` +
+        `LINHA (${blockLabel(kind)}): ${inlineMd(node.toJSON()) || '(vazia)'}\n\nANTES: ${before || '(início)'}\nDEPOIS: ${after || '(fim)'}` +
         (history.length ? `\n\nCONVERSA ATÉ AQUI:\n${history.map((h) => `Pedido: ${h.ask}\nResposta: ${h.answer}`).join('\n\n')}` : ''),
       dir
     })
@@ -175,7 +175,7 @@ export function AiLineAssist({ editor, dir, aspect, save, onImage, scrollEl, pag
     if (!editor || !open) return
     const n = editor.state.doc.nodeAt(open.pos)
     if (!n) return
-    editor.view.dispatch(editor.state.tr.replaceWith(open.pos + 1, open.pos + n.nodeSize - 1, editor.schema.text(answer.trim())))
+    editor.view.dispatch(editor.state.tr.replaceWith(open.pos + 1, open.pos + n.nodeSize - 1, mdToJson(answer.trim()).map((j) => editor.schema.nodeFromJSON(j))))
     close()
   }
 

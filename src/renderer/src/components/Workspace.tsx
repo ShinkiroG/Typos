@@ -44,7 +44,9 @@ import {
   type ProjectData,
   type MontageData,
   defaultMontage,
-  setAiStyle
+  setAiStyle,
+  inlineMd,
+  mdToJson
 } from '../lib'
 import { LibraryPanel, SNIPPET_MIME } from './LibraryPanel'
 import { StyleStudio } from '../style/StyleStudio'
@@ -859,6 +861,15 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   }
 
   const menuNode = menu && menu.pos >= 0 ? editor?.state.doc.nodeAt(menu.pos) : null
+  // a seleção já está toda em negrito?
+  const selIsBold = !!(menu?.sel && editor && editor.state.doc.rangeHasMark(menu.sel.from, menu.sel.to, editor.schema.marks.bold) &&
+    (() => {
+      let all = true
+      editor.state.doc.nodesBetween(menu.sel!.from, menu.sel!.to, (n) => {
+        if (n.isText && !n.marks.some((m) => m.type.name === 'bold')) all = false
+      })
+      return all
+    })())
 
   // ---------- IA: o app pede a tarefa; quem responde é a conexão escolhida em Configurações → IA ----------
   type AiJob = {
@@ -889,7 +900,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const aiRevise = async (pos: number) => {
     const node = editorRef.current?.state.doc.nodeAt(pos)
     if (!node) return
-    const original = node.textContent
+    const original = inlineMd(node.toJSON())
     setAiJob({ kind: 'revise', pos, original, status: 'running' })
     await save()
     const r = await api.aiText({
@@ -921,11 +932,11 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     const ed = editorRef.current
     if (!ed || !aiJob?.result) return
     const node = ed.state.doc.nodeAt(aiJob.pos)
-    if (!node || node.textContent !== aiJob.original) {
+    if (!node || inlineMd(node.toJSON()) !== aiJob.original) {
       setToast('A fala mudou enquanto a IA respondia; copie a sugestão e cole você mesmo.')
       return
     }
-    ed.view.dispatch(ed.state.tr.replaceWith(aiJob.pos + 1, aiJob.pos + node.nodeSize - 1, ed.schema.text(aiJob.result)))
+    ed.view.dispatch(ed.state.tr.replaceWith(aiJob.pos + 1, aiJob.pos + node.nodeSize - 1, mdToJson(aiJob.result).map((j) => ed.schema.nodeFromJSON(j))))
     setAiJob(null)
   }
 
@@ -1254,6 +1265,16 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         >
           {(menu.sel || menu.ref) && (
             <>
+              {menu.sel && (
+                <button
+                  onClick={() => {
+                    editor!.chain().focus().setTextSelection(menu.sel!).toggleBold().run()
+                    setMenu(null)
+                  }}
+                >
+                  {selIsBold ? <><b>N</b> Tirar negrito</> : <><b>N</b> Negritar</>} <kbd>Ctrl+B</kbd>
+                </button>
+              )}
               {menu.sel && !menu.ref && (
                 <button
                   onClick={() => {

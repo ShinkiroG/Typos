@@ -16,10 +16,13 @@ export const setAiStyle = (rules: string) => {
 export const api: typeof window.api = {
   ...window.api,
   aiText: (job) =>
-    window.api.aiText(aiStyle ? { ...job, instruction: `${job.instruction}
-
-Regras do estilo deste vídeo (respeite):
-${aiStyle}` } : job)
+    window.api.aiText({
+      ...job,
+      instruction:
+        job.instruction +
+        '\n\nTrechos entre **asteriscos duplos** estão em negrito no roteiro: é ênfase na fala (o narrador destaca). Mantenha e use **negrito** do mesmo jeito.' +
+        (aiStyle ? `\n\nRegras do estilo deste vídeo (respeite):\n${aiStyle}` : '')
+    })
 }
 
 export interface Attachment {
@@ -358,8 +361,48 @@ export function formatTime(totalSeconds: number) {
 }
 
 // ---------- export em Markdown (é o arquivo que o Claude lê) ----------
-const jsonText = (n: JSONContent): string =>
-  (n.content ?? []).map((c) => (c.type === 'text' ? c.text ?? '' : c.type === 'hardBreak' ? '\n' : jsonText(c))).join('')
+const jsonText = (n: JSONContent): string => inlineMd(n, '\n')
+
+/**
+ * Texto de um bloco com o negrito em **markdown** (é ênfase na fala: a IA precisa saber).
+ * Trechos vizinhos em negrito viram um só.
+ */
+export function inlineMd(n: JSONContent, br = ' '): string {
+  // pedaços seguidos com o mesmo "negrito ou não" viram um só
+  const segs: { text: string; bold: boolean }[] = []
+  const walk = (node: JSONContent) => {
+    for (const c of node.content ?? []) {
+      const piece = c.type === 'text' ? { text: c.text ?? '', bold: !!c.marks?.some((m) => m.type === 'bold') } : c.type === 'hardBreak' ? { text: br, bold: false } : null
+      if (!piece) {
+        walk(c)
+        continue
+      }
+      const last = segs[segs.length - 1]
+      if (last && last.bold === piece.bold) last.text += piece.text
+      else segs.push(piece)
+    }
+  }
+  walk(n)
+  // espaço da borda fica fora dos ** ("**palavra** fim", nunca "**palavra **fim")
+  return segs
+    .map((s) => {
+      if (!s.bold) return s.text
+      const m = s.text.match(/^(\s*)([\s\S]*?)(\s*)$/)!
+      return m[2] ? `${m[1]}**${m[2]}**${m[3]}` : s.text
+    })
+    .join('')
+}
+
+/** o contrário: "texto com **negrito**" → nós de texto com a marca bold */
+export function mdToJson(text: string): JSONContent[] {
+  const out: JSONContent[] = []
+  text.split(/(\*\*[^*]+?\*\*)/g).forEach((part) => {
+    if (!part) return
+    const m = part.match(/^\*\*([^*]+)\*\*$/)
+    out.push(m ? { type: 'text', text: m[1], marks: [{ type: 'bold' }] } : { type: 'text', text: part })
+  })
+  return out
+}
 
 const STATUS_TAG: Record<string, string> = { aprovado: ' [APROVADA]', recortar: ' [RECORTAR]', regerar: ' [REGERAR]' }
 

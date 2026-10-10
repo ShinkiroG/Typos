@@ -1,5 +1,5 @@
 import type { JSONContent } from '@tiptap/core'
-import { api, countWords } from './lib'
+import { api, countWords, inlineMd, mdToJson } from './lib'
 
 /**
  * Formato de troca com a IA: um bloco por linha, com etiqueta.
@@ -12,8 +12,7 @@ import { api, countWords } from './lib'
  * Assim a IA devolve o roteiro inteiro e o app consegue comparar bloco a bloco.
  */
 
-const textOf = (n: JSONContent): string =>
-  (n.content ?? []).map((c) => (c.type === 'text' ? c.text ?? '' : c.type === 'hardBreak' ? ' ' : textOf(c))).join('')
+const textOf = (n: JSONContent): string => inlineMd(n)
 
 export function blockToLine(n: JSONContent): string | null {
   const t = textOf(n).replace(/\s*\n\s*/g, ' ').trim()
@@ -36,7 +35,7 @@ export function blockToLine(n: JSONContent): string | null {
 
 export const docToLines = (blocks: JSONContent[]) => blocks.map(blockToLine).filter((l): l is string => l !== null).join('\n')
 
-const txt = (t: string): JSONContent[] | undefined => (t.trim() ? [{ type: 'text', text: t.trim() }] : undefined)
+const txt = (t: string): JSONContent[] | undefined => (t.trim() ? mdToJson(t.trim()) : undefined)
 
 /** Lê a resposta da IA de volta em blocos (linhas sem etiqueta viram fala). */
 export function linesToBlocks(text: string): JSONContent[] {
