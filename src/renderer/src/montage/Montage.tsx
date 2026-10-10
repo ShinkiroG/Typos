@@ -1094,7 +1094,14 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           return (
             <div
               className="ctx-menu"
-              style={{ left: Math.min(clipMenu.x, window.innerWidth - 260), top: Math.min(clipMenu.y, window.innerHeight - 380) }}
+              style={{ left: clipMenu.x, top: clipMenu.y, maxHeight: window.innerHeight - 16, overflowY: 'auto' }}
+              ref={(el) => {
+                // mede o menu de verdade: se não couber embaixo, sobe (e nunca sai da tela)
+                if (!el) return
+                const r = el.getBoundingClientRect()
+                if (r.bottom > window.innerHeight - 8) el.style.top = `${Math.max(8, window.innerHeight - r.height - 8)}px`
+                if (r.right > window.innerWidth - 8) el.style.left = `${Math.max(8, window.innerWidth - r.width - 8)}px`
+              }}
               onMouseDown={(e) => e.stopPropagation()}
             >
               <div className="ctx-label">{one ? m?.name ?? 'corte' : `${targets.length} cortes`}</div>
