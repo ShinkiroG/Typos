@@ -256,7 +256,7 @@ export function Montage({ active, data, onChange, onAutoCut, autoCutBusy }: Prop
   }
 
   /** Emenda: crossfade curtinho no corte, pra não estalar */
-  const spliceLen = data.spliceDefault ?? 0.0002
+  const spliceLen = data.spliceDefault ?? 0.02
   const applySplice = (all: boolean) => {
     const targets = all ? data.clips : sel
     const joins = targets.filter((c) => prevOf(c))

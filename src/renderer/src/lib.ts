@@ -572,6 +572,6 @@ export function defaultMontage(): MontageData {
       { id: 'A2', kind: 'audio', name: 'A2 · Música/SFX' }
     ],
     clips: [],
-    spliceDefault: 0.0002
+    spliceDefault: 0.02
   }
 }
