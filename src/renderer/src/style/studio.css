@@ -589,3 +589,88 @@
   overflow-y: auto;
   max-height: 46vh;
 }
+
+/* fontes principais + por situação */
+.st-sub {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 4px 0 8px;
+}
+.st-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+.st-cases {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.st-case {
+  display: grid;
+  grid-template-columns: 150px auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg-2);
+}
+.st-case.m-favorites {
+  border-color: color-mix(in srgb, var(--c-transition) 45%, var(--line));
+}
+.st-case-name {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font: 600 13px var(--font-ui);
+  color: var(--text);
+  min-width: 0;
+}
+.st-case-name:focus {
+  border-color: var(--line);
+  outline: none;
+}
+.st-case-mode button {
+  white-space: nowrap;
+}
+.st-case-fonts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.st-fav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 16px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--c-transition) 45%, var(--line));
+  color: var(--text);
+}
+.st-fav svg {
+  cursor: pointer;
+  color: var(--muted);
+}
+.fp.compact {
+  display: inline-flex;
+}
+.fp.compact .fp-btn {
+  font-size: 12px;
+  padding: 3px 9px;
+  border-style: dashed;
+  color: var(--muted);
+}
+.tp-sub {
+  font-size: 22px;
+  font-weight: 600;
+  opacity: 0.9;
+}

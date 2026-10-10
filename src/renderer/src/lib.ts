@@ -170,11 +170,24 @@ export interface MotionRef {
   note?: string
 }
 
+export interface FontCase {
+  id: string
+  name: string
+  mode: 'dynamic' | 'favorites'
+  favorites: string[]
+}
+
+export const DEFAULT_FONT_CASES = (): FontCase[] =>
+  ['Terror', 'Impacto', 'Lettering 1', 'Lettering 2', 'Console / código', 'Uso geral'].map((name, i) => ({ id: 'fc' + i, name, mode: 'dynamic', favorites: [] }))
+
 export interface MotionStyle {
   refs: MotionRef[]
   /** o que o autor quer ensinar (texto livre pro Claude) */
   instruction?: string
-  fonts?: { title?: string; body?: string; accent?: string }
+  /** as 4 fontes principais do projeto */
+  fonts?: { title?: string; subtitle?: string; body?: string; accent?: string }
+  /** fontes por situação (terror, impacto, lettering…): o Claude escolhe (dinâmica) ou vem das favoritas */
+  fontCases?: FontCase[]
   colors?: string[]
   background?: string
   camera?: string[]

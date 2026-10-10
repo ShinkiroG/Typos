@@ -2,7 +2,21 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, X } from 'lucide-react'
 
 /** escolher uma fonte instalada vendo cada uma com a própria cara (com busca) */
-export function FontPicker({ label, fonts, value, onChange }: { label: string; fonts: string[]; value?: string; onChange: (v: string | undefined) => void }) {
+export function FontPicker({
+  label,
+  fonts,
+  value,
+  onChange,
+  placeholder = 'escolher fonte…',
+  compact
+}: {
+  label?: string
+  fonts: string[]
+  value?: string
+  onChange: (v: string | undefined) => void
+  placeholder?: string
+  compact?: boolean
+}) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const ref = useRef<HTMLDivElement>(null)
@@ -34,15 +48,15 @@ export function FontPicker({ label, fonts, value, onChange }: { label: string; f
   }, [fonts, q])
 
   return (
-    <div className="fp" ref={ref}>
-      <span className="fp-label">{label}</span>
+    <div className={'fp' + (compact ? ' compact' : '')} ref={ref}>
+      {label && <span className="fp-label">{label}</span>}
       <button
         className="fp-btn"
         onClick={() => {
           if (!open) place()
           setOpen((o) => !o)
         }} style={{ fontFamily: value ? `"${value}"` : undefined }}>
-        <span>{value ?? 'escolher fonte…'}</span>
+        <span>{value ?? placeholder}</span>
         {value ? (
           <X
             size={12}

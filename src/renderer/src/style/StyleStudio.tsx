@@ -19,7 +19,7 @@ import {
   Clipboard,
   Sparkles
 } from 'lucide-react'
-import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle } from '../lib'
+import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type FontCase, DEFAULT_FONT_CASES } from '../lib'
 import { FontPicker } from './FontPicker'
 
 const CAMERA = ['estática', 'zoom-in lento', 'zoom punch (rápido)', 'pan lateral', 'parallax 2.5D', 'câmera na mão (tremida)', 'whip pan', 'rotação leve', 'dolly / push-in', 'tracking em elemento']
@@ -37,7 +37,7 @@ const emptyMotion = (f: Format): MotionStyle => ({
 })
 
 /** o pedido que vai pra IA, com tudo que o autor escolheu */
-function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: string) {
+function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: string, installed: string[]) {
   const [w, h] = f.aspect === '9:16' ? [540, 960] : f.aspect === '1:1' ? [720, 720] : f.aspect === '4:5' ? [576, 720] : [960, 540]
   const lines: string[] = []
   lines.push(`Você é diretor de motion design de vídeos para YouTube. Vou te ensinar um ESTILO DE MOTION pra eu usar sempre neste formato de vídeo: "${f.name}" (${f.aspect}).`)
@@ -49,8 +49,19 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
   if (m.transitions?.length) lines.push(`- Transições: ${m.transitions.join(', ')}`)
   if (m.pace) lines.push(`- Ritmo: ${m.pace}`)
   if (m.colors?.length) lines.push(`- Paleta: ${m.colors.join(', ')}`)
-  if (m.fonts?.title || m.fonts?.body || m.fonts?.accent)
-    lines.push(`- Tipografia: título "${m.fonts?.title ?? '—'}", texto "${m.fonts?.body ?? '—'}", destaque "${m.fonts?.accent ?? '—'}" (fontes instaladas no PC; use pelo nome)`)
+  const ft = m.fonts ?? {}
+  if (ft.title || ft.subtitle || ft.body || ft.accent)
+    lines.push(
+      `- Fontes principais: título "${ft.title ?? 'você escolhe'}", subtítulo "${ft.subtitle ?? 'você escolhe'}", texto "${ft.body ?? 'você escolhe'}", destaque "${ft.accent ?? 'você escolhe'}" (instaladas no PC; use pelo nome)`
+    )
+  const cases = m.fontCases ?? DEFAULT_FONT_CASES()
+  const dyn = cases.filter((c) => c.mode === 'dynamic' || !c.favorites.length)
+  if (cases.length) {
+    lines.push('- Fontes por situação (quando o vídeo pedir esse clima):')
+    for (const c of cases)
+      lines.push(c.mode === 'favorites' && c.favorites.length ? `  - ${c.name}: use só estas favoritas → ${c.favorites.map((x) => `"${x}"`).join(', ')}` : `  - ${c.name}: DINÂMICA — escolha você a melhor fonte instalada pra isso`)
+  }
+  const needList = dyn.length > 0 || !ft.title || !ft.subtitle || !ft.body || !ft.accent
   if (f.rules?.trim()) lines.push(`- Regras do estilo: ${f.rules.trim()}`)
   if (m.instruction?.trim()) {
     lines.push('')
@@ -63,6 +74,11 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
     lines.push('## Links de referência (contexto; abra a página se ajudar)')
     for (const l of links) lines.push(`- ${l.url}${l.note ? ` — ${l.note}` : ''}`)
   }
+  if (needList && installed.length) {
+    lines.push('')
+    lines.push('## Fontes instaladas no PC (escolha só daqui, pelo nome exato)')
+    lines.push(installed.join(' | '))
+  }
   if (imageList.length) {
     lines.push('')
     lines.push('## Imagens (na ordem em que foram enviadas)')
@@ -72,7 +88,7 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
   lines.push('## Responda EXATAMENTE neste formato (nada fora das tags)')
   lines.push('<guia>')
   lines.push(
-    'Guia do estilo em português, markdown curto e prático, pra ser seguido em todo prompt de motion deste formato: identidade em 1 frase; fundo; paleta com hex e função de cada cor; tipografia e hierarquia (tamanhos, peso, caixa, espaçamento); movimentos de câmera com duração e easing; transições (quando usar cada uma); ritmo de cortes; elementos gráficos recorrentes (molduras, lower thirds, setas, marcadores); o que NUNCA fazer; checklist final.'
+    'Guia do estilo em português, markdown curto e prático, pra ser seguido em todo prompt de motion deste formato: identidade em 1 frase; fundo; paleta com hex e função de cada cor; tipografia e hierarquia (as 4 fontes principais com tamanhos, peso, caixa, espaçamento) e uma tabela "Fontes por situação" com a fonte escolhida pra cada situação (nas dinâmicas, a que você escolheu e por quê, em poucas palavras); movimentos de câmera com duração e easing; transições (quando usar cada uma); ritmo de cortes; elementos gráficos recorrentes (molduras, lower thirds, setas, marcadores); o que NUNCA fazer; checklist final.'
   )
   lines.push('</guia>')
   lines.push('<demo>')
@@ -157,6 +173,11 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
       return rest
     })
 
+  // ---------- fontes por situação ----------
+  const cases = m.fontCases ?? DEFAULT_FONT_CASES()
+  const patchCases = (fn: (cs: FontCase[]) => FontCase[]) => patchM((mm) => ({ fontCases: fn(mm.fontCases ?? DEFAULT_FONT_CASES()) }))
+  const patchCase = (id: string, p: Partial<FontCase>) => patchCases((cs) => cs.map((c) => (c.id === id ? { ...c, ...p } : c)))
+
   // ---------- referências ----------
   const addFiles = async (paths: string[]) => {
     if (!paths.length) return
@@ -239,7 +260,7 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
     const t0 = Date.now()
     const tick = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000)
     try {
-      const r = await api.motionTrain({ prompt: buildPrompt(f, m, images.map((i) => i.desc), sample), images: images.map((i) => i.path) })
+      const r = await api.motionTrain({ prompt: buildPrompt(f, m, images.map((i) => i.desc), sample, fonts), images: images.map((i) => i.path) })
       if ('error' in r) throw new Error(r.error)
       const { guide, demo } = parseAnswer(r.text)
       if (!guide && !demo) throw new Error('A IA respondeu fora do formato. Tente de novo.')
@@ -481,15 +502,70 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
 
         <section className="st-sec">
           <h4>Tipografia</h4>
-          <div className="st-grid3">
-            <FontPicker label="Título" fonts={fonts} value={m.fonts?.title} onChange={(v) => patchM({ fonts: { ...m.fonts, title: v } })} />
-            <FontPicker label="Texto" fonts={fonts} value={m.fonts?.body} onChange={(v) => patchM({ fonts: { ...m.fonts, body: v } })} />
-            <FontPicker label="Destaque" fonts={fonts} value={m.fonts?.accent} onChange={(v) => patchM({ fonts: { ...m.fonts, accent: v } })} />
+          <div className="st-sub">Fontes principais do projeto</div>
+          <div className="st-grid4">
+            <FontPicker label="Título" fonts={fonts} value={m.fonts?.title} onChange={(v) => patchM((mm) => ({ fonts: { ...mm.fonts, title: v } }))} />
+            <FontPicker label="Subtítulo" fonts={fonts} value={m.fonts?.subtitle} onChange={(v) => patchM((mm) => ({ fonts: { ...mm.fonts, subtitle: v } }))} />
+            <FontPicker label="Texto" fonts={fonts} value={m.fonts?.body} onChange={(v) => patchM((mm) => ({ fonts: { ...mm.fonts, body: v } }))} />
+            <FontPicker label="Destaque" fonts={fonts} value={m.fonts?.accent} onChange={(v) => patchM((mm) => ({ fonts: { ...mm.fonts, accent: v } }))} />
+          </div>
+
+          <div className="st-sub st-sub-row">
+            <span>Fontes por situação</span>
+            <span className="muted small">✨ dinâmica: o Claude escolhe entre as suas fontes instaladas · ★ favoritas: só as que você escolher</span>
+            <span className="st-grow" />
+            <button className="btn small" title="Todas as situações ficam com o Claude escolhendo" onClick={() => patchCases((cs) => cs.map((c) => ({ ...c, mode: 'dynamic' })))}>
+              <Sparkles size={12} /> Tudo dinâmico
+            </button>
+            <button className="btn small" onClick={() => patchCases((cs) => [...cs, { id: uid(), name: 'Nova situação', mode: 'dynamic', favorites: [] }])}>
+              <Plus size={12} /> Situação
+            </button>
+          </div>
+          <div className="st-cases">
+            {cases.map((c) => (
+              <div key={c.id} className={'st-case m-' + c.mode}>
+                <input className="st-case-name" value={c.name} onChange={(e) => patchCase(c.id, { name: e.target.value })} />
+                <div className="seg st-case-mode">
+                  <button className={c.mode === 'dynamic' ? 'on' : ''} onClick={() => patchCase(c.id, { mode: 'dynamic' })} title="O Claude escolhe a fonte sozinho">
+                    ✨ Dinâmica
+                  </button>
+                  <button className={c.mode === 'favorites' ? 'on' : ''} onClick={() => patchCase(c.id, { mode: 'favorites' })} title="Usar só as fontes que você escolher">
+                    ★ Favoritas
+                  </button>
+                </div>
+                <div className="st-case-fonts">
+                  {c.mode === 'dynamic' ? (
+                    <span className="muted small">o Claude escolhe{c.favorites.length ? ` (suas favoritas ficam guardadas: ${c.favorites.length})` : ''}</span>
+                  ) : (
+                    <>
+                      {c.favorites.map((ft) => (
+                        <span key={ft} className="st-fav" style={{ fontFamily: `"${ft}"` }}>
+                          {ft}
+                          <X size={11} onClick={() => patchCase(c.id, { favorites: c.favorites.filter((x) => x !== ft) })} />
+                        </span>
+                      ))}
+                      <FontPicker
+                        compact
+                        fonts={fonts}
+                        placeholder="+ favorita"
+                        onChange={(v) => v && !c.favorites.includes(v) && patchCase(c.id, { favorites: [...c.favorites, v] })}
+                      />
+                    </>
+                  )}
+                </div>
+                <button className="icon-btn danger" title="Tirar situação" onClick={() => patchCases((cs) => cs.filter((x) => x.id !== c.id))}>
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
           </div>
           <input className="st-sample-input" value={sample} onChange={(e) => setSample(e.target.value)} placeholder="Texto de exemplo" />
           <div className="st-type-preview" style={{ background: m.colors?.[0] ?? '#0b0d12' }}>
             <div style={{ fontFamily: m.fonts?.title ? `"${m.fonts.title}"` : undefined, color: m.colors?.[1] ?? '#fff' }} className="tp-title">
               {sample}
+            </div>
+            <div style={{ fontFamily: m.fonts?.subtitle ? `"${m.fonts.subtitle}"` : undefined, color: m.colors?.[2] ?? '#e8ebf2' }} className="tp-sub">
+              Episódio 7 · o erro que quase todo mundo comete
             </div>
             <div style={{ fontFamily: m.fonts?.body ? `"${m.fonts.body}"` : undefined, color: m.colors?.[2] ?? m.colors?.[1] ?? '#d6dae3' }} className="tp-body">
               Mais da metade dos jogos lançados na Steam não passa de mil avaliações.
