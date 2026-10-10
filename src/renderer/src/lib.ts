@@ -170,6 +170,8 @@ export interface MotionRef {
   name: string
   /** quadros-chave tirados do vídeo (o que a IA olha) */
   frames?: string[]
+  /** o que a IA tira dessa referência: 0 = só estética (visual), 100 = só motion (movimento); padrão 50 */
+  focus?: number
   /** o que observar nessa referência */
   note?: string
 }

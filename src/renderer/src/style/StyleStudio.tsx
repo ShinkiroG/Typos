@@ -44,6 +44,9 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
   const lines: string[] = []
   lines.push(`Você é diretor de motion design de vídeos para YouTube. Vou te ensinar um ESTILO DE MOTION pra eu usar sempre neste formato de vídeo: "${f.name}" (${f.aspect}).`)
   lines.push('Analise com rigor as referências (imagens; os quadros de cada vídeo estão em ordem cronológica) e as escolhas abaixo. Onde as escolhas e as referências discordarem, as escolhas mandam.')
+  lines.push(
+    'Cada referência tem um FOCO de 0 a 100: perto de 0 = aprenda dela a ESTÉTICA (cores, tipografia, composição, fundo, textura); perto de 100 = aprenda o MOTION (movimento de câmera, transições, ritmo, como os elementos entram e saem). No meio, os dois. Pese o que tirar de cada uma por esse número.'
+  )
   lines.push('')
   lines.push('## Escolhas do autor')
   if (m.background) lines.push(`- Fundo: ${m.background}`)
@@ -74,7 +77,7 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
   if (links.length) {
     lines.push('')
     lines.push('## Links de referência (contexto; abra a página se ajudar)')
-    for (const l of links) lines.push(`- ${l.url}${l.note ? ` — ${l.note}` : ''}`)
+    for (const l of links) lines.push(`- ${l.url} ${focusLabel(l.focus)}${l.note ? ` — ${l.note}` : ''}`)
   }
   if (needList && installed.length) {
     lines.push('')
@@ -90,7 +93,7 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
   lines.push('## Responda EXATAMENTE neste formato (nada fora das tags)')
   lines.push('<guia>')
   lines.push(
-    'Guia do estilo em português, markdown curto e prático, pra ser seguido em todo prompt de motion deste formato: identidade em 1 frase; fundo; paleta com hex e função de cada cor; tipografia e hierarquia (as 4 fontes principais com tamanhos, peso, caixa, espaçamento) e uma tabela "Fontes por situação" com a fonte escolhida pra cada situação (nas dinâmicas, a que você escolheu e por quê, em poucas palavras); movimentos de câmera com duração e easing; transições (quando usar cada uma); ritmo de cortes; elementos gráficos recorrentes (molduras, lower thirds, setas, marcadores); o que NUNCA fazer; checklist final.'
+    'Guia do estilo em português, markdown curto e prático, pra ser seguido em todo prompt de motion deste formato: identidade em 1 frase; de qual referência veio o quê (respeitando o foco de cada uma); fundo; paleta com hex e função de cada cor; tipografia e hierarquia (as 4 fontes principais com tamanhos, peso, caixa, espaçamento) e uma tabela "Fontes por situação" com a fonte escolhida pra cada situação (nas dinâmicas, a que você escolheu e por quê, em poucas palavras); movimentos de câmera com duração e easing; transições (quando usar cada uma); ritmo de cortes; elementos gráficos recorrentes (molduras, lower thirds, setas, marcadores); o que NUNCA fazer; checklist final.'
   )
   lines.push('</guia>')
   lines.push('<demo>')
@@ -99,6 +102,12 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
   )
   lines.push('</demo>')
   return lines.join('\n')
+}
+
+/** "[foco 70: mais motion]" — o mesmo texto vai em cada imagem/link no pedido */
+export function focusLabel(v = 50) {
+  const what = v <= 20 ? 'só estética' : v < 45 ? 'mais estética' : v <= 55 ? 'estética e motion' : v < 80 ? 'mais motion' : 'só motion'
+  return `[foco ${v}: ${what}]`
 }
 
 function parseAnswer(text: string) {
@@ -247,7 +256,7 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
   const images = useMemo(() => {
     const out: { path: string; desc: string }[] = []
     m.refs.forEach((r, i) => {
-      const note = r.note ? ` — nota do autor: ${r.note}` : ''
+      const note = ` ${focusLabel(r.focus)}` + (r.note ? ` — nota do autor: ${r.note}` : '')
       if (r.kind === 'image' && r.path) out.push({ path: r.path, desc: `referência ${i + 1} (imagem "${r.name}")${note}` })
       if (r.kind === 'video')
         (r.frames ?? []).forEach((fr, k) => out.push({ path: fr, desc: `referência ${i + 1} (vídeo "${r.name}", quadro ${k + 1}/${r.frames!.length})${k === 0 ? note : ''}` }))
@@ -489,6 +498,11 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
                   {r.kind === 'video' && <Film size={11} />} {r.name}
                 </div>
                 <input className="st-ref-note" value={r.note ?? ''} placeholder="o que observar aqui…" onChange={(e) => patchRef(r.id, { note: e.target.value })} />
+                <label className="st-focus" title="O que o Claude aprende dessa referência">
+                  <span className={(r.focus ?? 50) < 45 ? 'on' : ''}>estética</span>
+                  <input type="range" min={0} max={100} step={5} value={r.focus ?? 50} onChange={(e) => patchRef(r.id, { focus: Number(e.target.value) })} onDoubleClick={() => patchRef(r.id, { focus: 50 })} />
+                  <span className={(r.focus ?? 50) > 55 ? 'on' : ''}>motion</span>
+                </label>
                 <button className="icon-btn danger st-ref-x" title="Tirar" onClick={() => patchM((mm) => ({ refs: mm.refs.filter((x) => x.id !== r.id) }))}>
                   <X size={12} />
                 </button>

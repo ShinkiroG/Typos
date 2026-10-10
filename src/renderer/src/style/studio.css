@@ -678,3 +678,22 @@
   display: flex;
   gap: 2px;
 }
+
+/* foco de cada referência: estética ↔ motion */
+.st-focus {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.st-focus span.on {
+  color: var(--accent);
+  font-weight: 600;
+}
+.st-focus input[type='range'] {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--accent);
+}
