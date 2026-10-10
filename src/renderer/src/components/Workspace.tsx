@@ -117,7 +117,6 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [notes, setNotes] = useState(data.notes ?? '')
   const [montage, setMontage] = useState<MontageData>(() => data.montage ?? defaultMontage())
   const [montageVisited, setMontageVisited] = useState(false)
-  const [autoCut, setAutoCut] = useState<string | null>(null)
   // revisão lado a lado (rascunho da IA × roteiro atual)
   const [review, setReview] = useState<{ original: JSONContent[]; draft: JSONContent[]; request: string; provider?: string; busy: boolean } | null>(null)
   // larguras dos painéis (arrastando a borda)
@@ -840,8 +839,14 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             active={mode === 'montage'}
             data={montage}
             onChange={setMontage}
-            autoCutBusy={autoCut}
-            onAutoCut={() => setToast('O corte automático chega na próxima etapa.')}
+            lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
+            getBlocks={() => {
+              const out: { index: number; type: string; text: string; seconds?: number }[] = []
+              editorRef.current?.state.doc.forEach((n, _o, i) =>
+                out.push({ index: i, type: n.type.name, text: n.textContent, seconds: Number(n.attrs.seconds) || undefined })
+              )
+              return out
+            }}
           />
         </div>
       )}

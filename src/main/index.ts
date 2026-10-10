@@ -9,6 +9,7 @@ import { initUpdater, checkManually, installDownloadedNow, installMode } from '.
 import { initSpell } from './spell'
 import { initAi } from './ai'
 import { initMedia, mediaCacheDir } from './media'
+import { initWhisper } from './whisper'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer
 protocol.registerSchemesAsPrivileged([
@@ -190,6 +191,7 @@ app.on('window-all-closed', () => app.quit())
 initSpell()
 initAi()
 initMedia()
+initWhisper()
 
 // ---------- configurações e atualizações ----------
 ipcMain.handle('settings:get', async () => {

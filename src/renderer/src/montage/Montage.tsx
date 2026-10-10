@@ -25,6 +25,7 @@ import {
 import { api, clipDur, clipEndT, fileUrl, uid, type MontageBin, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
 import { EditTimeline, MEDIA_MIME, mediaLen, splitClip, type Tool } from './EditTimeline'
+import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
 
 export const fmtTc = (t: number) => {
   const s = Math.max(0, t)
@@ -40,12 +41,15 @@ interface Props {
   active: boolean
   data: MontageData
   onChange: (d: MontageData) => void
-  /** corte automático da narração (etapa de transcrição) */
-  onAutoCut: (bin: MontageBin) => void
-  autoCutBusy: string | null
+  /** idioma da narração pro Whisper ("pt", "en"…) */
+  lang: string
+  /** blocos do roteiro, na ordem (pro corte automático achar cada frase) */
+  getBlocks: () => ScriptBlock[]
 }
 
-export function Montage({ active, data, onChange, onAutoCut, autoCutBusy }: Props) {
+type WStatus = Awaited<ReturnType<typeof api.whisperStatus>>
+
+export function Montage({ active, data, onChange, lang, getBlocks }: Props) {
   const engine = useMemo(() => new MontageEngine(), [])
   const [wavesVersion, setWavesVersion] = useState(0)
   const [selected, setSelected] = useState<string[]>([])
@@ -57,6 +61,64 @@ export function Montage({ active, data, onChange, onAutoCut, autoCutBusy }: Prop
   const [ffmpeg, setFfmpeg] = useState<{ path: string; version: string; whisper: boolean } | null | undefined>(undefined)
   const [source, setSource] = useState<MontageMedia | null>(null)
   const [missing, setMissing] = useState<Set<string>>(new Set())
+
+  const [wstatus, setWstatus] = useState<WStatus | null>(null)
+  const [busy, setBusy] = useState<{ label: string; pct: number | null } | null>(null)
+  const [report, setReport] = useState<AutoCutResult | null>(null)
+  const busyLabel = useRef('')
+
+  useEffect(() => {
+    api.whisperStatus().then(setWstatus)
+    api.onWhisperProgress((p) => setBusy((b) => (b ? { ...b, pct: p.pct } : b)))
+  }, [])
+
+  const model = wstatus?.models.find((m) => m.id === wstatus.model)
+
+  const downloadModel = async () => {
+    if (!model) return
+    if (!confirm(`Baixar o modelo ${model.id} (~${(model.mb / 1024).toFixed(1)} GB) do repositório oficial do whisper.cpp? É uma vez só.`)) return
+    setBusy({ label: `Baixando ${model.id}…`, pct: 0 })
+    const r = await api.whisperDownload(model.id)
+    setBusy(null)
+    if ('error' in r) alert(r.error)
+    setWstatus(await api.whisperStatus())
+  }
+
+  /** transcreve a narração, acha cada frase do roteiro e monta a timeline */
+  const runAutoCut = async (b: MontageBin) => {
+    const list = dataRef.current.media.filter((m) => m.bin === b.id && m.hasAudio)
+    if (!list.length) return
+    if (!model?.ready) return downloadModel()
+    const hadAuto = dataRef.current.clips.some((c) => c.block !== undefined && list.some((m) => m.id === c.media))
+    if (hadAuto && !confirm('Refazer o corte automático? Os cortes automáticos anteriores dessa narração são substituídos (o que você pôs à mão fica).')) return
+    engine.pause()
+    setPlaying(false)
+    setReport(null)
+    const takes: Take[] = []
+    try {
+      for (const [i, m] of list.entries()) {
+        busyLabel.current = `Transcrevendo ${m.name} (${i + 1}/${list.length})`
+        setBusy({ label: busyLabel.current, pct: 0 })
+        const tr = await api.transcribe(m.path, lang)
+        if ('error' in tr) throw new Error(tr.error)
+        setBusy({ label: `Achando os silêncios de ${m.name}`, pct: null })
+        const sil = await api.silences(m.path)
+        if ('error' in sil) throw new Error(sil.error)
+        takes.push({ media: m, words: tr.words, silences: sil })
+      }
+      setBusy({ label: 'Comparando com o roteiro…', pct: null })
+      const r = autoCut(getBlocks(), takes, dataRef.current)
+      if (!r.found) throw new Error('Não achei nenhuma frase do roteiro nessa narração. O idioma do formato está certo?')
+      change(r.data)
+      setReport(r)
+      setSelected([])
+      seek(0)
+    } catch (err) {
+      alert((err as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
 
   const posRef = useRef(0)
   const playheadRef = useRef<HTMLDivElement>(null)
@@ -396,11 +458,11 @@ export function Montage({ active, data, onChange, onAutoCut, autoCutBusy }: Prop
           {curBin?.role === 'narration' && (
             <button
               className="btn small primary"
-              disabled={!items.length || !!autoCutBusy || !ffmpeg}
-              onClick={() => onAutoCut(curBin)}
+              disabled={!items.length || !!busy || !ffmpeg}
+              onClick={() => runAutoCut(curBin)}
               title="Transcreve a narração, compara com o roteiro e monta a timeline com os cortes"
             >
-              {autoCutBusy ? <Loader2 size={13} className="spin" /> : <Wand2 size={13} />} Corte automático
+              {busy ? <Loader2 size={13} className="spin" /> : <Wand2 size={13} />} Corte automático
             </button>
           )}
           {curBin?.role === 'custom' && (
@@ -418,7 +480,61 @@ export function Montage({ active, data, onChange, onAutoCut, autoCutBusy }: Prop
             </button>
           )}
         </div>
-        {autoCutBusy && <div className="mt-note">{autoCutBusy}</div>}
+        {curBin?.role === 'narration' && wstatus && ffmpeg && (
+          <div className="mt-whisper">
+            <span>Transcrição</span>
+            <select
+              value={wstatus.model}
+              disabled={!!busy}
+              onChange={async (e) => {
+                await api.whisperSetModel(e.target.value)
+                setWstatus(await api.whisperStatus())
+              }}
+            >
+              {wstatus.models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                  {m.ready ? ' ✓' : ` (${(m.mb / 1024).toFixed(1)} GB)`}
+                </option>
+              ))}
+            </select>
+            {model && !model.ready && (
+              <button className="btn small" disabled={!!busy} onClick={downloadModel}>
+                Baixar
+              </button>
+            )}
+          </div>
+        )}
+        {busy && (
+          <div className="mt-progress">
+            <span>
+              <Loader2 size={12} className="spin" /> {busy.label}
+              {busy.pct !== null ? ` · ${Math.round(busy.pct * 100)}%` : ''}
+            </span>
+            {busy.pct !== null && (
+              <div className="mt-bar">
+                <i style={{ width: `${Math.round(busy.pct * 100)}%` }} />
+              </div>
+            )}
+          </div>
+        )}
+        {report && !busy && curBin?.role === 'narration' && (
+          <div className="mt-report">
+            <b>{report.found} frases montadas</b>
+            {report.retakes > 0 && <span> · {report.retakes} regravadas (ficou a última tomada)</span>}
+            {report.missing.length > 0 && (
+              <details>
+                <summary>{report.missing.length} não achadas na gravação</summary>
+                {report.missing.map((m, i) => (
+                  <p key={i}>{m}</p>
+                ))}
+              </details>
+            )}
+            <button className="icon-btn" title="Fechar" onClick={() => setReport(null)}>
+              <X size={12} />
+            </button>
+          </div>
+        )}
         {ffmpeg === null && (
           <div className="mt-note warn">
             <AlertTriangle size={13} /> A Montagem precisa do ffmpeg. Instale com <code>winget install ffmpeg</code> e reabra o Typos.

@@ -23,6 +23,8 @@ export interface AppSettings {
   ai?: AiSettings
   /** caminho manual do ffmpeg.exe (Montagem) */
   ffmpegPath?: string
+  /** modelo do Whisper pro corte automático */
+  whisperModel?: string
 }
 
 const DEFAULTS: AppSettings = { autoUpdate: true }

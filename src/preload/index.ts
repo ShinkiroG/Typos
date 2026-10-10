@@ -97,6 +97,23 @@ const api = {
     ipcRenderer.invoke('media:probe', path),
   proxyAudio: (path: string): Promise<string | { error: string }> => ipcRenderer.invoke('media:proxy', path),
   mediaExists: (paths: string[]): Promise<boolean[]> => ipcRenderer.invoke('media:exists', paths),
+  silences: (path: string): Promise<[number, number][] | { error: string }> => ipcRenderer.invoke('media:silences', path),
+
+  // transcrição (Whisper local) pro corte automático
+  whisperStatus: (): Promise<{
+    model: string
+    models: { id: string; label: string; file: string; mb: number; ready: boolean }[]
+    vad: boolean
+    downloading: boolean
+  }> => ipcRenderer.invoke('whisper:status'),
+  whisperSetModel: (id: string) => ipcRenderer.invoke('whisper:setModel', id),
+  whisperDownload: (id: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('whisper:download', id),
+  transcribe: (path: string, lang: string): Promise<{ words: { s: number; e: number; w: string }[] } | { error: string }> =>
+    ipcRenderer.invoke('whisper:transcribe', path, lang),
+  onWhisperProgress: (cb: (p: { stage: 'download' | 'transcribe'; pct: number; path?: string }) => void) => {
+    ipcRenderer.removeAllListeners('whisper:progress')
+    ipcRenderer.on('whisper:progress', (_e, p) => cb(p))
+  },
 
   /** o main pede pra salvar antes de fechar/atualizar */
   onFlush: (cb: () => Promise<void>) => {

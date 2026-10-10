@@ -545,3 +545,69 @@
   border: 6px solid transparent;
   border-top-color: #ff4d6d;
 }
+
+/* corte automático */
+.mt-whisper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 8px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mt-whisper select {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 5px;
+  font-size: 11px;
+  color: var(--text);
+}
+.mt-progress {
+  margin: 0 8px 8px;
+  font-size: 11px;
+  color: var(--text);
+}
+.mt-progress span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mt-bar {
+  height: 4px;
+  margin-top: 5px;
+  border-radius: 2px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.mt-bar i {
+  display: block;
+  height: 100%;
+  background: var(--c-prompt);
+  transition: width 0.3s;
+}
+.mt-report {
+  position: relative;
+  margin: 0 8px 8px;
+  padding: 8px 26px 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--c-prompt) 10%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--c-prompt) 35%, var(--line));
+  font-size: 11px;
+  line-height: 1.5;
+}
+.mt-report details {
+  margin-top: 4px;
+  color: var(--c-transition);
+}
+.mt-report details p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+.mt-report .icon-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
