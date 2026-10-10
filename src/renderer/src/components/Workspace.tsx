@@ -9,6 +9,7 @@ import type { JSONContent } from '@tiptap/core'
 import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming, convertBracketLines } from '../editor/nodes'
 import { Timestamps, setTimestamps } from '../editor/timestamps'
+import { Reference, referenceAt, allReferences, referencesText, type RefRange } from '../editor/reference'
 import { FilterBar } from './FilterBar'
 import { TrackGutter } from './TrackGutter'
 import { AiLineAssist } from './AiLineAssist'
@@ -48,6 +49,7 @@ import {
 import { LibraryPanel, SNIPPET_MIME } from './LibraryPanel'
 import { FormatsPanel } from './FormatsPanel'
 import { Montage } from '../montage/Montage'
+import { RefModal, RefsPanel } from './References'
 import { SnippetModal, type SnippetDraft } from './SnippetModal'
 
 interface Props {
@@ -111,7 +113,11 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   // elementos da área do texto (o ícone de IA se posiciona na página e segue o mouse no scroll)
   const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null)
   const [pageEl, setPageEl] = useState<HTMLDivElement | null>(null)
-  const [menu, setMenu] = useState<{ x: number; y: number; pos: number } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; pos: number; sel?: { from: number; to: number }; ref?: RefRange | null } | null>(null)
+  // referência bibliográfica sendo criada/editada, dica ao passar o mouse e a lista inteira
+  const [refEdit, setRefEdit] = useState<{ from: number; to: number; text: string; id?: string; excerpt: string } | null>(null)
+  const [refTip, setRefTip] = useState<{ x: number; y: number; text: string } | null>(null)
+  const [refsOpen, setRefsOpen] = useState(false)
   const [snippet, setSnippet] = useState<(SnippetDraft & { node?: JSONContent }) | null>(null)
 
   const [clips, setClips] = useState<Clip[]>(data.timeline?.clips ?? [])
@@ -313,6 +319,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       SpeechTiming,
       ScriptKeys,
       Timestamps,
+      Reference,
       PlaybackHighlight,
       SpellCheck
     ],
@@ -381,6 +388,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     }
   })
   const stats = useMemo(() => (doc ? computeStats(doc, wpm) : null), [doc, wpm])
+  const refCount = useMemo(() => (doc && editor ? new Set(allReferences(editor).map((r) => r.text.trim())).size : 0), [doc, editor])
   const timing = useMemo(() => (doc ? buildTiming(doc, wpm) : null), [doc, wpm])
   const overLimit = !!(stats && format?.maxSeconds && stats.seconds > format.maxSeconds)
 
@@ -628,7 +636,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       doc: ed.getJSON(),
       updatedAt: new Date().toISOString()
     }
-    const md = toMarkdown(out, format, computeStats(ed.state.doc, wpm), buildTiming(ed.state.doc, wpm), wpm)
+    const refs = referencesText(allReferences(ed))
+    const md = toMarkdown(out, format, computeStats(ed.state.doc, wpm), buildTiming(ed.state.doc, wpm), wpm) + (refs ? '\n\n## ' + refs.replace(/^Referências:/, 'Referências') + '\n' : '')
     return { out, md }
   }, [data])
 
@@ -738,9 +747,12 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       spellSuggestions(wrong.word).then((suggestions) =>
         setSpell((cur) => (cur && cur.from === wrong.from && cur.word === wrong.word ? { ...cur, suggestions } : cur))
       )
-    if (!hit && !wrong) return setMenu(null)
+    const { from, to, empty } = editor.state.selection
+    const sel = !empty && editor.state.doc.textBetween(from, to).trim() ? { from, to } : undefined
+    const ref = at ? referenceAt(editor, at.inside >= 0 ? at.pos : at.pos) : null
+    if (!hit && !wrong && !sel && !ref) return setMenu(null)
     e.preventDefault()
-    setMenu({ x: e.clientX, y: e.clientY, pos: hit ? hit.pos : -1 })
+    setMenu({ x: e.clientX, y: e.clientY, pos: hit ? hit.pos : -1, sel, ref })
   }
 
   const menuNode = menu && menu.pos >= 0 ? editor?.state.doc.nodeAt(menu.pos) : null
@@ -977,6 +989,15 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           setDragFile(false)
         }}
         onDrop={onMarginDrop}
+        onMouseOver={(e) => {
+          // passar o mouse num trecho com referência mostra a fonte
+          const el = (e.target as HTMLElement).closest?.('.ref-mark') as HTMLElement | null
+          if (!el) return refTip && setRefTip(null)
+          const r = el.getBoundingClientRect()
+          setRefTip({ x: Math.min(r.left, window.innerWidth - 380), y: r.bottom + 6, text: el.dataset.ref ?? '' })
+        }}
+        onMouseLeave={() => setRefTip(null)}
+        onScroll={() => refTip && setRefTip(null)}
       >
         {marginHint && (
           <div className="drop-margin-hint" style={{ position: 'fixed', left: marginHint.left, top: marginHint.top, height: marginHint.height, width: marginHint.width }}>
@@ -1095,6 +1116,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             )}
             <span className="stat">{stats.words} palavras faladas</span>
             <span className="stat">{wpm} ppm</span>
+            <button className={'stat stat-btn' + (refCount ? ' has' : '')} title="Ver e conferir as referências bibliográficas (vão pro rodapé/descrição)" onClick={() => setRefsOpen(true)}>
+              📚 {refCount} {refCount === 1 ? 'referência' : 'referências'}
+            </button>
             <span className="stat t-chapter">{stats.chapters} capítulos</span>
             <span className="stat t-prompt">{stats.prompts} prompts</span>
             <span className="stat t-transition">{stats.transitions} transições</span>
@@ -1104,7 +1128,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         )}
       </footer>
 
-      {menu && (menuNode || spell) && (
+      {menu && (menuNode || spell || menu.sel || menu.ref) && (
         <div
           className="ctx-menu"
           style={{ left: menu.x, top: menu.y }}
@@ -1121,6 +1145,48 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             e.stopPropagation()
           }}
         >
+          {(menu.sel || menu.ref) && (
+            <>
+              {menu.sel && !menu.ref && (
+                <button
+                  onClick={() => {
+                    setRefEdit({ ...menu.sel!, text: '', excerpt: editor!.state.doc.textBetween(menu.sel!.from, menu.sel!.to, ' ') })
+                    setMenu(null)
+                  }}
+                >
+                  📚 Criar referência
+                </button>
+              )}
+              {menu.ref && (
+                <>
+                  <div className="ctx-label ctx-ref">📚 {menu.ref.text.length > 60 ? menu.ref.text.slice(0, 60) + '…' : menu.ref.text}</div>
+                  <button
+                    onClick={() => {
+                      const r = menu.ref!
+                      setRefEdit({ from: r.from, to: r.to, text: r.text, id: r.id, excerpt: editor!.state.doc.textBetween(r.from, r.to, ' ') })
+                      setMenu(null)
+                    }}
+                  >
+                    Editar referência
+                  </button>
+                  <button
+                    className="danger"
+                    onClick={() => {
+                      const r = menu.ref!
+                      editor!.chain().focus().command(({ tr }) => {
+                        tr.removeMark(r.from, r.to, editor!.schema.marks.reference)
+                        return true
+                      }).run()
+                      setMenu(null)
+                    }}
+                  >
+                    Apagar referência
+                  </button>
+                </>
+              )}
+              {(spell || menuNode) && <div className="ctx-sep" />}
+            </>
+          )}
           {spell && (
             <>
               <div className="ctx-label">
@@ -1206,6 +1272,49 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       )}
 
       {toast && <div className="toast">{toast}</div>}
+      {refTip && (
+        <div className="ref-tip" style={{ left: refTip.x, top: refTip.y }}>
+          <b>📚 Referência</b>
+          {refTip.text}
+        </div>
+      )}
+      {refEdit && (
+        <RefModal
+          edit={refEdit}
+          onCancel={() => setRefEdit(null)}
+          onSave={(text) => {
+            const ed = editor!
+            const mark = ed.schema.marks.reference.create({ id: refEdit.id ?? uid(), text: text.trim() })
+            ed.chain()
+              .focus()
+              .command(({ tr }) => {
+                tr.removeMark(refEdit.from, refEdit.to, ed.schema.marks.reference)
+                tr.addMark(refEdit.from, refEdit.to, mark)
+                return true
+              })
+              .run()
+            setRefEdit(null)
+          }}
+        />
+      )}
+      {refsOpen && editor && (
+        <RefsPanel
+          refs={allReferences(editor)}
+          onClose={() => setRefsOpen(false)}
+          onJump={(r) => {
+            setRefsOpen(false)
+            editor.chain().focus().setTextSelection({ from: r.from, to: r.to }).scrollIntoView().run()
+          }}
+          onEdit={(r) => {
+            setRefsOpen(false)
+            setRefEdit({ from: r.from, to: r.to, text: r.text, id: r.id, excerpt: r.excerpt })
+          }}
+          onCopy={async (txt) => {
+            await navigator.clipboard.writeText(txt)
+            setToast('Referências copiadas! Cole na descrição do vídeo.')
+          }}
+        />
+      )}
       {aiJob && (
         <div className="modal-backdrop" onMouseDown={() => aiJob.status !== 'running' && setAiJob(null)}>
           <div className="modal ai-modal" onMouseDown={(e) => e.stopPropagation()}>
