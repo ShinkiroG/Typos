@@ -1,17 +1,41 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, session, nativeImage } from 'electron'
 import { join, basename, extname, dirname, resolve, sep } from 'path'
-import { promises as fs, existsSync } from 'fs'
+import { promises as fs, existsSync, createReadStream } from 'fs'
+import { Readable } from 'stream'
 import { pathToFileURL } from 'url'
 import { randomUUID } from 'crypto'
 import { loadSettings, saveSettings } from './settings'
 import { initUpdater, checkManually, installDownloadedNow, installMode } from './updater'
 import { initSpell } from './spell'
 import { initAi } from './ai'
+import { initMedia, mediaCacheDir } from './media'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer
 protocol.registerSchemesAsPrivileged([
   { scheme: 'rs', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true, corsEnabled: true } }
 ])
+
+const MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.opus': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska'
+}
 
 const PROJECT_FILE = 'roteiro.json'
 const MARKDOWN_FILE = 'roteiro.md'
@@ -142,11 +166,20 @@ app.whenReady().then(() => {
   protocol.handle('rs', async (req) => {
     const p = decodeURIComponent(new URL(req.url).pathname.slice(1))
     if (!existsSync(p)) return new Response(null, { status: 404 })
-    const res = await net.fetch(pathToFileURL(p).toString())
     // o renderer roda em file:// e precisa de CORS pra ler áudio com fetch()
-    const headers = new Headers(res.headers)
-    headers.set('Access-Control-Allow-Origin', '*')
-    return new Response(res.body, { status: res.status, headers })
+    const headers = new Headers({ 'Access-Control-Allow-Origin': '*', 'Accept-Ranges': 'bytes', 'Content-Type': MIME[extname(p).toLowerCase()] ?? 'application/octet-stream' })
+    // vídeo grande: o player pede pedaços (Range) pra poder pular pra qualquer ponto sem ler tudo
+    const size = (await fs.stat(p)).size
+    const range = /bytes=(\d*)-(\d*)/.exec(req.headers.get('range') ?? '')
+    if (range && size > 0) {
+      const start = range[1] ? Math.min(Number(range[1]), size - 1) : Math.max(0, size - Number(range[2]))
+      const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1
+      headers.set('Content-Range', `bytes ${start}-${end}/${size}`)
+      headers.set('Content-Length', String(end - start + 1))
+      return new Response(Readable.toWeb(createReadStream(p, { start, end })) as ReadableStream, { status: 206, headers })
+    }
+    headers.set('Content-Length', String(size))
+    return new Response(Readable.toWeb(createReadStream(p)) as ReadableStream, { status: 200, headers })
   })
   createWindow()
   loadSettings().then((s) => initUpdater({ window: () => win, beforeQuit: prepareQuit }, s.autoUpdate))
@@ -156,6 +189,7 @@ app.on('window-all-closed', () => app.quit())
 
 initSpell()
 initAi()
+initMedia()
 
 // ---------- configurações e atualizações ----------
 ipcMain.handle('settings:get', async () => {
@@ -331,7 +365,7 @@ ipcMain.handle('storage:info', async (_e, keep?: string) => {
   let draftBytes = 0
   for (const n of drafts) draftBytes += await dirSize(join(draftsDir(), n))
   const { files, updaterCache } = await updateLeftovers()
-  let updateBytes = await dirSize(updaterCache)
+  let updateBytes = (await dirSize(updaterCache)) + (await dirSize(mediaCacheDir()))
   for (const f of files) updateBytes += (await fs.stat(f).catch(() => ({ size: 0 }))).size
   const cacheBytes = (await session.defaultSession.getCacheSize()) + updateBytes
   const recent = (await readJson<Recent[]>(settingsFile('recent.json'), [])).length
@@ -350,6 +384,7 @@ ipcMain.handle('storage:clear', async (_e, what: 'drafts' | 'cache' | 'recent', 
     const { files, updaterCache } = await updateLeftovers()
     for (const f of files) await fs.rm(f, { force: true }).catch(() => null)
     await fs.rm(updaterCache, { recursive: true, force: true }).catch(() => null)
+    await fs.rm(mediaCacheDir(), { recursive: true, force: true }).catch(() => null)
   } else if (what === 'recent') {
     await writeJson(settingsFile('recent.json'), [])
   }
@@ -515,4 +550,119 @@ ipcMain.handle('thumb:get', async (_e, path: string, size: number) => {
   if (thumbCache.size > 3000) thumbCache.clear()
   thumbCache.set(key, url)
   return url
+})
+
+// ---------- formatos: imagens de referência de motion ----------
+ipcMain.handle('format:pickImages', async (): Promise<string[]> => {
+  const r = await dialog.showOpenDialog({
+    title: 'Referência de motion do formato',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Imagens e vídeos', extensions: [...IMAGE_EXT, ...VIDEO_EXT].map((e) => e.slice(1)) }]
+  })
+  if (r.canceled) return []
+  const dir = join(userDir(), 'format-media')
+  const out: string[] = []
+  for (const p of r.filePaths) out.push(join(dir, await copyUnique(p, dir)))
+  return out
+})
+
+// ---------- exportar / importar preferências (pra reinstalar ou levar pra outro PC) ----------
+// Um arquivo .typosprefs (JSON) com os ajustes, formatos, biblioteca, pastas, dicionário pessoal e os
+// arquivos da biblioteca/formatos. Caminhos dentro do userData viram {{userData}} pra funcionar em outro PC.
+const PREF_FILES = ['settings.json', 'formats.json', 'library.json', 'folders.json', 'dicionario-pessoal.txt']
+const PREF_DIRS = ['library', 'format-media']
+const UD_TOKEN = '{{userData}}'
+
+async function listFiles(dir: string, base = dir): Promise<string[]> {
+  const out: string[] = []
+  for (const e of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) out.push(...(await listFiles(p, base)))
+    else out.push(p.slice(base.length + 1))
+  }
+  return out
+}
+
+/** troca o caminho do userData em todo texto (também na forma escapada do JSON) */
+const swapUserDir = (text: string, from: string, to: string) =>
+  text.split(from).join(to).split(JSON.stringify(from).slice(1, -1)).join(JSON.stringify(to).slice(1, -1))
+
+ipcMain.handle('prefs:export', async (_e, includeKeys: boolean): Promise<Result<{ path: string; files: number }> | null> => {
+  const r = await dialog.showSaveDialog({
+    title: 'Exportar preferências do Typos',
+    defaultPath: join(app.getPath('documents'), `Typos-preferencias-${new Date().toISOString().slice(0, 10)}.typosprefs`),
+    filters: [{ name: 'Preferências do Typos', extensions: ['typosprefs'] }]
+  })
+  if (r.canceled || !r.filePath) return null
+  try {
+    const ud = userDir()
+    const texts: Record<string, string> = {}
+    for (const f of PREF_FILES) {
+      let t = await fs.readFile(join(ud, f), 'utf8').catch(() => null)
+      if (t === null) continue
+      if (f === 'settings.json' && !includeKeys) {
+        const s = JSON.parse(t)
+        delete s.elevenLabsKey
+        if (s.ai) {
+          delete s.ai.anthropicKey
+          delete s.ai.openaiKey
+        }
+        t = JSON.stringify(s, null, 2)
+      }
+      texts[f] = swapUserDir(t, ud, UD_TOKEN)
+    }
+    const files: Record<string, string> = {}
+    for (const d of PREF_DIRS)
+      for (const rel of await listFiles(join(ud, d))) files[join(d, rel)] = (await fs.readFile(join(ud, d, rel))).toString('base64')
+    const bundle = { typosPrefs: 1, version: app.getVersion(), exportedAt: new Date().toISOString(), withKeys: includeKeys, texts, files }
+    await fs.writeFile(r.filePath, JSON.stringify(bundle), 'utf8')
+    return { path: r.filePath, files: Object.keys(texts).length + Object.keys(files).length }
+  } catch (err) {
+    return { error: 'Não deu pra exportar: ' + (err as Error).message }
+  }
+})
+
+ipcMain.handle('prefs:import', async (e): Promise<Result<{ files: number }> | null> => {
+  const r = await dialog.showOpenDialog({
+    title: 'Importar preferências do Typos',
+    properties: ['openFile'],
+    filters: [{ name: 'Preferências do Typos', extensions: ['typosprefs'] }]
+  })
+  if (r.canceled || !r.filePaths[0]) return null
+  try {
+    const bundle = JSON.parse(await fs.readFile(r.filePaths[0], 'utf8'))
+    if (bundle?.typosPrefs !== 1) return { error: 'Esse arquivo não é de preferências do Typos.' }
+    const ud = userDir()
+    let n = 0
+    for (const [rel, b64] of Object.entries<string>(bundle.files ?? {})) {
+      const dest = resolve(ud, rel)
+      if (!dest.startsWith(resolve(ud) + sep)) continue // nada fora do userData
+      await fs.mkdir(dirname(dest), { recursive: true })
+      await fs.writeFile(dest, Buffer.from(b64, 'base64'))
+      n++
+    }
+    for (const [f, text] of Object.entries<string>(bundle.texts ?? {})) {
+      if (!PREF_FILES.includes(f)) continue
+      let t = swapUserDir(text, UD_TOKEN, ud)
+      if (f === 'settings.json') {
+        // chaves que já estão neste PC ficam, se o arquivo veio sem elas
+        const cur = await loadSettings()
+        const inc = JSON.parse(t)
+        const merged = {
+          ...cur,
+          ...inc,
+          elevenLabsKey: inc.elevenLabsKey ?? cur.elevenLabsKey,
+          ai: { ...cur.ai, ...inc.ai, anthropicKey: inc.ai?.anthropicKey ?? cur.ai?.anthropicKey, openaiKey: inc.ai?.openaiKey ?? cur.ai?.openaiKey }
+        }
+        t = JSON.stringify(merged, null, 2)
+      }
+      await fs.writeFile(join(ud, f), t, 'utf8')
+      n++
+    }
+    // recarrega a janela pra tudo ler os arquivos novos
+    setTimeout(() => BrowserWindow.fromWebContents(e.sender)?.webContents.reload(), 300)
+    return { files: n }
+  } catch (err) {
+    return { error: 'Não deu pra importar: ' + (err as Error).message }
+  }
 })

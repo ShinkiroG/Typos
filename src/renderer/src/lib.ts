@@ -8,7 +8,19 @@ declare global {
   }
 }
 
-export const api = window.api
+/** estilo do formato ativo: vai junto em todo pedido de texto pra IA */
+let aiStyle = ''
+export const setAiStyle = (rules: string) => {
+  aiStyle = rules.trim()
+}
+export const api: typeof window.api = {
+  ...window.api,
+  aiText: (job) =>
+    window.api.aiText(aiStyle ? { ...job, instruction: `${job.instruction}
+
+Regras do estilo deste vídeo (respeite):
+${aiStyle}` } : job)
+}
 
 export interface Attachment {
   id: string
@@ -132,6 +144,15 @@ export interface Format {
   maxSeconds: number | null
   /** idioma do corretor ortográfico ("pt-BR", "en-US"… ou "off"); vazio = pt-BR */
   lang?: string
+  /** estilo do vídeo: regras, overlays, identidade de motion, pngtuber… (vai junto pra IA) */
+  rules?: string
+  /** o formato tem referência visual de motion? (imagens/vídeos em userData/format-media) */
+  motionRef?: boolean
+  motionRefFiles?: string[]
+  /** pastas de assets que esse formato sempre usa (aparecem nas Pastas quando ele está ativo) */
+  assetFolders?: string[]
+  /** só na tela de Formatos: editado e ainda não salvo */
+  __dirty?: boolean
 }
 
 export const formatLang = (f?: Format) => f?.lang || 'pt-BR'
@@ -163,6 +184,8 @@ export interface ProjectData {
   timeline?: TimelineData
   /** anotações livres do autor (painel da esquerda) */
   notes?: string
+  /** workspace de Montagem: mídia, cortes da narração e timeline de edição */
+  montage?: MontageData
   createdAt: string
   updatedAt: string
 }
@@ -477,3 +500,78 @@ export function envelopeAt(keys: Clip['keys'], srcT: number) {
 export const clipEnd = (c: Clip) => c.start + c.duration
 
 export const uid = () => Math.random().toString(36).slice(2, 10)
+
+// ---------- Montagem ----------
+/** narração = vai pro corte automático; bruto = material do vídeo; custom = pasta criada pelo usuário */
+export type BinRole = 'narration' | 'raw' | 'custom'
+export interface MontageBin {
+  id: string
+  name: string
+  role: BinRole
+}
+export interface MontageMedia {
+  id: string
+  bin: string
+  /** caminho absoluto: o arquivo fica onde está (não é copiado) */
+  path: string
+  name: string
+  kind: MediaKind
+  duration: number
+  hasAudio: boolean
+  hasVideo: boolean
+  width?: number
+  height?: number
+  fps?: number
+}
+export interface MontageTrack {
+  id: string
+  kind: 'video' | 'audio'
+  name: string
+  muted?: boolean
+}
+export interface MontageClip {
+  id: string
+  track: string
+  media: string
+  /** início na timeline (s) */
+  start: number
+  /** trecho do arquivo usado (s) */
+  in: number
+  out: number
+  /** volume em dB (0 = original) */
+  gainDb?: number
+  fadeIn?: number
+  fadeOut?: number
+  /** Emenda: crossfade curto com o clipe imediatamente antes, na mesma faixa (s) */
+  splice?: number
+  /** bloco do roteiro (índice no documento) que esse trecho fala */
+  block?: number
+}
+export interface MontageData {
+  bins: MontageBin[]
+  media: MontageMedia[]
+  tracks: MontageTrack[]
+  clips: MontageClip[]
+  /** duração padrão da Emenda (s) */
+  spliceDefault?: number
+}
+
+export const clipDur = (c: MontageClip) => c.out - c.in
+export const clipEndT = (c: MontageClip) => c.start + c.out - c.in
+
+export function defaultMontage(): MontageData {
+  return {
+    bins: [
+      { id: 'narration', name: 'Narração / Talking head', role: 'narration' },
+      { id: 'raw', name: 'Material bruto', role: 'raw' }
+    ],
+    media: [],
+    tracks: [
+      { id: 'V1', kind: 'video', name: 'V1 · Vídeo' },
+      { id: 'A1', kind: 'audio', name: 'A1 · Narração' },
+      { id: 'A2', kind: 'audio', name: 'A2 · Música/SFX' }
+    ],
+    clips: [],
+    spliceDefault: 0.0002
+  }
+}

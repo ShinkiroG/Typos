@@ -5,7 +5,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
 import type { JSONContent } from '@tiptap/core'
-import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose } from 'lucide-react'
+import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming, convertBracketLines } from '../editor/nodes'
 import { Timestamps, setTimestamps } from '../editor/timestamps'
 import { FilterBar } from './FilterBar'
@@ -39,10 +39,14 @@ import {
   type TimelineAsset,
   type Format,
   type LibraryItem,
-  type ProjectData
+  type ProjectData,
+  type MontageData,
+  defaultMontage,
+  setAiStyle
 } from '../lib'
 import { LibraryPanel, SNIPPET_MIME } from './LibraryPanel'
 import { FormatsPanel } from './FormatsPanel'
+import { Montage } from '../montage/Montage'
 import { SnippetModal, type SnippetDraft } from './SnippetModal'
 
 interface Props {
@@ -111,6 +115,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
 
   const [clips, setClips] = useState<Clip[]>(data.timeline?.clips ?? [])
   const [notes, setNotes] = useState(data.notes ?? '')
+  const [montage, setMontage] = useState<MontageData>(() => data.montage ?? defaultMontage())
+  const [montageVisited, setMontageVisited] = useState(false)
+  const [autoCut, setAutoCut] = useState<string | null>(null)
   // revisão lado a lado (rascunho da IA × roteiro atual)
   const [review, setReview] = useState<{ original: JSONContent[]; draft: JSONContent[]; request: string; provider?: string; busy: boolean } | null>(null)
   // larguras dos painéis (arrastando a borda)
@@ -129,15 +136,19 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [toast, setToast] = useState('')
   const [spell, setSpell] = useState<{ word: string; from: number; to: number; suggestions: string[] | null } | null>(null)
 
+  const [mode, setMode] = useState<'script' | 'montage'>('script')
   const format = formats.find((f) => f.id === formatId) ?? formats[0]
   const wpm = customWpm ?? format?.wpm ?? 150
+  useEffect(() => {
+    setAiStyle(format?.rules ?? '')
+  }, [format?.rules])
 
   // refs pros handlers do editor (que são criados uma vez só)
   const editorRef = useRef<Editor | null>(null)
   const libraryRef = useRef(library)
   libraryRef.current = library
-  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets, notes })
-  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes }
+  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode })
+  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode }
 
   // ---------- desfazer/refazer da tela inteira (texto + timeline) ----------
   // O texto usa o histórico do editor; os clipes de áudio guardam cópias. A pilha "ordem"
@@ -384,6 +395,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       const k = e.key.toLowerCase()
       if (k !== 'z' && k !== 'y') return
       if ((e.target as HTMLElement)?.matches?.('input, textarea, select')) return // campos comuns usam o desfazer deles
+      if (metaRef.current.mode === 'montage') return // a Montagem tem o desfazer dela
       e.preventDefault()
       e.stopPropagation()
       historyStep(k === 'y' || e.shiftKey ? 'redo' : 'undo')
@@ -506,7 +518,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const snapshot = useCallback(() => {
     const ed = editorRef.current
     if (!ed || ed.isDestroyed) return null
-    const { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes } = metaRef.current
+    const { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage } = metaRef.current
     const out: ProjectData = {
       ...data,
       title,
@@ -514,6 +526,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       wpm: customWpm,
       timeline: { clips, tracks, assets },
       notes,
+      montage,
       doc: ed.getJSON(),
       updatedAt: new Date().toISOString()
     }
@@ -552,7 +565,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     setSaveState('dirty')
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => save(), 800)
-  }, [title, formatId, clips, customWpm, tracks, assets, notes, save])
+  }, [title, formatId, clips, customWpm, tracks, assets, notes, montage, save])
 
   useEffect(() => {
     try {
@@ -750,6 +763,17 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           <button className="icon-btn" title="Voltar pros roteiros" onClick={async () => (await save(), onClose())}>
             <Home size={17} />
           </button>
+          <div className="ws-switch">
+            <button className={mode === 'script' ? 'on' : ''} title="Roteiro: escrever" onClick={() => setMode('script')}>
+              <PenLine size={16} />
+            </button>
+            <button className={mode === 'montage' ? 'on' : ''} title="Montagem: mídia, cortes da narração e timeline de edição" onClick={() => {
+                setMode('montage')
+                setMontageVisited(true)
+              }}>
+              <Film size={16} />
+            </button>
+          </div>
           <input
             className="title-input"
             value={title}
@@ -759,6 +783,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             placeholder="Nome do roteiro"
           />
         </div>
+        {mode === 'script' ? (
         <FilterBar
           hidden={hidden}
           onHidden={setHidden}
@@ -767,6 +792,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           showTrack={showTrack}
           onShowTrack={setShowTrack}
         />
+        ) : (
+          <div className="ws-title">Montagem</div>
+        )}
         <div className="tb-right">
           <select className="format-select" value={formatId} onChange={(e) => setFormatId(e.target.value)} title={`Formato do vídeo · corretor: ${langLabel(lang)} (muda em Formatos)`}>
             {formats.map((f) => (
@@ -805,6 +833,18 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           </button>
         </div>
       </header>
+
+      {montageVisited && (
+        <div className="montage-layer" style={mode === 'montage' ? undefined : { display: 'none' }}>
+          <Montage
+            active={mode === 'montage'}
+            data={montage}
+            onChange={setMontage}
+            autoCutBusy={autoCut}
+            onAutoCut={() => setToast('O corte automático chega na próxima etapa.')}
+          />
+        </div>
+      )}
 
       {leftOpen && <InsertPanel editor={editor} notes={notes} onNotes={setNotes} onResizeStart={(e) => startResize('left', e)} />}
 
@@ -899,7 +939,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
               onDelete={(i) => onLibraryChange(library.filter((x) => x.id !== i.id))}
             />
           ) : tab === 'folders' ? (
-            <FoldersPanel />
+            <FoldersPanel extra={format?.assetFolders ?? []} />
           ) : (
             <FormatsPanel formats={formats} activeId={formatId} onChange={onFormatsChange} onSelect={setFormatId} />
           )}

@@ -1,0 +1,547 @@
+/* ---------- Montagem (workspace de edição) ---------- */
+.montage-layer {
+  grid-row: 2 / -1;
+  grid-column: 1 / -1;
+  z-index: 30;
+  background: var(--bg);
+  min-height: 0;
+  display: flex;
+}
+.ws-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.montage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 280px;
+  grid-template-rows: minmax(180px, 1fr) 40px minmax(190px, 42%);
+  grid-template-areas:
+    'pool viewer insp'
+    'bar bar bar'
+    'tl tl tl';
+}
+.mt-pool {
+  grid-area: pool;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--bg-2);
+  min-height: 0;
+}
+.mt-bins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.mt-bin {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+  border-radius: 7px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mt-bin small {
+  font-size: 10px;
+  opacity: 0.7;
+}
+.mt-bin.on {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+}
+.mt-bin.r-narration::before,
+.mt-bin.r-raw::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c-prompt);
+}
+.mt-bin.r-raw::before {
+  background: var(--c-transition);
+}
+.mt-bin.add {
+  padding: 4px 7px;
+}
+.mt-pool-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+}
+.mt-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 8px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mt-note.warn {
+  color: var(--c-transition);
+}
+.mt-note code {
+  font-family: var(--font-console);
+  background: var(--bg);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.mt-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 6px 10px;
+  min-height: 0;
+}
+.mt-empty {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 18px 10px;
+  text-align: center;
+}
+.mt-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 26px 6px 6px;
+  border-radius: 6px;
+  cursor: grab;
+  font-size: 12px;
+}
+.mt-item:hover {
+  background: var(--bg-3);
+}
+.mt-item-ico {
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+}
+.mt-item.k-video .mt-item-ico {
+  color: var(--accent);
+}
+.mt-item.k-audio .mt-item-ico {
+  color: var(--c-prompt);
+}
+.mt-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mt-item-dur {
+  font-family: var(--font-console);
+  font-size: 10px;
+  color: var(--muted);
+}
+.mt-item.missing .mt-item-name,
+.mt-item.missing .mt-item-dur {
+  color: #ff7a7a;
+}
+.mt-item-load {
+  position: absolute;
+  right: 26px;
+  top: 4px;
+  color: var(--muted);
+}
+.mt-item-x {
+  position: absolute;
+  right: 2px;
+  opacity: 0;
+}
+.mt-item:hover .mt-item-x {
+  opacity: 1;
+}
+
+/* visualizador */
+.mt-viewer {
+  grid-area: viewer;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #07080a;
+}
+.mt-screen {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.mt-screen > video,
+.mt-screen > img {
+  grid-area: 1 / 1;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.mt-screen > video.audio {
+  height: 60px;
+  width: 80%;
+}
+.mt-source-back {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+}
+.mt-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 42px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.mt-play {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.mt-tc {
+  font-family: var(--font-console);
+  font-size: 14px;
+  min-width: 70px;
+  text-align: right;
+}
+
+/* inspetor */
+.mt-inspector {
+  grid-area: insp;
+  border-left: 1px solid var(--line);
+  background: var(--bg-2);
+  overflow-y: auto;
+  min-height: 0;
+}
+.mt-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 16px;
+  text-align: left;
+  font-size: 11px;
+}
+.mt-insp {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+.mt-insp-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mt-insp-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.mt-insp label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.mt-insp input[type='number'],
+.mt-insp input[type='text'] {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font: 12px var(--font-console);
+  color: var(--text);
+}
+.mt-insp-row b {
+  color: var(--text);
+  font-weight: 600;
+}
+.mt-insp label.toggle-row {
+  flex-direction: row;
+  color: var(--text);
+}
+.mt-insp label.disabled {
+  opacity: 0.5;
+}
+.mt-insp-ms {
+  width: 64px;
+}
+
+/* barra de ferramentas */
+.mt-toolbar {
+  grid-area: bar;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.mt-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+}
+.mt-grow {
+  flex: 1;
+}
+.btn.emenda {
+  border-color: color-mix(in srgb, var(--c-prompt) 50%, var(--line));
+  color: var(--c-prompt);
+}
+.mt-splice-len {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mt-splice-len input {
+  width: 58px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 5px;
+  font: 12px var(--font-console);
+  color: var(--text);
+}
+
+/* timeline */
+.mt-timeline {
+  grid-area: tl;
+  min-height: 0;
+  display: flex;
+  background: var(--bg);
+}
+.mt-scroll {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+.mt-inner {
+  position: relative;
+  min-height: 100%;
+}
+.mt-ruler {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  height: 24px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  cursor: text;
+}
+.mt-corner {
+  position: sticky;
+  left: 0;
+  width: 132px;
+  height: 100%;
+  background: var(--bg-2);
+  z-index: 2;
+}
+.mt-tick {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  padding-left: 4px;
+  border-left: 1px solid var(--line);
+  font: 10px/24px var(--font-console);
+  color: var(--muted);
+  pointer-events: none;
+}
+.mt-track {
+  display: flex;
+  height: 58px;
+  border-bottom: 1px solid var(--line);
+}
+.mt-track.k-video {
+  height: 64px;
+}
+.mt-head {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  width: 132px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px 0 10px;
+  background: var(--bg-2);
+  border-right: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+}
+.mt-track.muted .mt-lane {
+  opacity: 0.4;
+}
+.mt-lane {
+  position: relative;
+  flex: 1;
+}
+.mt-clip {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 5px;
+  overflow: hidden;
+  cursor: grab;
+  border: 1px solid transparent;
+  user-select: none;
+}
+.mt-clip.k-audio {
+  background: color-mix(in srgb, var(--c-prompt) 30%, var(--bg-3));
+  border-color: color-mix(in srgb, var(--c-prompt) 50%, transparent);
+}
+.mt-clip.k-video {
+  background: color-mix(in srgb, var(--accent) 32%, var(--bg-3));
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.mt-clip.k-image {
+  background: color-mix(in srgb, var(--c-transition) 26%, var(--bg-3));
+  border-color: color-mix(in srgb, var(--c-transition) 50%, transparent);
+}
+.mt-clip.missing {
+  background: repeating-linear-gradient(45deg, #3a1d1d 0 6px, #2a1515 6px 12px);
+}
+.mt-clip.sel {
+  border-color: #fff;
+  box-shadow:
+    0 0 0 1px #fff,
+    0 0 12px color-mix(in srgb, var(--accent) 70%, transparent);
+  z-index: 2;
+}
+.mt-clip.blade {
+  cursor: crosshair;
+}
+.mt-wave {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 2px;
+  width: 100%;
+  height: calc(100% - 16px);
+  pointer-events: none;
+}
+.mt-clip-name {
+  position: absolute;
+  top: 1px;
+  left: 6px;
+  right: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  text-shadow: 0 1px 2px #000;
+}
+.mt-fade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+.mt-fade.in {
+  left: 0;
+  background: linear-gradient(to top right, transparent 49%, rgba(0, 0, 0, 0.45) 51%);
+}
+.mt-fade.out {
+  right: 0;
+  background: linear-gradient(to top left, transparent 49%, rgba(0, 0, 0, 0.45) 51%);
+}
+.mt-knob {
+  position: absolute;
+  top: 0;
+  width: 9px;
+  height: 9px;
+  margin: 0 -4px;
+  background: #fff;
+  border-radius: 2px;
+  opacity: 0;
+  cursor: ew-resize;
+  z-index: 2;
+}
+.mt-clip:hover .mt-knob,
+.mt-clip.sel .mt-knob {
+  opacity: 0.85;
+}
+.mt-trim {
+  position: absolute;
+  top: 10px;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  z-index: 1;
+}
+.mt-trim.l {
+  left: 0;
+}
+.mt-trim.r {
+  right: 0;
+}
+.mt-clip.blade .mt-trim {
+  cursor: crosshair;
+}
+.mt-splice {
+  position: absolute;
+  left: -1px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: linear-gradient(to bottom, var(--c-prompt), transparent);
+  box-shadow: 0 0 6px var(--c-prompt);
+  pointer-events: none;
+}
+.mt-add-track {
+  position: sticky;
+  left: 0;
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  width: max-content;
+}
+.mt-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #ff4d6d;
+  pointer-events: none;
+  z-index: 5;
+}
+.mt-playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -5px;
+  border: 6px solid transparent;
+  border-top-color: #ff4d6d;
+}

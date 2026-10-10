@@ -21,6 +21,8 @@ export interface AppSettings {
   /** fica só no PC do usuário (userData), nunca vai pro renderer nem pro repositório */
   elevenLabsKey?: string
   ai?: AiSettings
+  /** caminho manual do ffmpeg.exe (Montagem) */
+  ffmpegPath?: string
 }
 
 const DEFAULTS: AppSettings = { autoUpdate: true }

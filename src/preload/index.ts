@@ -41,6 +41,10 @@ const api = {
   thumb: (path: string, size: number): Promise<string | null> => ipcRenderer.invoke('thumb:get', path, size),
 
   loadFormats: () => ipcRenderer.invoke('formats:load'),
+  pickFormatImages: (): Promise<string[]> => ipcRenderer.invoke('format:pickImages'),
+  exportPrefs: (includeKeys: boolean): Promise<{ path: string; files: number } | { error: string } | null> =>
+    ipcRenderer.invoke('prefs:export', includeKeys),
+  importPrefs: (): Promise<{ files: number } | { error: string } | null> => ipcRenderer.invoke('prefs:import'),
   saveFormats: (formats: unknown) => ipcRenderer.invoke('formats:save', formats),
 
   pickAudio: (dir: string): Promise<{ path: string; name: string }[]> => ipcRenderer.invoke('audio:pick', dir),
@@ -83,6 +87,16 @@ const api = {
     aspect: string
   ): Promise<{ attachment: { id: string; path: string; name: string; kind: 'image' }; provider: AiProvider } | { error: string }> =>
     ipcRenderer.invoke('ai:image', dir, prompt, aspect),
+
+  // Montagem (ffmpeg no main)
+  ffmpegInfo: (force?: boolean): Promise<{ path: string; version: string; whisper: boolean } | null> => ipcRenderer.invoke('media:ffmpeg', force),
+  pickMedia: (): Promise<string[]> => ipcRenderer.invoke('media:pick'),
+  probeMedia: (
+    path: string
+  ): Promise<{ duration: number; hasVideo: boolean; hasAudio: boolean; width?: number; height?: number; fps?: number } | { error: string }> =>
+    ipcRenderer.invoke('media:probe', path),
+  proxyAudio: (path: string): Promise<string | { error: string }> => ipcRenderer.invoke('media:proxy', path),
+  mediaExists: (paths: string[]): Promise<boolean[]> => ipcRenderer.invoke('media:exists', paths),
 
   /** o main pede pra salvar antes de fechar/atualizar */
   onFlush: (cb: () => Promise<void>) => {

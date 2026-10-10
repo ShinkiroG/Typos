@@ -3,7 +3,7 @@ import { FolderPlus, RefreshCw, X, ChevronDown, ChevronRight, Search, Play, Layo
 import { api, fileUrl, uid } from '../lib'
 import { AudioPlayButton } from '../editor/views'
 
-type Folder = { id: string; name: string; path: string }
+type Folder = { id: string; name: string; path: string; fromFormat?: boolean }
 type Item = { path: string; name: string; rel: string; kind: 'image' | 'audio' | 'video' }
 type Scan = Item[] | { error: string }
 type View = 'grid' | 'small' | 'list'
@@ -58,7 +58,7 @@ function LazyThumb({ item, size }: { item: Item; size: number }) {
  * Pastas de mídia do PC (SFX, referências, gameplay…). O app só lê a pasta; ao usar um
  * arquivo no roteiro ele é copiado pra dentro do projeto.
  */
-export function FoldersPanel() {
+export function FoldersPanel({ extra = [] }: { extra?: string[] }) {
   const [folders, setFolders] = useState<Folder[]>([])
   const [items, setItems] = useState<Record<string, Scan | undefined>>({})
   const [open, setOpen] = useState<Record<string, boolean>>(() => remembered('typos.foldersOpen', {}))
@@ -109,6 +109,20 @@ export function FoldersPanel() {
     setOpen((o) => ({ ...o, [f.id]: true }))
     scan(f, true)
   }
+
+  const formatFolders = useMemo<Folder[]>(
+    () =>
+      extra
+        .filter((p) => !folders.some((f) => f.path === p))
+        .map((p) => ({ id: 'fmt:' + p, name: p.split(/[\/]/).pop() || p, path: p, fromFormat: true })),
+    [extra.join('|'), folders]
+  )
+  useEffect(() => {
+    formatFolders.forEach((f) => {
+      if (!(f.id in items)) scan(f)
+    })
+  }, [formatFolders])
+  const allFolders = [...formatFolders, ...folders]
 
   const query = q.trim().toLowerCase()
   const filtered = useMemo(() => {
@@ -180,7 +194,7 @@ export function FoldersPanel() {
         </div>
       </div>
 
-      {folders.length === 0 && (
+      {allFolders.length === 0 && (
         <div className="empty-lib">
           <FolderPlus size={22} />
           <p>
@@ -189,34 +203,36 @@ export function FoldersPanel() {
           <p className="muted small">O arquivo é copiado pra dentro do roteiro quando você usa.</p>
         </div>
       )}
-      {folders.map((f) => {
+      {allFolders.map((f) => {
         const list = filtered[f.id]
         const limit = shown[f.id] ?? PAGE
         return (
           <div key={f.id} className="folder">
             <div className="folder-head">
-              <button className="icon-btn" onClick={() => setOpen((o) => ({ ...o, [f.id]: !o[f.id] }))}>
-                {open[f.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              <button className="icon-btn" onClick={() => setOpen((o) => ({ ...o, [f.id]: !(o[f.id] ?? true) }))}>
+                {(open[f.id] ?? true) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               </button>
               <span
                 className="folder-name"
                 title={f.path}
                 onDoubleClick={() => {
+                  if (f.fromFormat) return
                   const name = prompt('Nome da pasta no painel:', f.name)
                   if (name?.trim()) save(folders.map((x) => (x.id === f.id ? { ...x, name: name.trim() } : x)))
                 }}
               >
                 {f.name}
+                {f.fromFormat && <span className="fmt-tag">do formato</span>}
                 <small>{Array.isArray(list) ? list.length : ''}</small>
               </span>
               <button className="icon-btn" title="Escanear de novo" onClick={() => scan(f, true)}>
                 <RefreshCw size={13} />
               </button>
-              <button className="icon-btn danger" title="Tirar do painel (não apaga nada do PC)" onClick={() => save(folders.filter((x) => x.id !== f.id))}>
+              {!f.fromFormat && <button className="icon-btn danger" title="Tirar do painel (não apaga nada do PC)" onClick={() => save(folders.filter((x) => x.id !== f.id))}>
                 <X size={13} />
-              </button>
+              </button>}
             </div>
-            {open[f.id] &&
+            {(open[f.id] ?? true) &&
               (!list ? (
                 <div className="muted small folder-msg">escaneando…</div>
               ) : 'error' in list ? (

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { RefreshCw, Check, KeyRound, Trash2, HardDrive } from 'lucide-react'
+import { RefreshCw, Check, KeyRound, Trash2, HardDrive, ArrowDownToLine, ArrowUpFromLine, Package } from 'lucide-react'
 import { api } from '../lib'
 import { AiSection } from './AiSection'
 
@@ -167,6 +167,8 @@ export function SettingsModal({ onClose, currentDir }: { onClose: () => void; cu
 
         <AiSection />
 
+        <PrefsSection />
+
         <StorageSection currentDir={currentDir} />
 
         <div className="modal-actions">
@@ -176,5 +178,48 @@ export function SettingsModal({ onClose, currentDir }: { onClose: () => void; cu
         </div>
       </div>
     </div>
+  )
+}
+
+/** Leva ajustes, formatos, biblioteca, pastas e dicionário pra outra instalação. */
+function PrefsSection() {
+  const [withKeys, setWithKeys] = useState(false)
+  const [msg, setMsg] = useState('')
+  return (
+    <section className="set-section">
+      <h4>
+        <Package size={14} /> Preferências
+      </h4>
+      <p className="muted small">
+        Um arquivo só com ajustes, formatos (com as referências), biblioteca, pastas e dicionário pessoal. Serve pra reinstalar o Typos ou levar pra
+        outro PC. Os roteiros não vão junto (eles já ficam nas pastas deles).
+      </p>
+      <label className="toggle-row">
+        <input type="checkbox" checked={withKeys} onChange={(e) => setWithKeys(e.target.checked)} />
+        Incluir chaves de API (guarde o arquivo em lugar seguro)
+      </label>
+      <div className="set-row">
+        <button
+          className="btn small"
+          onClick={async () => {
+            const r = await api.exportPrefs(withKeys)
+            if (r) setMsg('error' in r ? r.error : `Exportado (${r.files} itens): ${r.path}`)
+          }}
+        >
+          <ArrowUpFromLine size={13} /> Exportar…
+        </button>
+        <button
+          className="btn small"
+          onClick={async () => {
+            if (!confirm('Importar substitui os formatos, a biblioteca, as pastas e os ajustes atuais pelos do arquivo. Continuar?')) return
+            const r = await api.importPrefs()
+            if (r) setMsg('error' in r ? r.error : `Importado (${r.files} itens). Recarregando…`)
+          }}
+        >
+          <ArrowDownToLine size={13} /> Importar…
+        </button>
+      </div>
+      {msg && <p className="muted small">{msg}</p>}
+    </section>
   )
 }
