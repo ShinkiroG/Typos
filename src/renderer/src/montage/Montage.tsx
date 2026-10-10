@@ -25,7 +25,8 @@ import {
   Circle,
   Square,
   Settings2,
-  Gauge
+  Gauge,
+  Folder
 } from 'lucide-react'
 import { api, clipDur, clipEndT, fileUrl, uid, type MontageBin, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
@@ -170,7 +171,8 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
 
   /** transcreve a narração, acha cada frase do roteiro e monta a timeline */
   const runAutoCut = async (b: MontageBin) => {
-    const list = dataRef.current.media.filter((m) => m.bin === b.id && m.hasAudio)
+    const inside = subtree(b.id)
+    const list = dataRef.current.media.filter((m) => inside.has(m.bin) && m.hasAudio)
     if (!list.length) return
     if (!model?.ready) return downloadModel()
     const hadAuto = dataRef.current.clips.some((c) => c.block !== undefined && list.some((m) => m.id === c.media))
@@ -447,7 +449,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
    */
   const normalize = async (only?: MontageClip[]) => {
     const d = dataRef.current
-    const narrBins = new Set(d.bins.filter((b) => b.role === 'narration').map((b) => b.id))
+    const narrBins = new Set(d.bins.filter((b) => b.role === 'narration').flatMap((b) => [...subtree(b.id)]))
     const sel = only ?? d.clips.filter((c) => selected.includes(c.id))
     const targets = (sel.length ? sel : d.clips.filter((c) => narrBins.has(mediaRef.current.get(c.media)?.bin ?? '') || c.block !== undefined)).filter(
       (c) => mediaRef.current.get(c.media)?.hasAudio
@@ -674,6 +676,77 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
 
   const curBin = data.bins.find((b) => b.id === bin) ?? data.bins[0]
   const items = data.media.filter((m) => m.bin === curBin?.id)
+  /** caminho da aba do topo até a pasta atual */
+  const pathOf = (id: string) => {
+    const out: MontageBin[] = []
+    let b = data.bins.find((x) => x.id === id)
+    while (b) {
+      out.unshift(b)
+      b = b.parent ? data.bins.find((x) => x.id === b!.parent) : undefined
+    }
+    return out
+  }
+  const curPath = curBin ? pathOf(curBin.id) : []
+  const curRoot = curPath[0] ?? curBin
+  /** a pasta e todas as de dentro dela */
+  const subtree = (id: string) => {
+    const ids = new Set([id])
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const b of data.bins) if (b.parent && ids.has(b.parent) && !ids.has(b.id)) (ids.add(b.id), (grew = true))
+    }
+    return ids
+  }
+  const children = data.bins.filter((b) => b.parent === curBin?.id)
+  const countIn = (id: string) => {
+    const ids = subtree(id)
+    return data.media.filter((m) => ids.has(m.bin)).length
+  }
+  const moveMedia = (mediaId: string, toBin: string) =>
+    change({ ...dataRef.current, media: dataRef.current.media.map((m) => (m.id === mediaId ? { ...m, bin: toBin } : m)) })
+  /** solta arquivo do Explorer (importa) ou item da lista (move) numa pasta */
+  const dropOn = (e: React.DragEvent, toBin: string) => {
+    const id = e.dataTransfer.getData(MEDIA_MIME)
+    if (id) {
+      e.preventDefault()
+      e.stopPropagation()
+      return moveMedia(id, toBin)
+    }
+    dropFiles(e, toBin)
+  }
+  const accepts = (e: React.DragEvent) => (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes(MEDIA_MIME)) && e.preventDefault()
+  const newFolder = () => {
+    const name = prompt('Nome da pasta:', 'Nova pasta')
+    if (!name?.trim() || !curBin) return
+    const b: MontageBin = { id: uid(), name: name.trim(), role: 'custom', parent: curBin.id }
+    change({ ...dataRef.current, bins: [...dataRef.current.bins, b] })
+  }
+  const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  useEffect(() => {
+    if (!folderMenu) return
+    const close = () => setFolderMenu(null)
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [folderMenu])
+  const renameFolder = (id: string) => {
+    const b = data.bins.find((x) => x.id === id)
+    const name = b && prompt('Nome da pasta:', b.name)
+    if (name?.trim()) change({ ...dataRef.current, bins: dataRef.current.bins.map((x) => (x.id === id ? { ...x, name: name.trim() } : x)) })
+  }
+  /** apagar subpasta: o que tinha dentro (arquivos e pastas) sobe pra pasta de cima */
+  const deleteFolder = (id: string) => {
+    const d = dataRef.current
+    const b = d.bins.find((x) => x.id === id)
+    if (!b?.parent) return
+    if (!confirm(`Apagar a pasta "${b.name}"? O que tem dentro sobe pra "${d.bins.find((x) => x.id === b.parent)?.name}".`)) return
+    change({
+      ...d,
+      bins: d.bins.filter((x) => x.id !== id).map((x) => (x.parent === id ? { ...x, parent: b.parent } : x)),
+      media: d.media.map((m) => (m.bin === id ? { ...m, bin: b.parent! } : m))
+    })
+    if (bin === id) setBin(b.parent)
+  }
 
   const dropFiles = (e: React.DragEvent, toBin: string) => {
     const paths = Array.from(e.dataTransfer.files)
@@ -696,22 +769,22 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
       {/* ---------- mídia do projeto ---------- */}
       <section className="mt-pool">
         <div className="mt-bins">
-          {data.bins.map((b) => (
+          {data.bins.filter((b) => !b.parent).map((b) => (
             <button
               key={b.id}
-              className={'mt-bin' + (b.id === curBin?.id ? ' on' : '') + ' r-' + b.role}
+              className={'mt-bin' + (b.id === curRoot?.id ? ' on' : '') + ' r-' + b.role}
               onClick={() => setBin(b.id)}
               onDoubleClick={() => {
                 if (b.role !== 'custom') return
                 const name = prompt('Nome da pasta:', b.name)
                 if (name?.trim()) change({ ...data, bins: data.bins.map((x) => (x.id === b.id ? { ...x, name: name.trim() } : x)) })
               }}
-              onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()}
-              onDrop={(e) => dropFiles(e, b.id)}
+              onDragOver={accepts}
+              onDrop={(e) => dropOn(e, b.id)}
               title={b.role === 'narration' ? 'Áudios e vídeos de narração: vão pro corte automático' : b.role === 'raw' ? 'Todo o material além da voz' : 'Duplo clique renomeia'}
             >
               {b.name}
-              <small>{data.media.filter((m) => m.bin === b.id).length}</small>
+              <small>{countIn(b.id)}</small>
             </button>
           ))}
           <button className="mt-bin add" onClick={addBin} title="Nova pasta">
@@ -723,17 +796,20 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           <button className="btn small" onClick={async () => importPaths(await api.pickMedia(), curBin.id)} disabled={!ffmpeg}>
             <Import size={13} /> Importar
           </button>
-          {curBin?.role === 'narration' && (
+          <button className="btn small" onClick={newFolder} title={`Nova pasta dentro de "${curBin?.name}"`}>
+            <FolderPlus size={13} /> Nova pasta
+          </button>
+          {curRoot?.role === 'narration' && (
             <button
               className="btn small primary"
-              disabled={!items.length || !!busy || !ffmpeg}
-              onClick={() => runAutoCut(curBin)}
+              disabled={!countIn(curRoot.id) || !!busy || !ffmpeg}
+              onClick={() => runAutoCut(curRoot)}
               title="Transcreve a narração, compara com o roteiro e monta a timeline com os cortes"
             >
               {busy ? <Loader2 size={13} className="spin" /> : <Wand2 size={13} />} Corte automático
             </button>
           )}
-          {curBin?.role === 'custom' && (
+          {curBin?.role === 'custom' && !curBin.parent && (
             <button
               className="icon-btn danger"
               title="Apagar pasta (a mídia dela sai do projeto, os arquivos ficam no PC)"
@@ -748,7 +824,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
             </button>
           )}
         </div>
-        {curBin?.role === 'narration' && wstatus && ffmpeg && (
+        {curRoot?.role === 'narration' && wstatus && ffmpeg && (
           <div className="mt-whisper">
             <span>Transcrição</span>
             <select
@@ -786,7 +862,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
             )}
           </div>
         )}
-        {report && !busy && curBin?.role === 'narration' && (
+        {report && !busy && curRoot?.role === 'narration' && (
           <div className="mt-report">
             <b>{report.found} frases montadas</b>
             {report.retakes > 0 && <span> · {report.retakes} regravadas (ficou a última tomada)</span>}
@@ -814,9 +890,39 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()}
           onDrop={(e) => curBin && dropFiles(e, curBin.id)}
         >
-          {items.length === 0 && (
+          {curPath.length > 1 && (
+            <div className="mt-crumbs">
+              {curPath.map((b, i) => (
+                <span key={b.id}>
+                  {i > 0 && <ChevronRight size={11} />}
+                  <button className={i === curPath.length - 1 ? 'on' : ''} onClick={() => setBin(b.id)} onDragOver={accepts} onDrop={(e) => dropOn(e, b.id)}>
+                    {b.name}
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {children.map((f) => (
+            <div
+              key={f.id}
+              className="mt-folder"
+              onClick={() => setBin(f.id)}
+              onDragOver={accepts}
+              onDrop={(e) => dropOn(e, f.id)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setFolderMenu({ x: e.clientX, y: e.clientY, id: f.id })
+              }}
+              title="Clique pra abrir · arraste arquivos pra cá · botão direito: renomear/apagar"
+            >
+              <Folder size={15} />
+              <span className="mt-item-name">{f.name}</span>
+              <span className="mt-item-dur">{countIn(f.id)}</span>
+            </div>
+          ))}
+          {items.length === 0 && children.length === 0 && (
             <div className="mt-empty">
-              {curBin?.role === 'narration'
+              {curRoot?.role === 'narration'
                 ? 'Arraste aqui os áudios de narração ou os vídeos de talking head. Depois é só pedir o corte automático.'
                 : 'Arraste arquivos do PC pra cá (ou use Importar). Eles ficam onde estão: o projeto só guarda o caminho.'}
             </div>
@@ -862,6 +968,28 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           ))}
         </div>
       </section>
+
+      {folderMenu && (
+        <div className="ctx-menu" style={{ left: folderMenu.x, top: folderMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+          <button
+            onClick={() => {
+              renameFolder(folderMenu.id)
+              setFolderMenu(null)
+            }}
+          >
+            Renomear
+          </button>
+          <button
+            className="danger"
+            onClick={() => {
+              deleteFolder(folderMenu.id)
+              setFolderMenu(null)
+            }}
+          >
+            Apagar pasta (o conteúdo sobe)
+          </button>
+        </div>
+      )}
 
       {/* ---------- visualizador ---------- */}
       <section className="mt-viewer">

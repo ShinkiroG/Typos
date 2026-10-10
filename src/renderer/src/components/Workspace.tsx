@@ -188,6 +188,21 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       alive = false
     }
   }, [montage.clips, montage.media, montage.tracks])
+  // Trilha ao lado do texto: música/SFX da timeline + áudio da Montagem que não é a narração
+  const trackClips = useMemo(() => {
+    const narration = new Set(montage.clips.filter((c) => c.block !== undefined).map((c) => 'voice-' + c.id))
+    const narrBins = new Set(montage.bins.filter((b) => b.role === 'narration').map((b) => b.id))
+    const media = new Map(montage.media.map((m) => [m.id, m]))
+    const extra = voice
+      .filter((v) => !narration.has(v.id))
+      .filter((v) => {
+        const c = montage.clips.find((x) => 'voice-' + x.id === v.id)
+        const m = c && media.get(c.media)
+        // gravação/narração solta também não entra (a fala já é o texto)
+        return !!m && !narrBins.has(m.bin) && montage.tracks.find((t) => t.id === c!.track)?.kind === 'audio'
+      })
+    return [...clips, ...extra]
+  }, [clips, voice, montage.clips, montage.bins, montage.media, montage.tracks])
   // revisão lado a lado (rascunho da IA × roteiro atual)
   const [review, setReview] = useState<{ original: JSONContent[]; draft: JSONContent[]; request: string; provider?: string; busy: boolean } | null>(null)
   // larguras dos painéis (arrastando a borda)
@@ -1027,7 +1042,10 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           showTimes={showTimes}
           onShowTimes={setShowTimes}
           showTrack={showTrack}
-          onShowTrack={setShowTrack}
+          onShowTrack={(v) => {
+            setShowTrack(v)
+            if (v && !trackClips.length) setToast('A trilha está vazia: ponha música/SFX na timeline (ou na Montagem) que as barras aparecem ao lado do texto.')
+          }}
         />
         ) : (
           <div className="ws-title">{mode === 'montage' ? 'Montagem' : 'Estilo · treinar motion'}</div>
@@ -1162,7 +1180,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             scrollEl={scrollEl}
             pageEl={pageEl}
           />
-          {showTrack && timing && <TrackGutter editor={editor} timing={timing} clips={clips} assets={assets} />}
+          {showTrack && timing && <TrackGutter editor={editor} timing={timing} clips={trackClips} assets={assets} />}
           {showTimes && timing && <TimeGutter editor={editor} timing={timing} />}
           {/* título do roteiro no topo da página (o mesmo do campo lá em cima) */}
           <input

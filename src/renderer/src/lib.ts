@@ -604,6 +604,8 @@ export interface MontageBin {
   id: string
   name: string
   role: BinRole
+  /** pasta dentro de outra (organização); sem parent = aba do topo */
+  parent?: string
 }
 export interface MontageMedia {
   id: string
