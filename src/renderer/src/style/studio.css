@@ -697,3 +697,9 @@
   min-width: 0;
   accent-color: var(--accent);
 }
+.st-focus-info {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  margin-top: -2px;
+}

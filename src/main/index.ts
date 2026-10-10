@@ -8,7 +8,7 @@ import { loadSettings, saveSettings } from './settings'
 import { initUpdater, checkManually, installDownloadedNow, installMode } from './updater'
 import { initSpell } from './spell'
 import { initAi, initMotionAi } from './ai'
-import { initMedia, mediaCacheDir, extractFrames, systemFonts } from './media'
+import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus } from './media'
 import { initWhisper } from './whisper'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer
@@ -898,3 +898,5 @@ ipcMain.handle('motion:demoFile', async (_e, html: string) => {
   if (!existsSync(file)) await fs.writeFile(file, html, 'utf8')
   return file
 })
+
+ipcMain.handle('motion:frames', (_e, path: string, focus: number) => framesForFocus(path, focus, join(formatMedia(), 'frames')))

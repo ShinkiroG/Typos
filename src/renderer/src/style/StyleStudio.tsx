@@ -45,6 +45,9 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
   lines.push(`Você é diretor de motion design de vídeos para YouTube. Vou te ensinar um ESTILO DE MOTION pra eu usar sempre neste formato de vídeo: "${f.name}" (${f.aspect}).`)
   lines.push('Analise com rigor as referências (imagens; os quadros de cada vídeo estão em ordem cronológica) e as escolhas abaixo. Onde as escolhas e as referências discordarem, as escolhas mandam.')
   lines.push(
+    'Imagens marcadas como SEQUÊNCIA são quadros seguidos do vídeo (8 por segundo): compare quadro a quadro pra entender direção, velocidade e curva (easing) dos movimentos de câmera, transições e animações.'
+  )
+  lines.push(
     'Cada referência tem um FOCO de 0 a 100: perto de 0 = aprenda dela a ESTÉTICA (cores, tipografia, composição, fundo, textura); perto de 100 = aprenda o MOTION (movimento de câmera, transições, ritmo, como os elementos entram e saem). No meio, os dois. Pese o que tirar de cada uma por esse número.'
   )
   lines.push('')
@@ -104,6 +107,17 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
   return lines.join('\n')
 }
 
+/** mesmo plano do main: estética = poucos quadros espalhados; motion = + sequências rápidas */
+export function framePlan(focus = 50) {
+  const even = Math.round(3 + (Math.max(0, Math.min(100, focus)) / 100) * 6)
+  const bursts = focus >= 40 ? Math.min(3, 1 + Math.round((focus - 40) / 30)) : 0 // 40→1 · 70→2 · 100→3
+  return { even, bursts, perBurst: 6 }
+}
+const framesOf = (focus = 50) => {
+  const p = framePlan(focus)
+  return p.even + p.bursts * p.perBurst
+}
+
 /** "[foco 70: mais motion]" — o mesmo texto vai em cada imagem/link no pedido */
 export function focusLabel(v = 50) {
   const what = v <= 20 ? 'só estética' : v < 45 ? 'mais estética' : v <= 55 ? 'estética e motion' : v < 80 ? 'mais motion' : 'só motion'
@@ -137,6 +151,7 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
   const [error, setError] = useState('')
   const [replay, setReplay] = useState(0)
   const [elapsed, setElapsed] = useState(0)
+  const [sent, setSent] = useState(0)
 
   const saved = formats.find((f) => f.id === editId)
   const f: Format = drafts[editId] ?? saved ?? formats[0]
@@ -253,16 +268,37 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
   }
 
   // ---------- treino ----------
-  const images = useMemo(() => {
+  // quantas imagens vão (estimativa pelo foco de cada referência)
+  const MAX_IMAGES = 60
+  const estimate = useMemo(() => Math.min(MAX_IMAGES, m.refs.reduce((s, r) => s + (r.kind === 'image' ? 1 : r.kind === 'video' ? framesOf(r.focus) : 0), 0)), [m.refs])
+
+  /** junta as imagens na hora do treino: de vídeo, tira os quadros que o foco pede */
+  const collectImages = async () => {
     const out: { path: string; desc: string }[] = []
-    m.refs.forEach((r, i) => {
+    for (const [i, r] of m.refs.entries()) {
       const note = ` ${focusLabel(r.focus)}` + (r.note ? ` — nota do autor: ${r.note}` : '')
       if (r.kind === 'image' && r.path) out.push({ path: r.path, desc: `referência ${i + 1} (imagem "${r.name}")${note}` })
-      if (r.kind === 'video')
-        (r.frames ?? []).forEach((fr, k) => out.push({ path: fr, desc: `referência ${i + 1} (vídeo "${r.name}", quadro ${k + 1}/${r.frames!.length})${k === 0 ? note : ''}` }))
-    })
-    return out.slice(0, 40)
-  }, [m.refs])
+      if (r.kind !== 'video' || !r.path) continue
+      setBusy(`Tirando quadros de "${r.name}"…`)
+      const fr = await api.motionFrames(r.path, r.focus ?? 50)
+      if ('error' in fr) {
+        // o vídeo sumiu do lugar: usa os quadros que já estavam guardados
+        ;(r.frames ?? []).forEach((p, k) => out.push({ path: p, desc: `referência ${i + 1} (vídeo "${r.name}", quadro ${k + 1})${k === 0 ? note : ''}` }))
+        continue
+      }
+      const even = fr.filter((x) => x.kind === 'even')
+      fr.forEach((x, k) =>
+        out.push({
+          path: x.path,
+          desc:
+            x.kind === 'even'
+              ? `referência ${i + 1} (vídeo "${r.name}", quadro solto ${x.index + 1}/${even.length}, em ${x.t.toFixed(1)}s)${k === 0 ? note : ''}`
+              : `referência ${i + 1} (vídeo "${r.name}", SEQUÊNCIA ${x.group}, quadro ${x.index + 1}/6 — quadros seguidos a 8 por segundo, a partir de ${x.t.toFixed(2)}s: compare com o anterior pra ler o movimento)`
+        })
+      )
+    }
+    return out.slice(0, MAX_IMAGES)
+  }
 
   const canTrain = m.refs.length > 0 || !!m.instruction?.trim() || !!m.colors?.length
   const train = async () => {
@@ -271,6 +307,9 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
     const t0 = Date.now()
     const tick = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000)
     try {
+      const images = await collectImages()
+      setBusy('O Claude está estudando as referências…')
+      setSent(images.length)
       const r = await api.motionTrain({ prompt: buildPrompt(f, m, images.map((i) => i.desc), sample, fonts), images: images.map((i) => i.path) })
       if ('error' in r) throw new Error(r.error)
       const { guide, demo } = parseAnswer(r.text)
@@ -503,6 +542,14 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
                   <input type="range" min={0} max={100} step={5} value={r.focus ?? 50} onChange={(e) => patchRef(r.id, { focus: Number(e.target.value) })} onDoubleClick={() => patchRef(r.id, { focus: 50 })} />
                   <span className={(r.focus ?? 50) > 55 ? 'on' : ''}>motion</span>
                 </label>
+                {r.kind === 'video' && (
+                  <div className="st-focus-info">
+                    {(() => {
+                      const p = framePlan(r.focus)
+                      return `${p.even + p.bursts * p.perBurst} quadros${p.bursts ? ` · ${p.bursts} sequência(s) rápida(s) pra ler o movimento` : ' espalhados'}`
+                    })()}
+                  </div>
+                )}
                 <button className="icon-btn danger st-ref-x" title="Tirar" onClick={() => patchM((mm) => ({ refs: mm.refs.filter((x) => x.id !== r.id) }))}>
                   <X size={12} />
                 </button>
@@ -676,8 +723,8 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
             <b>{busy?.startsWith('O Claude') ? 'Treinando…' : f.motion?.learned ? 'Treinar de novo' : 'Enviar treino pro Claude'}</b>
             <small>
               {busy?.startsWith('O Claude')
-                ? `${elapsed}s · analisando ${images.length} imagem(ns) com calma`
-                : `${m.refs.length} referência(s) · ${images.length} imagem(ns) vão junto`}
+                ? `${elapsed}s · analisando ${sent} imagem(ns) com calma`
+                : `${m.refs.length} referência(s) · ~${estimate} imagem(ns) vão junto`}
             </small>
           </span>
         </button>

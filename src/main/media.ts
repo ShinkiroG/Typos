@@ -207,3 +207,50 @@ export async function systemFonts(): Promise<string[]> {
   fontCache = [...new Set(r.out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
   return fontCache
 }
+
+/** quantos quadros o foco pede: estética = poucos espalhados; motion = + sequências rápidas (8 q/s) */
+export function framePlan(focus = 50) {
+  const even = Math.round(3 + (Math.max(0, Math.min(100, focus)) / 100) * 6) // 3..9
+  const bursts = focus >= 40 ? Math.min(3, 1 + Math.round((focus - 40) / 30)) : 0 // 40→1 · 70→2 · 100→3
+  return { even, bursts, perBurst: 6 }
+}
+
+/** quadros pro treino de estilo, conforme o foco da referência (cache por arquivo + plano) */
+export async function framesForFocus(
+  path: string,
+  focus: number,
+  outRoot: string
+): Promise<{ path: string; kind: 'even' | 'burst'; group: number; index: number; t: number }[] | { error: string }> {
+  const ff = await findFfmpeg()
+  if (!ff) return { error: 'ffmpeg não encontrado' }
+  const info = await probe(path)
+  if ('error' in info) return info
+  if (!info.hasVideo || !info.duration) return { error: 'esse arquivo não tem vídeo' }
+  const plan = framePlan(focus)
+  const st = await fs.stat(path)
+  const key = createHash('sha1').update(`${path}|${st.size}|${st.mtimeMs}|${plan.even}|${plan.bursts}`).digest('hex').slice(0, 16)
+  const dir = join(outRoot, key)
+  await fs.mkdir(dir, { recursive: true })
+  const out: { path: string; kind: 'even' | 'burst'; group: number; index: number; t: number }[] = []
+  const d = info.duration
+  for (let i = 0; i < plan.even; i++) {
+    const t = d * ((i + 0.5) / plan.even)
+    const f = join(dir, `e${String(i + 1).padStart(2, '0')}.jpg`)
+    if (!existsSync(f)) await run(ff.ffmpeg, ['-hide_banner', '-y', '-ss', t.toFixed(2), '-i', path, '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', f], { timeoutMs: 60000 })
+    if (existsSync(f)) out.push({ path: f, kind: 'even', group: 0, index: i, t })
+  }
+  // sequências: 6 quadros seguidos a 8 q/s em pontos diferentes do vídeo (dá pra "ver" o movimento)
+  for (let b = 0; b < plan.bursts; b++) {
+    const center = d * ((b + 1) / (plan.bursts + 1))
+    const start = Math.max(0, Math.min(d - plan.perBurst / 8, center - plan.perBurst / 16))
+    const pattern = join(dir, `b${b + 1}_%02d.jpg`)
+    const firstFile = join(dir, `b${b + 1}_01.jpg`)
+    if (!existsSync(firstFile))
+      await run(ff.ffmpeg, ['-hide_banner', '-y', '-ss', start.toFixed(2), '-i', path, '-t', (plan.perBurst / 8 + 0.05).toFixed(2), '-vf', 'fps=8,scale=480:-2', '-q:v', '5', '-frames:v', String(plan.perBurst), pattern], { timeoutMs: 60000 })
+    for (let k = 1; k <= plan.perBurst; k++) {
+      const f = join(dir, `b${b + 1}_${String(k).padStart(2, '0')}.jpg`)
+      if (existsSync(f)) out.push({ path: f, kind: 'burst', group: b + 1, index: k - 1, t: start + (k - 1) / 8 })
+    }
+  }
+  return out.length ? out : { error: 'não deu pra tirar quadros desse vídeo' }
+}

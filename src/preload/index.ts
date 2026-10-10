@@ -126,6 +126,10 @@ const api = {
   motionImportFiles: (paths: string[]): Promise<{ kind: 'image' | 'video'; path: string; name: string; frames?: string[]; error?: string }[]> =>
     ipcRenderer.invoke('motion:importFiles', paths),
   motionPickFiles: (): Promise<string[]> => ipcRenderer.invoke('motion:pickFiles'),
+  motionFrames: (
+    path: string,
+    focus: number
+  ): Promise<{ path: string; kind: 'even' | 'burst'; group: number; index: number; t: number }[] | { error: string }> => ipcRenderer.invoke('motion:frames', path, focus),
   motionPasteImage: (bytes: Uint8Array, name: string): Promise<string> => ipcRenderer.invoke('motion:pasteImage', bytes, name),
   systemFonts: (): Promise<string[]> => ipcRenderer.invoke('sys:fonts'),
   motionDemoFile: (html: string): Promise<string> => ipcRenderer.invoke('motion:demoFile', html),
