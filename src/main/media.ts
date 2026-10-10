@@ -172,3 +172,38 @@ export async function loudness(path: string, start: number, dur: number): Promis
     return null
   }
 }
+
+/** quadros espalhados pelo vídeo (jpg 640px), pra IA "ver" o estilo; ficam em cache por arquivo */
+export async function extractFrames(path: string, outRoot: string, n = 8): Promise<string[] | { error: string }> {
+  const ff = await findFfmpeg()
+  if (!ff) return { error: 'ffmpeg não encontrado' }
+  const info = await probe(path)
+  if ('error' in info) return info
+  if (!info.hasVideo || !info.duration) return { error: 'esse arquivo não tem vídeo' }
+  const st = await fs.stat(path)
+  const key = createHash('sha1').update(`${path}|${st.size}|${st.mtimeMs}|${n}`).digest('hex').slice(0, 16)
+  const dir = join(outRoot, key)
+  await fs.mkdir(dir, { recursive: true })
+  const out: string[] = []
+  for (let i = 0; i < n; i++) {
+    // evita o primeiro/último instante (fade de abertura/fechamento)
+    const t = info.duration * ((i + 0.5) / n)
+    const f = join(dir, `f${String(i + 1).padStart(2, '0')}.jpg`)
+    if (!existsSync(f)) await run(ff.ffmpeg, ['-hide_banner', '-y', '-ss', t.toFixed(2), '-i', path, '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', f], { timeoutMs: 60000 })
+    if (existsSync(f)) out.push(f)
+  }
+  return out.length ? out : { error: 'não deu pra tirar quadros desse vídeo' }
+}
+
+let fontCache: string[] | null = null
+/** fontes instaladas no Windows (pra escolher e ver a prévia) */
+export async function systemFonts(): Promise<string[]> {
+  if (fontCache) return fontCache
+  const r = await run('powershell.exe', [
+    '-NoProfile',
+    '-Command',
+    '[Console]::OutputEncoding=[Text.Encoding]::UTF8; Add-Type -AssemblyName System.Drawing; (New-Object System.Drawing.Text.InstalledFontCollection).Families | ForEach-Object { $_.Name }'
+  ], { timeoutMs: 30000 })
+  fontCache = [...new Set(r.out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  return fontCache
+}

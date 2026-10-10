@@ -272,3 +272,91 @@ export function initAi() {
   })
 }
 
+
+// ---------- treino de estilo de motion (texto + imagens) ----------
+export interface MotionTrainJob {
+  /** pedido completo (o que analisar e como responder) */
+  prompt: string
+  /** imagens de referência (prints e quadros dos vídeos), caminhos absolutos */
+  images: string[]
+}
+
+const mimeOf = (p: string) => (/\.png$/i.test(p) ? 'image/png' : /\.webp$/i.test(p) ? 'image/webp' : /\.gif$/i.test(p) ? 'image/gif' : 'image/jpeg')
+
+async function motionClaudeCode(s: AiSettings, job: MotionTrainJob) {
+  const cc = await findClaudeCode(s)
+  if (!cc) throw new Error('Claude Code não encontrado neste PC. Instale e faça login (Configurações → IA).')
+  // as imagens vão pra uma pasta de trabalho; o Claude Code lê cada uma (ele enxerga imagem)
+  const work = join(app.getPath('userData'), 'motion-train', randomUUID().slice(0, 8))
+  await fs.mkdir(work, { recursive: true })
+  const names: string[] = []
+  for (const [i, p] of job.images.entries()) {
+    const name = `ref-${String(i + 1).padStart(2, '0')}${p.match(/\.\w+$/)?.[0] ?? '.jpg'}`
+    await fs.copyFile(p, join(work, name)).catch(() => null)
+    names.push(name)
+  }
+  const prompt = `${job.prompt}\n\nAs imagens de referência estão nesta pasta: ${names.join(', ')}. Abra e olhe TODAS antes de responder.`
+  try {
+    const r = await run(cc.path, ['-p', '--output-format', 'json', '--allowedTools', 'Read,WebSearch,WebFetch'], { cwd: work, input: prompt, timeoutMs: 15 * 60000 })
+    let parsed: any = null
+    try {
+      parsed = JSON.parse(r.out)
+    } catch {
+      /* erro abaixo */
+    }
+    if (parsed && !parsed.is_error && typeof parsed.result === 'string') return parsed.result.trim()
+    const why = (parsed?.result || r.err || r.out || '').toString().trim()
+    throw new Error(`Claude Code: ${why.slice(0, 300) || 'falhou sem mensagem'}`)
+  } finally {
+    await fs.rm(work, { recursive: true, force: true }).catch(() => null)
+  }
+}
+
+async function motionAnthropic(s: AiSettings, job: MotionTrainJob) {
+  if (!s.anthropicKey) throw new Error('Coloque a chave da API da Anthropic em Configurações → IA.')
+  const client = new Anthropic({ apiKey: s.anthropicKey })
+  const imgs = await Promise.all(
+    job.images.slice(0, 40).map(async (p) => ({
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: mimeOf(p) as 'image/jpeg', data: (await fs.readFile(p)).toString('base64') }
+    }))
+  )
+  const res = await client.beta.messages.create({
+    model: s.anthropicModel || DEFAULT_MODELS.anthropic,
+    max_tokens: 32000,
+    output_config: { effort: 'high' },
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    messages: [{ role: 'user', content: [...imgs, { type: 'text', text: job.prompt }] }]
+  })
+  if (res.stop_reason === 'refusal') throw new Error('O Claude recusou esse pedido.')
+  return res.content
+    .map((b) => (b.type === 'text' ? b.text : ''))
+    .join('')
+    .trim()
+}
+
+async function motionOpenAI(s: AiSettings, job: MotionTrainJob) {
+  const imgs = await Promise.all(
+    job.images.slice(0, 20).map(async (p) => ({ type: 'image_url', image_url: { url: `data:${mimeOf(p)};base64,${(await fs.readFile(p)).toString('base64')}` } }))
+  )
+  const j = await openaiFetch(s, 'chat/completions', {
+    model: s.openaiTextModel || DEFAULT_MODELS.openaiText,
+    messages: [{ role: 'user', content: [{ type: 'text', text: job.prompt }, ...imgs] }]
+  })
+  return String(j?.choices?.[0]?.message?.content ?? '').trim()
+}
+
+export function initMotionAi() {
+  ipcMain.handle('ai:motionTrain', async (_e, job: MotionTrainJob) => {
+    try {
+      const provider = await routeFor('text')
+      const s = (await loadSettings()).ai ?? {}
+      const text =
+        provider === 'claude-code' ? await motionClaudeCode(s, job) : provider === 'anthropic' ? await motionAnthropic(s, job) : await motionOpenAI(s, job)
+      return { text, provider }
+    } catch (e: any) {
+      return { error: String(e?.message ?? e) }
+    }
+  })
+}

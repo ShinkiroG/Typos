@@ -122,6 +122,16 @@ const api = {
     ipcRenderer.on('whisper:progress', (_e, p) => cb(p))
   },
 
+  // workspace Estilo (treinar motion)
+  motionImportFiles: (paths: string[]): Promise<{ kind: 'image' | 'video'; path: string; name: string; frames?: string[]; error?: string }[]> =>
+    ipcRenderer.invoke('motion:importFiles', paths),
+  motionPickFiles: (): Promise<string[]> => ipcRenderer.invoke('motion:pickFiles'),
+  motionPasteImage: (bytes: Uint8Array, name: string): Promise<string> => ipcRenderer.invoke('motion:pasteImage', bytes, name),
+  systemFonts: (): Promise<string[]> => ipcRenderer.invoke('sys:fonts'),
+  motionDemoFile: (html: string): Promise<string> => ipcRenderer.invoke('motion:demoFile', html),
+  motionTrain: (job: { prompt: string; images: string[] }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
+    ipcRenderer.invoke('ai:motionTrain', job),
+
   /** o main pede pra salvar antes de fechar/atualizar */
   onFlush: (cb: () => Promise<void>) => {
     ipcRenderer.removeAllListeners('app:flush')

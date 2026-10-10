@@ -151,8 +151,42 @@ export interface Format {
   motionRefFiles?: string[]
   /** pastas de assets que esse formato sempre usa (aparecem nas Pastas quando ele está ativo) */
   assetFolders?: string[]
+  /** treino de motion (workspace Estilo) */
+  motion?: MotionStyle
   /** só na tela de Formatos: editado e ainda não salvo */
   __dirty?: boolean
+}
+
+export interface MotionRef {
+  id: string
+  kind: 'image' | 'video' | 'link'
+  /** imagem: cópia em userData/format-media; vídeo: o arquivo original */
+  path?: string
+  url?: string
+  name: string
+  /** quadros-chave tirados do vídeo (o que a IA olha) */
+  frames?: string[]
+  /** o que observar nessa referência */
+  note?: string
+}
+
+export interface MotionStyle {
+  refs: MotionRef[]
+  /** o que o autor quer ensinar (texto livre pro Claude) */
+  instruction?: string
+  fonts?: { title?: string; body?: string; accent?: string }
+  colors?: string[]
+  background?: string
+  camera?: string[]
+  transitions?: string[]
+  pace?: 'calmo' | 'médio' | 'frenético'
+  /** o que a IA aprendeu: guia do estilo + demo animada */
+  learned?: {
+    at: string
+    provider: string
+    guide: string
+    demoHtml: string
+  }
 }
 
 export const formatLang = (f?: Format) => f?.lang || 'pt-BR'

@@ -7,8 +7,8 @@ import { randomUUID, createHash } from 'crypto'
 import { loadSettings, saveSettings } from './settings'
 import { initUpdater, checkManually, installDownloadedNow, installMode } from './updater'
 import { initSpell } from './spell'
-import { initAi } from './ai'
-import { initMedia, mediaCacheDir } from './media'
+import { initAi, initMotionAi } from './ai'
+import { initMedia, mediaCacheDir, extractFrames, systemFonts } from './media'
 import { initWhisper } from './whisper'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer
@@ -35,7 +35,8 @@ const MIME: Record<string, string> = {
   '.m4v': 'video/mp4',
   '.mov': 'video/quicktime',
   '.webm': 'video/webm',
-  '.mkv': 'video/x-matroska'
+  '.mkv': 'video/x-matroska',
+  '.html': 'text/html; charset=utf-8'
 }
 
 const PROJECT_FILE = 'roteiro.json'
@@ -244,6 +245,7 @@ app.on('window-all-closed', () => app.quit())
 
 initSpell()
 initAi()
+initMotionAi()
 initMedia()
 initWhisper()
 
@@ -857,3 +859,42 @@ ipcMain.handle('media:trashRecording', async (_e, path: string) => {
   }
 })
 ipcMain.handle('shell:showItem', (_e, path: string) => shell.showItemInFolder(path))
+
+// ---------- workspace Estilo (treinar motion) ----------
+const formatMedia = () => join(userDir(), 'format-media')
+
+/** referências: imagem é copiada; vídeo fica onde está e ganha quadros-chave */
+ipcMain.handle('motion:importFiles', async (_e, paths: string[]) => {
+  const out: { kind: 'image' | 'video'; path: string; name: string; frames?: string[]; error?: string }[] = []
+  for (const p of paths) {
+    const k = mediaKind(p)
+    if (k === 'image') out.push({ kind: 'image', path: join(formatMedia(), await copyUnique(p, formatMedia())), name: basename(p) })
+    else if (k === 'video') {
+      const fr = await extractFrames(p, join(formatMedia(), 'frames'))
+      out.push(Array.isArray(fr) ? { kind: 'video', path: p, name: basename(p), frames: fr } : { kind: 'video', path: p, name: basename(p), error: fr.error })
+    }
+  }
+  return out
+})
+
+ipcMain.handle('motion:pickFiles', async () => {
+  const r = await dialog.showOpenDialog({
+    title: 'Referências do estilo (vídeos e imagens)',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Vídeos e imagens', extensions: [...IMAGE_EXT, ...VIDEO_EXT, '.mkv'].map((e) => e.slice(1)) }]
+  })
+  return r.canceled ? [] : r.filePaths
+})
+
+ipcMain.handle('motion:pasteImage', async (_e, bytes: Uint8Array, name: string) => join(formatMedia(), await writeUnique(bytes, name || 'print.png', formatMedia())))
+
+ipcMain.handle('sys:fonts', () => systemFonts())
+
+/** demo do estilo vira um arquivo (a prévia abre por rs://, isolada e sem as regras de segurança do app) */
+ipcMain.handle('motion:demoFile', async (_e, html: string) => {
+  const dir = join(formatMedia(), 'demos')
+  await fs.mkdir(dir, { recursive: true })
+  const file = join(dir, createHash('sha1').update(html).digest('hex').slice(0, 16) + '.html')
+  if (!existsSync(file)) await fs.writeFile(file, html, 'utf8')
+  return file
+})

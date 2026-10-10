@@ -6,7 +6,7 @@ import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { JSONContent } from '@tiptap/core'
-import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput } from 'lucide-react'
+import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput, Palette } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming, convertBracketLines } from '../editor/nodes'
 import { Timestamps, setTimestamps } from '../editor/timestamps'
 import { Reference, referenceAt, allReferences, referencesText, type RefRange } from '../editor/reference'
@@ -47,7 +47,7 @@ import {
   setAiStyle
 } from '../lib'
 import { LibraryPanel, SNIPPET_MIME } from './LibraryPanel'
-import { FormatsPanel } from './FormatsPanel'
+import { StyleStudio } from '../style/StyleStudio'
 import { Montage } from '../montage/Montage'
 import { RefModal, RefsPanel } from './References'
 import { MenuBar, type Menu } from './MenuBar'
@@ -109,7 +109,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [formatId, setFormatId] = useState(data.formatId)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [panelOpen, setPanelOpen] = useState(true)
-  const [tab, setTab] = useState<'ai' | 'library' | 'folders' | 'formats'>('library')
+  const [tab, setTab] = useState<'ai' | 'library' | 'folders'>('library')
   const [leftOpen, setLeftOpen] = useState(() => stored('typos.left', true))
   const [hidden, setHidden] = useState<BlockType[]>(() => stored('typos.hidden', []))
   const [showTimes, setShowTimes] = useState(() => stored('typos.times', false))
@@ -194,12 +194,14 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [toast, setToast] = useState('')
   const [spell, setSpell] = useState<{ word: string; from: number; to: number; suggestions: string[] | null } | null>(null)
 
-  const [mode, setMode] = useState<'script' | 'montage'>('script')
+  const [mode, setMode] = useState<'script' | 'montage' | 'style'>('script')
+  const [styleVisited, setStyleVisited] = useState(false)
   const format = formats.find((f) => f.id === formatId) ?? formats[0]
   const wpm = customWpm ?? format?.wpm ?? 150
   useEffect(() => {
-    setAiStyle(format?.rules ?? '')
-  }, [format?.rules])
+    const guide = format?.motion?.learned?.guide
+    setAiStyle([format?.rules ?? '', guide ? `Guia de motion deste formato (siga nos prompts de motion):\n${guide}` : ''].filter(Boolean).join('\n\n'))
+  }, [format?.rules, format?.motion?.learned?.guide])
 
   // refs pros handlers do editor (que são criados uma vez só)
   const editorRef = useRef<Editor | null>(null)
@@ -455,7 +457,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       const k = e.key.toLowerCase()
       if (k !== 'z' && k !== 'y') return
       if ((e.target as HTMLElement)?.matches?.('input, textarea, select')) return // campos comuns usam o desfazer deles
-      if (metaRef.current.mode === 'montage') return // a Montagem tem o desfazer dela
+      if (metaRef.current.mode !== 'script') return // Montagem/Estilo têm o desfazer deles
       e.preventDefault()
       e.stopPropagation()
       historyStep(k === 'y' || e.shiftKey ? 'redo' : 'undo')
@@ -616,9 +618,10 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     return withTime.length
   }
 
-  const goMode = (m: 'script' | 'montage') => {
+  const goMode = (m: 'script' | 'montage' | 'style') => {
     setMode(m)
     if (m === 'montage') setMontageVisited(true)
+    if (m === 'style') setStyleVisited(true)
   }
 
   // ---------- menus do topo ----------
@@ -667,6 +670,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       items: [
         { label: 'Roteiro', checked: mode === 'script', onClick: () => goMode('script') },
         { label: 'Montagem', checked: mode === 'montage', onClick: () => goMode('montage') },
+        { label: 'Estilo (treinar motion e formato)', checked: mode === 'style', onClick: () => goMode('style') },
         { sep: true },
         { label: 'Painel Inserir', checked: leftOpen, onClick: () => setLeftOpen((o) => !o) },
         { label: 'Painel lateral', checked: panelOpen, onClick: () => setPanelOpen((o) => !o) },
@@ -974,14 +978,14 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             <Home size={17} />
           </button>
           <div className="ws-switch">
-            <button className={mode === 'script' ? 'on' : ''} title="Roteiro: escrever" onClick={() => setMode('script')}>
+            <button className={mode === 'script' ? 'on' : ''} title="Roteiro: escrever" onClick={() => goMode('script')}>
               <PenLine size={16} />
             </button>
-            <button className={mode === 'montage' ? 'on' : ''} title="Montagem: mídia, cortes da narração e timeline de edição" onClick={() => {
-                setMode('montage')
-                setMontageVisited(true)
-              }}>
+            <button className={mode === 'montage' ? 'on' : ''} title="Montagem: mídia, cortes da narração e timeline de edição" onClick={() => goMode('montage')}>
               <Film size={16} />
+            </button>
+            <button className={mode === 'style' ? 'on' : ''} title="Estilo: treinar o motion com o Claude e configurar o formato" onClick={() => goMode('style')}>
+              <Palette size={16} />
             </button>
           </div>
           <input
@@ -1003,7 +1007,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           onShowTrack={setShowTrack}
         />
         ) : (
-          <div className="ws-title">Montagem</div>
+          <div className="ws-title">{mode === 'montage' ? 'Montagem' : 'Estilo · treinar motion'}</div>
         )}
         <div className="tb-right">
           <select className="format-select" value={formatId} onChange={(e) => setFormatId(e.target.value)} title={`Formato: ${format?.name} · ${format?.aspect} · corretor ${langLabel(lang)} (muda em Formatos)`}>
@@ -1050,6 +1054,11 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         </div>
       </header>
 
+      {styleVisited && (
+        <div className="montage-layer" style={mode === 'style' ? undefined : { display: 'none' }}>
+          <StyleStudio active={mode === 'style'} formats={formats} activeId={formatId} onChange={onFormatsChange} onSelect={setFormatId} />
+        </div>
+      )}
       {montageVisited && (
         <div className="montage-layer" style={mode === 'montage' ? undefined : { display: 'none' }}>
           <Montage
@@ -1160,8 +1169,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             <button className={tab === 'folders' ? 'active' : ''} onClick={() => setTab('folders')}>
               Pastas
             </button>
-            <button className={tab === 'formats' ? 'active' : ''} onClick={() => setTab('formats')}>
-              Formatos
+            <button onClick={() => goMode('style')} title="Formatos e estilo de motion ficam no workspace Estilo">
+              Estilo ↗
             </button>
           </div>
           {tab === 'ai' ? (
@@ -1173,10 +1182,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
               onEdit={(i) => setSnippet({ id: i.id, title: i.title, cover: i.cover })}
               onDelete={(i) => onLibraryChange(library.filter((x) => x.id !== i.id))}
             />
-          ) : tab === 'folders' ? (
-            <FoldersPanel extra={format?.assetFolders ?? []} />
           ) : (
-            <FormatsPanel formats={formats} activeId={formatId} onChange={onFormatsChange} onSelect={setFormatId} />
+            <FoldersPanel extra={format?.assetFolders ?? []} />
           )}
         </aside>
       )}
