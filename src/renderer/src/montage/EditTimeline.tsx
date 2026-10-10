@@ -298,7 +298,8 @@ export function EditTimeline(p: Props) {
                   />
                 ))}
               {data.clips
-                .filter((c) => c.track === tr.id && c.splice)
+                // só onde os cortes estão colados (com vão entre eles a Emenda não age, então não aparece)
+                .filter((c) => c.track === tr.id && c.splice && data.clips.some((x) => x.id !== c.id && x.track === tr.id && Math.abs(clipEndT(x) - c.start) < 0.002))
                 .map((c) => {
                   const w = Math.max(14, c.splice! * pps)
                   return (
