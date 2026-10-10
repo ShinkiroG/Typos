@@ -17,6 +17,9 @@ const api = {
     ipcRenderer.invoke('storage:info', keep),
   clearStorage: (what: 'drafts' | 'cache' | 'recent', keep?: string) => ipcRenderer.invoke('storage:clear', what, keep),
   openPath: (path: string) => ipcRenderer.invoke('shell:open', path),
+  moveProject: (dir: string, title: string): Promise<{ dir: string } | { error: string } | null> => ipcRenderer.invoke('project:move', dir, title),
+  scanAssets: (dir: string): Promise<{ copies: number; unused: number; bytes: number } | { error: string }> => ipcRenderer.invoke('assets:scan', dir),
+  cleanAssets: (dir: string): Promise<{ removed: number; bytes: number } | { error: string }> => ipcRenderer.invoke('assets:clean', dir),
 
   pickAssets: (dir: string) => ipcRenderer.invoke('asset:pick', dir),
   importPaths: (dir: string, paths: string[]) => ipcRenderer.invoke('asset:importPaths', dir, paths),

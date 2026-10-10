@@ -3,7 +3,7 @@ import { join, basename, extname, dirname, resolve, sep } from 'path'
 import { promises as fs, existsSync, createReadStream } from 'fs'
 import { Readable } from 'stream'
 import { pathToFileURL } from 'url'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import { loadSettings, saveSettings } from './settings'
 import { initUpdater, checkManually, installDownloadedNow, installMode } from './updater'
 import { initSpell } from './spell'
@@ -76,21 +76,75 @@ async function writeJson(file: string, data: unknown) {
   await fs.rename(tmp, file)
 }
 
-/** Copia um arquivo pra dentro de destDir com nome único e devolve o nome novo. */
+/** impressão digital rápida: tamanho + começo + fim (vídeo grande não precisa ser lido inteiro) */
+async function fingerprint(file: string, size?: number): Promise<string> {
+  const fh = await fs.open(file, 'r')
+  try {
+    const total = size ?? (await fh.stat()).size
+    const CH = 256 * 1024
+    const h = createHash('sha1').update(String(total))
+    const head = Buffer.alloc(Math.min(CH, total))
+    await fh.read(head, 0, head.length, 0)
+    h.update(head)
+    if (total > CH) {
+      const tail = Buffer.alloc(Math.min(CH, total - CH))
+      await fh.read(tail, 0, tail.length, total - tail.length)
+      h.update(tail)
+    }
+    return h.digest('hex')
+  } finally {
+    await fh.close()
+  }
+}
+const fingerprintBytes = (bytes: Uint8Array) => {
+  const CH = 256 * 1024
+  const h = createHash('sha1').update(String(bytes.length)).update(bytes.subarray(0, CH))
+  if (bytes.length > CH) h.update(bytes.subarray(Math.max(CH, bytes.length - CH)))
+  return h.digest('hex')
+}
+
+const cleanBase = (name: string, fallback: string) => basename(name, extname(name)).replace(/[^\w\-]+/g, '_').slice(0, 60) || fallback
+
+/** arquivo igual (mesmo conteúdo) que já está na pasta, se tiver */
+async function sameIn(destDir: string, size: number, fp: () => Promise<string>): Promise<string | null> {
+  let mine: string | null = null
+  for (const e of await fs.readdir(destDir, { withFileTypes: true }).catch(() => [])) {
+    if (!e.isFile()) continue
+    const st = await fs.stat(join(destDir, e.name)).catch(() => null)
+    if (!st || st.size !== size) continue
+    mine ??= await fp()
+    if ((await fingerprint(join(destDir, e.name), st.size)) === mine) return e.name
+  }
+  return null
+}
+
+/** nome livre na pasta: video.mp4, video-2.mp4, video-3.mp4… */
+function freeName(destDir: string, base: string, ext: string) {
+  let name = base + ext
+  for (let i = 2; existsSync(join(destDir, name)); i++) name = `${base}-${i}${ext}`
+  return name
+}
+
+/**
+ * Traz um arquivo pra dentro de destDir e devolve o nome. Se o mesmo conteúdo já estiver lá
+ * (inserido antes, ou o arquivo já é de lá), reaproveita em vez de copiar de novo.
+ */
 async function copyUnique(src: string, destDir: string): Promise<string> {
   await fs.mkdir(destDir, { recursive: true })
-  const ext = extname(src).toLowerCase()
-  const base = basename(src, extname(src)).replace(/[^\w\-]+/g, '_').slice(0, 40) || 'img'
-  const name = `${base}-${randomUUID().slice(0, 8)}${ext}`
+  if (resolve(dirname(src)).toLowerCase() === resolve(destDir).toLowerCase()) return basename(src)
+  const st = await fs.stat(src)
+  const same = await sameIn(destDir, st.size, () => fingerprint(src, st.size))
+  if (same) return same
+  const name = freeName(destDir, cleanBase(src, 'arquivo'), extname(src).toLowerCase())
   await fs.copyFile(src, join(destDir, name))
   return name
 }
 
 async function writeUnique(bytes: Uint8Array, original: string, destDir: string): Promise<string> {
   await fs.mkdir(destDir, { recursive: true })
-  const ext = extname(original).toLowerCase() || '.png'
-  const base = basename(original, extname(original)).replace(/[^\w\-]+/g, '_').slice(0, 40) || 'colado'
-  const name = `${base}-${randomUUID().slice(0, 8)}${ext}`
+  const same = await sameIn(destDir, bytes.length, async () => fingerprintBytes(bytes))
+  if (same) return same
+  const name = freeName(destDir, cleanBase(original, 'colado'), extname(original).toLowerCase() || '.png')
   await fs.writeFile(join(destDir, name), bytes)
   return name
 }
@@ -666,5 +720,113 @@ ipcMain.handle('prefs:import', async (e): Promise<Result<{ files: number }> | nu
     return { files: n }
   } catch (err) {
     return { error: 'Não deu pra importar: ' + (err as Error).message }
+  }
+})
+
+// ---------- limpeza dos assets do projeto ----------
+async function walk(dir: string): Promise<string[]> {
+  const out: string[] = []
+  for (const e of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) out.push(...(await walk(p)))
+    else out.push(p)
+  }
+  return out
+}
+
+/** cópias iguais (fica uma) e arquivos que o roteiro não usa mais */
+async function assetReport(dir: string) {
+  const text = await fs.readFile(join(dir, PROJECT_FILE), 'utf8')
+  const rel = (p: string) => p.slice(dir.length + 1).split(sep).join('/')
+  const used = (r: string) => text.includes(JSON.stringify(r).slice(1, -1)) || text.includes(JSON.stringify(r.replace(/\//g, '\\')).slice(1, -1))
+  const files = await walk(join(dir, ASSETS_DIR))
+  const groups = new Map<string, { path: string; size: number }[]>()
+  for (const f of files) {
+    const st = await fs.stat(f)
+    const key = st.size + ':' + (await fingerprint(f, st.size))
+    groups.set(key, [...(groups.get(key) ?? []), { path: f, size: st.size }])
+  }
+  const remap = new Map<string, string>()
+  const trash: { path: string; size: number; why: 'copy' | 'unused' }[] = []
+  for (const list of groups.values()) {
+    // fica a que o roteiro já usa (ou a de nome mais curto)
+    const keep = [...list].sort((a, b) => Number(used(rel(b.path))) - Number(used(rel(a.path))) || a.path.length - b.path.length)[0]
+    for (const f of list) if (f !== keep) {
+      remap.set(rel(f.path), rel(keep.path))
+      trash.push({ ...f, why: 'copy' })
+    }
+    if (!used(rel(keep.path)) && !list.some((f) => used(rel(f.path)))) trash.push({ ...keep, why: 'unused' })
+  }
+  return { text, remap, trash }
+}
+
+ipcMain.handle('assets:scan', async (_e, dir: string) => {
+  try {
+    const { trash } = await assetReport(dir)
+    return {
+      copies: trash.filter((t) => t.why === 'copy').length,
+      unused: trash.filter((t) => t.why === 'unused').length,
+      bytes: trash.reduce((s, t) => s + t.size, 0)
+    }
+  } catch (err) {
+    return { error: String(err) }
+  }
+})
+
+ipcMain.handle('assets:clean', async (_e, dir: string) => {
+  try {
+    const { text, remap, trash } = await assetReport(dir)
+    let next = text
+    for (const [from, to] of remap) {
+      for (const [a, b] of [
+        [from, to],
+        [from.replace(/\//g, '\\'), to.replace(/\//g, '\\')]
+      ]) next = next.split(JSON.stringify(a).slice(1, -1)).join(JSON.stringify(b).slice(1, -1))
+    }
+    if (next !== text) await fs.writeFile(join(dir, PROJECT_FILE), next, 'utf8')
+    let bytes = 0
+    for (const t of trash) {
+      // vai pra Lixeira (dá pra recuperar), não some de vez
+      await shell.trashItem(t.path).then(() => (bytes += t.size)).catch(() => null)
+    }
+    return { removed: trash.length, bytes }
+  } catch (err) {
+    return { error: String(err) }
+  }
+})
+
+// ---------- mudar a pasta do projeto ----------
+ipcMain.handle('project:move', async (_e, dir: string, title: string): Promise<Result<{ dir: string }> | null> => {
+  const r = await dialog.showOpenDialog(win!, {
+    title: 'Mover o roteiro pra qual pasta?',
+    buttonLabel: 'Mover pra cá',
+    defaultPath: dirname(dir),
+    properties: ['openDirectory', 'createDirectory']
+  })
+  if (r.canceled || !r.filePaths[0]) return null
+  const target = join(r.filePaths[0], basename(dir))
+  if (resolve(target) === resolve(dir)) return { dir }
+  if (existsSync(target)) return { error: `Já existe uma pasta "${basename(dir)}" lá.` }
+  try {
+    try {
+      await fs.rename(dir, target)
+    } catch {
+      // outro disco: copia e apaga
+      await fs.cp(dir, target, { recursive: true })
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+    // caminhos absolutos que apontavam pra dentro da pasta antiga
+    const file = join(target, PROJECT_FILE)
+    const text = await fs.readFile(file, 'utf8')
+    const esc = (s: string) => JSON.stringify(s).slice(1, -1)
+    const fixed = text.split(esc(dir + sep)).join(esc(target + sep))
+    if (fixed !== text) await fs.writeFile(file, fixed, 'utf8')
+    const list = await readJson<Recent[]>(settingsFile('recent.json'), [])
+    await writeJson(settingsFile('recent.json'), list.filter((x) => x.dir !== dir))
+    await touchRecent(target, title)
+    await rememberParent(target)
+    return { dir: target }
+  } catch (err) {
+    return { error: 'Não deu pra mover: ' + String(err) }
   }
 })

@@ -13,10 +13,14 @@ const fmtBytes = (b: number) =>
 type Storage = Awaited<ReturnType<typeof api.storageInfo>>
 
 /** Limpar rascunhos, cache e a lista de recentes. O roteiro aberto nunca é apagado. */
-function StorageSection({ currentDir }: { currentDir?: string }) {
+function StorageSection({ currentDir, onCleanAssets }: { currentDir?: string; onCleanAssets?: () => Promise<string> }) {
   const [st, setSt] = useState<Storage | null>(null)
   const [msg, setMsg] = useState('')
-  const refresh = () => api.storageInfo(currentDir).then(setSt)
+  const [assets, setAssets] = useState<{ copies: number; unused: number; bytes: number } | null>(null)
+  const refresh = () => {
+    api.storageInfo(currentDir).then(setSt)
+    if (currentDir) api.scanAssets(currentDir).then((r) => setAssets('error' in r ? null : r))
+  }
   useEffect(() => {
     refresh()
   }, [])
@@ -59,6 +63,29 @@ function StorageSection({ currentDir }: { currentDir?: string }) {
           <Trash2 size={13} /> Limpar
         </button>
       </div>
+      {currentDir && assets && onCleanAssets && (
+        <div className="storage-row">
+          <span>
+            <b>Arquivos deste roteiro</b>
+            <span className="muted small">
+              {assets.copies || assets.unused
+                ? `${assets.copies} cópia(s) repetida(s) · ${assets.unused} sem uso · ${fmtBytes(assets.bytes)} (vão pra Lixeira)`
+                : 'nada repetido nem sobrando'}
+            </span>
+          </span>
+          <button
+            className="btn small"
+            disabled={!assets.copies && !assets.unused}
+            onClick={async () => {
+              if (!confirm('Juntar as cópias repetidas (o roteiro passa a usar uma só) e mandar as sobras pra Lixeira?')) return
+              setMsg(await onCleanAssets())
+              refresh()
+            }}
+          >
+            <Trash2 size={13} /> Limpar
+          </button>
+        </div>
+      )}
       <div className="storage-row">
         <span>
           <b>Lista de recentes</b>
@@ -77,7 +104,7 @@ function StorageSection({ currentDir }: { currentDir?: string }) {
   )
 }
 
-export function SettingsModal({ onClose, currentDir }: { onClose: () => void; currentDir?: string }) {
+export function SettingsModal({ onClose, currentDir, onCleanAssets }: { onClose: () => void; currentDir?: string; onCleanAssets?: () => Promise<string> }) {
   const [info, setInfo] = useState<Info | null>(null)
   const [key, setKey] = useState('')
   const [saved, setSaved] = useState('')
@@ -169,7 +196,7 @@ export function SettingsModal({ onClose, currentDir }: { onClose: () => void; cu
 
         <PrefsSection />
 
-        <StorageSection currentDir={currentDir} />
+        <StorageSection currentDir={currentDir} onCleanAssets={onCleanAssets} />
 
         <div className="modal-actions">
           <button className="btn primary" onClick={onClose}>

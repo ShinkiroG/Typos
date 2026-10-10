@@ -113,7 +113,22 @@ export default function App() {
       ) : (
         <Welcome onOpen={(dir, data, draft) => setSession({ key: uid(), dir, data, draft })} onOpenSettings={() => setSettingsOpen(true)} />
       )}
-      {settingsOpen && <SettingsModal currentDir={session?.dir} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsModal
+          currentDir={session?.dir}
+          onClose={() => setSettingsOpen(false)}
+          onCleanAssets={async () => {
+            if (!session) return ''
+            // salva o que está aberto, limpa no disco e reabre (o roteiro aponta pros arquivos que ficaram)
+            await flush.current?.()
+            const r = await api.cleanAssets(session.dir)
+            if ('error' in r) return r.error
+            const o = await api.openProject(session.dir)
+            if (o && !o.error) setSession({ key: uid(), dir: o.dir, data: o.data, draft: !!o.draft })
+            return `${r.removed} arquivo(s) foram pra Lixeira · ${(r.bytes / 1024 / 1024).toFixed(1)} MB liberados.`
+          }}
+        />
+      )}
       <Lightbox />
     </>
   )

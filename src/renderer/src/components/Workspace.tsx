@@ -6,7 +6,7 @@ import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { JSONContent } from '@tiptap/core'
-import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film } from 'lucide-react'
+import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming, convertBracketLines } from '../editor/nodes'
 import { Timestamps, setTimestamps } from '../editor/timestamps'
 import { FilterBar } from './FilterBar'
@@ -602,6 +602,17 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     return withTime.length
   }
 
+  /** move a pasta do roteiro pra outro lugar (rascunho: é o mesmo que salvar) */
+  const moveProject = async () => {
+    if (draft) return saveAs()
+    await save()
+    const r = await api.moveProject(dirRef.current, title)
+    if (!r) return
+    if ('error' in r) return setToast(r.error)
+    onSavedAs(r.dir)
+    setToast('Roteiro movido pra ' + r.dir)
+  }
+
   const snapshot = useCallback(() => {
     const ed = editorRef.current
     if (!ed || ed.isDestroyed) return null
@@ -890,11 +901,23 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
               </option>
             ))}
           </select>
-          {draft ? (
-            <button className="btn small primary" title="Escolher onde salvar (Ctrl+S)" onClick={saveAs}>
-              <Save size={14} /> Salvar…
+          <div className="save-group">
+            {draft ? (
+              <button className="btn small primary" title="Escolher onde salvar (Ctrl+S)" onClick={saveAs}>
+                <Save size={14} /> Salvar…
+              </button>
+            ) : (
+              <button className="btn small" title="Salvar uma cópia em outra pasta e continuar nela (Ctrl+Shift+S)" onClick={saveAs}>
+                <Save size={14} /> Salvar como…
+              </button>
+            )}
+            <button className="icon-btn" title="Abrir pasta do projeto" onClick={() => api.openPath(dir)}>
+              <FolderOpen size={16} />
             </button>
-          ) : null}
+            <button className="icon-btn" title="Mudar pasta do projeto (move o roteiro e os arquivos dele)" onClick={moveProject}>
+              <FolderInput size={16} />
+            </button>
+          </div>
           <span
             className={'save-state ' + saveState + (draft ? ' draft' : '')}
             title={draft ? 'Rascunho: salva sozinho; use "Salvar…" pra escolher a pasta' : 'Salva sozinho (Ctrl+S força · Ctrl+Shift+S salva como)'}
@@ -908,9 +931,6 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           </button>
           <button className={'icon-btn' + (timelineOpen ? ' on' : '')} title="Timeline (áudio + texto)" onClick={() => setTimelineOpen((o) => !o)}>
             <AudioLines size={17} />
-          </button>
-          <button className="icon-btn" title="Abrir pasta do roteiro" onClick={() => api.openPath(dir)}>
-            <FolderOpen size={17} />
           </button>
           <button className="icon-btn" title="Painel lateral" onClick={() => setPanelOpen((o) => !o)}>
             {panelOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
