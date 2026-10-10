@@ -301,7 +301,7 @@
 }
 /* com espaço: prévias na margem esquerda, alinhadas com o bloco */
 @container (min-width: 1060px) {
-  .blk .thumbs {
+  .blk .thumbs.margin {
     position: absolute;
     right: calc(100% + 14px);
     top: 2px;
@@ -312,47 +312,47 @@
     flex-basis: auto;
   }
   /* na margem: só a 1ª prévia (o resto fica no clipe) e o bloco ganha altura pra não sobrepor */
-  .blk .thumbs .thumb:nth-child(n + 2) {
+  .blk .thumbs.margin .thumb:nth-child(n + 2) {
     display: none;
   }
-  .blk .thumbs[data-more]::after {
+  .blk .thumbs.margin[data-more]::after {
     content: attr(data-more) ' no clipe';
     font-size: 10px;
     color: var(--muted);
     font-family: var(--font-ui);
   }
-  .blk .thumbs .thumb img,
-  .blk .thumbs .media-video video {
+  .blk .thumbs.margin .thumb img,
+  .blk .thumbs.margin .media-video video {
     width: 110px;
     height: 62px;
     max-width: none;
     max-height: none;
     object-fit: cover;
   }
-  .blk:has(.thumbs) {
+  .blk:has(.thumbs.margin) {
     min-height: 74px;
   }
-  .blk .thumbs .media-audio {
+  .blk .thumbs.margin .media-audio {
     max-width: 110px;
   }
 }
 @container (min-width: 1260px) {
-  .blk .thumbs {
+  .blk .thumbs.margin {
     right: calc(100% + 20px);
     width: 160px;
   }
-  .blk .thumbs .thumb img,
-  .blk .thumbs .media-video video {
+  .blk .thumbs.margin .thumb img,
+  .blk .thumbs.margin .media-video video {
     width: 160px;
     height: 90px;
     max-width: none;
     max-height: none;
     object-fit: cover;
   }
-  .blk:has(.thumbs) {
+  .blk:has(.thumbs.margin) {
     min-height: 102px;
   }
-  .blk .thumbs .media-audio {
+  .blk .thumbs.margin .media-audio {
     max-width: 160px;
   }
 }
@@ -804,12 +804,12 @@
 }
 /* prévias de anexo ficam mais pra esquerda que as barras da trilha */
 @container (min-width: 1060px) {
-  .blk .thumbs {
+  .blk .thumbs.margin {
     right: calc(100% + 64px);
   }
 }
 @container (min-width: 1260px) {
-  .blk .thumbs {
+  .blk .thumbs.margin {
     right: calc(100% + 70px);
   }
 }
@@ -1618,4 +1618,66 @@ body.resizing * {
 }
 .folder-items:not(.v-list) .fi-thumb.k-audio {
   min-height: 36px;
+}
+
+/* anexo "no texto": prévia maior, dentro do bloco */
+.thumbs.inline .thumb img,
+.thumbs.inline .media-video video {
+  height: auto;
+  max-height: 200px;
+  max-width: min(100%, 360px);
+}
+/* arrastando arquivo: onde ele vai cair */
+.drop-margin-hint {
+  position: absolute;
+  width: 150px;
+  border: 2px dashed var(--c-prompt);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--c-prompt) 10%, transparent);
+  color: var(--c-prompt);
+  font: 600 11px var(--font-ui);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  z-index: 5;
+}
+.place-toggle {
+  font-size: 10px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+/* tela estreita: a margem abre espaço (quando há prévia na margem ou um arquivo sendo arrastado) */
+@container (max-width: 1059.98px) {
+  .page:has(.thumbs.margin),
+  .editor-scroll.drag-file .page {
+    padding-left: 150px;
+    transition: padding-left 0.15s;
+  }
+  .blk .thumbs.margin {
+    position: absolute;
+    right: calc(100% + 60px);
+    top: 2px;
+    width: 84px;
+    margin: 0;
+    flex-direction: column;
+    align-items: flex-end;
+    flex-basis: auto;
+  }
+  .blk .thumbs.margin .thumb:nth-child(n + 2) {
+    display: none;
+  }
+  .blk .thumbs.margin .thumb img,
+  .blk .thumbs.margin .media-video video {
+    width: 84px;
+    height: 48px;
+    max-width: none;
+    max-height: none;
+    object-fit: cover;
+  }
+  .blk .thumbs.margin .media-audio {
+    max-width: 84px;
+  }
+  .blk:has(.thumbs.margin) {
+    min-height: 56px;
+  }
 }

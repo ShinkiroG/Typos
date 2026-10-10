@@ -58,7 +58,7 @@ function LazyThumb({ item, size }: { item: Item; size: number }) {
  * Pastas de mídia do PC (SFX, referências, gameplay…). O app só lê a pasta; ao usar um
  * arquivo no roteiro ele é copiado pra dentro do projeto.
  */
-export function FoldersPanel({ onInsert }: { onInsert: (path: string) => void }) {
+export function FoldersPanel() {
   const [folders, setFolders] = useState<Folder[]>([])
   const [items, setItems] = useState<Record<string, Scan | undefined>>({})
   const [open, setOpen] = useState<Record<string, boolean>>(() => remembered('typos.foldersOpen', {}))
@@ -129,8 +129,7 @@ export function FoldersPanel({ onInsert }: { onInsert: (path: string) => void })
         e.dataTransfer.setData(FILE_MIME, it.path)
         e.dataTransfer.effectAllowed = 'copy'
       }}
-      onClick={() => onInsert(it.path)}
-      title={`${it.rel}\nClique: anexa no bloco atual · arraste pro texto ou pra timeline`}
+      title={`${it.rel}\nArraste: em cima do texto = prévia no texto · na margem esquerda = prévia na margem · na timeline = clipe`}
     >
       {it.kind === 'audio' ? (
         <div className="fi-thumb k-audio">

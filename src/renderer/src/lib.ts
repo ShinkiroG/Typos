@@ -20,6 +20,8 @@ export interface Attachment {
   kind?: MediaKind
   /** fluxo de aprovação: referência solta → aprovada → pedir recorte / pedir pra regerar */
   status?: AttachmentStatus
+  /** onde a prévia aparece: na margem esquerda (padrão) ou dentro do texto */
+  place?: 'margin' | 'inline'
 }
 
 export type AttachmentStatus = 'ref' | 'aprovado' | 'recortar' | 'regerar'

@@ -86,9 +86,10 @@ interface TextJob {
 async function textClaudeCode(s: AiSettings, job: TextJob) {
   const cc = await findClaudeCode(s)
   if (!cc) throw new Error('Claude Code não encontrado neste PC. Instale e faça login (Configurações → IA).')
-  const prompt = `${job.instruction}\n\nResponda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}`
+  const prompt = `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}`
   // prompt vai pela entrada padrão (sem limite de tamanho da linha de comando do Windows)
-  const r = await run(cc.path, ['-p', '--output-format', 'json'], { cwd: job.dir, input: prompt, timeoutMs: 180000 })
+  // no modo -p só roda ferramenta liberada aqui: busca na web sim, mexer em arquivo não
+  const r = await run(cc.path, ['-p', '--output-format', 'json', '--allowedTools', 'WebSearch,WebFetch'], { cwd: job.dir, input: prompt, timeoutMs: 180000 })
   let parsed: any = null
   try {
     parsed = JSON.parse(r.out)
@@ -111,8 +112,9 @@ async function textAnthropic(s: AiSettings, job: TextJob) {
     // se o modelo recusar por política, o próprio servidor tenta outro modelo
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
     system: 'Você ajuda a escrever roteiros de vídeo para YouTube, em português do Brasil.',
-    messages: [{ role: 'user', content: `${job.instruction}\n\nResponda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}` }]
+    messages: [{ role: 'user', content: `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}` }]
   })
   if (res.stop_reason === 'refusal') throw new Error('O Claude recusou esse pedido.')
   return res.content
@@ -138,7 +140,7 @@ async function textOpenAI(s: AiSettings, job: TextJob) {
     model: s.openaiTextModel || DEFAULT_MODELS.openaiText,
     messages: [
       { role: 'system', content: 'Você ajuda a escrever roteiros de vídeo para YouTube, em português do Brasil.' },
-      { role: 'user', content: `${job.instruction}\n\nResponda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}` }
+      { role: 'user', content: `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}` }
     ]
   })
   return String(j?.choices?.[0]?.message?.content ?? '').trim()

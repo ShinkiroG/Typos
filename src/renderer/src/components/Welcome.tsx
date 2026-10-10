@@ -60,6 +60,36 @@ export function Welcome({
         <div className="welcome-lists">
           <section>
             <h3>
+              <History size={13} /> Arquivos recentes
+            </h3>
+            {recent.length === 0 ? (
+              <p className="list-empty">Os roteiros que você salvar ou abrir aparecem aqui.</p>
+            ) : (
+              <ul className="recent">
+                {recent.map((r) => (
+                  <li key={r.dir} onClick={async () => handle(await api.openProject(r.dir))}>
+                    <span className="recent-title">{r.title}</span>
+                    <span className="recent-dir">{r.dir}</span>
+                    <span className="recent-date">{when(r.openedAt)}</span>
+                    <button
+                      className="icon-btn recent-x"
+                      title="Tirar da lista (não apaga o arquivo)"
+                      onClick={async (e) => {
+                        e.stopPropagation()
+                        await api.removeRecent(r.dir)
+                        refresh()
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section>
+            <h3>
               <FileClock size={13} /> Rascunhos não salvos
             </h3>
             {drafts.length === 0 ? (
@@ -82,36 +112,6 @@ export function Welcome({
                       }}
                     >
                       <Trash2 size={14} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section>
-            <h3>
-              <History size={13} /> Arquivos recentes
-            </h3>
-            {recent.length === 0 ? (
-              <p className="list-empty">Os roteiros que você salvar ou abrir aparecem aqui.</p>
-            ) : (
-              <ul className="recent">
-                {recent.map((r) => (
-                  <li key={r.dir} onClick={async () => handle(await api.openProject(r.dir))}>
-                    <span className="recent-title">{r.title}</span>
-                    <span className="recent-dir">{r.dir}</span>
-                    <span className="recent-date">{when(r.openedAt)}</span>
-                    <button
-                      className="icon-btn recent-x"
-                      title="Tirar da lista (não apaga o arquivo)"
-                      onClick={async (e) => {
-                        e.stopPropagation()
-                        await api.removeRecent(r.dir)
-                        refresh()
-                      }}
-                    >
-                      <X size={14} />
                     </button>
                   </li>
                 ))}

@@ -99,12 +99,14 @@ function AttachmentManager({
   atts,
   onAdd,
   onRemove,
-  onStatus
+  onStatus,
+  onPlace
 }: {
   atts: Attachment[]
   onAdd: (a: Attachment[]) => void
   onRemove: (id: string) => void
   onStatus: (id: string, s: AttachmentStatus) => void
+  onPlace: (id: string) => void
 }) {
   const [msg, setMsg] = useState('')
   const dir = getProjectDir()
@@ -139,6 +141,13 @@ function AttachmentManager({
                 ))}
               </select>
             </div>
+            <button
+              className="btn small place-toggle"
+              title="Onde a prévia aparece no roteiro (clique pra trocar)"
+              onClick={() => onPlace(a.id)}
+            >
+              {a.place === 'inline' ? 'No texto' : 'Na margem'}
+            </button>
             <CutPreview a={a} />
             {kindOf(a) !== 'audio' && (
               <button className="icon-btn" title="Ver grande" onClick={() => openPreview(attachmentUrl(a))}>
@@ -176,6 +185,8 @@ function useAttachments({ node, updateAttributes }: Pick<NodeViewProps, 'node' |
   const remove = (id: string) => updateAttributes({ attachments: atts.filter((a) => a.id !== id) })
   const setStatus = (id: string, status: AttachmentStatus) =>
     updateAttributes({ attachments: atts.map((a) => (a.id === id ? { ...a, status } : a)) })
+  const flipPlace = (id: string) =>
+    updateAttributes({ attachments: atts.map((a) => (a.id === id ? { ...a, place: a.place === 'inline' ? 'margin' : 'inline' } : a)) })
 
   const button = (
     <div className="attach-anchor" contentEditable={false} ref={ref}>
@@ -183,22 +194,31 @@ function useAttachments({ node, updateAttributes }: Pick<NodeViewProps, 'node' |
         <Paperclip size={15} />
         {atts.length > 0 && <span className="badge">{atts.length}</span>}
       </button>
-      {open && <AttachmentManager atts={atts} onAdd={add} onRemove={remove} onStatus={setStatus} />}
+      {open && <AttachmentManager atts={atts} onAdd={add} onRemove={remove} onStatus={setStatus} onPlace={flipPlace} />}
     </div>
   )
 
-  // prévias: ficam na margem esquerda da página (ou embaixo, se a tela for estreita)
-  const thumbs =
-    atts.length > 0 ? (
-      <div className="thumbs" contentEditable={false} data-more={atts.length > 1 ? `+${atts.length - 1}` : undefined}>
-        {atts.map((a) => (
+  // prévias: cada anexo vai na margem esquerda (padrão) ou dentro do texto, conforme foi solto
+  const group = (place: 'margin' | 'inline') => {
+    const list = atts.filter((a) => (a.place ?? 'margin') === place)
+    if (!list.length) return null
+    return (
+      <div className={'thumbs ' + place} contentEditable={false} data-more={place === 'margin' && list.length > 1 ? `+${list.length - 1}` : undefined}>
+        {list.map((a) => (
           <div key={a.id} className={'thumb k-' + kindOf(a) + ' st-' + (a.status ?? 'ref')}>
             <MediaThumb a={a} />
             {a.status && a.status !== 'ref' && <span className="thumb-status">{ATTACHMENT_STATUS.find((s) => s.id === a.status)?.label}</span>}
           </div>
         ))}
       </div>
-    ) : null
+    )
+  }
+  const thumbs = (
+    <>
+      {group('margin')}
+      {group('inline')}
+    </>
+  )
 
   return { button, thumbs }
 }

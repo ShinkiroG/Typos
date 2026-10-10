@@ -291,7 +291,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         const hit = blockAtCoords(view, event.clientX, event.clientY)
         const holds = hit && (hit.node.type.name === 'prompt' || hit.node.type.name === 'sonora')
         const target = holds ? hit.pos : dropPosition(view, event.clientX, event.clientY)
-        api.importPaths(dirRef.current, paths).then((atts: Attachment[]) => attachTo(target, atts))
+        api.importPaths(dirRef.current, paths).then((atts: Attachment[]) => attachTo(target, atts.map((a) => ({ ...a, place: 'inline' as const }))))
         return true
       },
       handlePaste: (view, event) => {
@@ -450,15 +450,57 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     } else setReview((v) => v && { ...v, draft: r.blocks, request, provider: r.provider, busy: false })
   }
 
-  /** clique num arquivo das Pastas: anexa no bloco atual (prompt/sonora) ou cria um prompt abaixo */
-  const insertFile = async (path: string) => {
+  // arquivo solto na margem esquerda (fora do texto): prévia na margem, ao lado do bloco
+  const [marginHint, setMarginHint] = useState<{ left: number; top: number; height: number; width: number } | null>(null)
+  const [dragFile, setDragFile] = useState(false)
+  useEffect(() => {
+    // arrasto cancelado (Esc ou soltou fora): some com a margem aberta
+    const end = () => {
+      setDragFile(false)
+      setMarginHint(null)
+    }
+    window.addEventListener('dragend', end)
+    return () => window.removeEventListener('dragend', end)
+  }, [])
+  const marginTarget = (e: React.DragEvent) => {
     const ed = editorRef.current
-    if (!ed) return
-    const atts: Attachment[] = await api.importPaths(dirRef.current, [path])
-    const { $from } = ed.state.selection
-    if ($from.depth < 1) return attachTo(ed.state.doc.content.size, atts)
-    const holds = ['prompt', 'sonora'].includes($from.node(1).type.name)
-    attachTo(holds ? $from.before(1) : $from.after(1), atts)
+    const types = Array.from(e.dataTransfer.types)
+    if (!ed || review || !(types.includes(FILE_MIME) || types.includes('Files'))) return null
+    const pm = ed.view.dom.getBoundingClientRect()
+    if (e.clientX >= pm.left) return null
+    const hit = blockAtCoords(ed.view, pm.left + 40, Math.min(Math.max(e.clientY, pm.top + 2), pm.bottom - 2))
+    const rect = hit && (ed.view.nodeDOM(hit.pos) as HTMLElement | null)?.getBoundingClientRect()
+    return { hit, pm, rect }
+  }
+  const onMarginDragOver = (e: React.DragEvent) => {
+    const t = marginTarget(e)
+    if (!t) return setMarginHint(null)
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    const top = t.rect ? t.rect.top : e.clientY - 30
+    const box = e.currentTarget.getBoundingClientRect()
+    const left = Math.max(box.left + 4, t.pm.left - 230)
+    setMarginHint({ left, width: Math.min(150, t.pm.left - left - 8), top, height: Math.min(Math.max(t.rect?.height ?? 60, 56), 100) })
+  }
+  const onMarginDrop = (e: React.DragEvent) => {
+    setMarginHint(null)
+    setDragFile(false)
+    if (e.defaultPrevented) return
+    const t = marginTarget(e)
+    if (!t) return
+    e.preventDefault()
+    const dt = e.dataTransfer
+    const folderFile = dt.getData(FILE_MIME)
+    const paths = folderFile
+      ? [folderFile]
+      : Array.from(dt.files)
+          .filter((f) => /^(image|audio|video)\//.test(f.type))
+          .map((f) => api.pathForFile(f))
+    if (!paths.length) return
+    const ed = editorRef.current!
+    const holds = t.hit && ['prompt', 'sonora'].includes(t.hit.node.type.name)
+    const target = !t.hit ? ed.state.doc.content.size : holds ? t.hit.pos : dropPosition(ed.view, t.pm.left + 40, e.clientY)
+    api.importPaths(dirRef.current, paths).then((atts: Attachment[]) => attachTo(target, atts.map((a) => ({ ...a, place: 'margin' as const }))))
   }
 
   const snapshot = useCallback(() => {
@@ -766,7 +808,27 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
 
       {leftOpen && <InsertPanel editor={editor} notes={notes} onNotes={setNotes} onResizeStart={(e) => startResize('left', e)} />}
 
-      <main className="editor-scroll" onContextMenu={onContextMenu} ref={setScrollEl}>
+      <main
+        className={'editor-scroll' + (dragFile ? ' drag-file' : '')}
+        onDragEnter={(e) => {
+          const types = Array.from(e.dataTransfer.types)
+          if (types.includes(FILE_MIME) || types.includes('Files')) setDragFile(true)
+        }}
+        onContextMenu={onContextMenu}
+        ref={setScrollEl}
+        onDragOver={onMarginDragOver}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return
+          setMarginHint(null)
+          setDragFile(false)
+        }}
+        onDrop={onMarginDrop}
+      >
+        {marginHint && (
+          <div className="drop-margin-hint" style={{ position: 'fixed', left: marginHint.left, top: marginHint.top, height: marginHint.height, width: marginHint.width }}>
+            soltar na margem
+          </div>
+        )}
         {review && (
           <ReviewPane
             original={review.original}
@@ -837,7 +899,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
               onDelete={(i) => onLibraryChange(library.filter((x) => x.id !== i.id))}
             />
           ) : tab === 'folders' ? (
-            <FoldersPanel onInsert={insertFile} />
+            <FoldersPanel />
           ) : (
             <FormatsPanel formats={formats} activeId={formatId} onChange={onFormatsChange} onSelect={setFormatId} />
           )}
