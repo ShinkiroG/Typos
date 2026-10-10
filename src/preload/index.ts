@@ -100,6 +100,8 @@ const api = {
     ipcRenderer.invoke('media:probe', path),
   proxyAudio: (path: string): Promise<string | { error: string }> => ipcRenderer.invoke('media:proxy', path),
   mediaExists: (paths: string[]): Promise<boolean[]> => ipcRenderer.invoke('media:exists', paths),
+  trashRecording: (path: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('media:trashRecording', path),
+  showItem: (path: string) => ipcRenderer.invoke('shell:showItem', path),
   saveRecording: (dir: string, bytes: Uint8Array): Promise<string | { error: string }> => ipcRenderer.invoke('media:saveRecording', dir, bytes),
   silences: (path: string): Promise<[number, number][] | { error: string }> => ipcRenderer.invoke('media:silences', path),
 

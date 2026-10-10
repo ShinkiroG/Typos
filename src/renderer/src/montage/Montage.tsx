@@ -363,6 +363,56 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     }
   }
 
+  // ---------- botão direito num corte ----------
+  const [clipMenu, setClipMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  useEffect(() => {
+    if (!clipMenu) return
+    const close = () => setClipMenu(null)
+    window.addEventListener('mousedown', close)
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('blur', close)
+    }
+  }, [clipMenu])
+
+  const onClipMenu = (e: React.MouseEvent, c: MontageClip) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!selected.includes(c.id)) setSelected([c.id])
+    setClipMenu({ x: e.clientX, y: e.clientY, id: c.id })
+  }
+
+  /** os cortes que o menu atinge: a seleção (se o clicado faz parte dela) ou só ele */
+  const menuTargets = () => {
+    if (!clipMenu) return []
+    const ids = selected.includes(clipMenu.id) ? selected : [clipMenu.id]
+    return dataRef.current.clips.filter((c) => ids.includes(c.id))
+  }
+
+  const removeClips = (targets: MontageClip[], ripple: boolean) => {
+    const ids = new Set(targets.map((c) => c.id))
+    let clips = dataRef.current.clips.filter((c) => !ids.has(c.id))
+    if (ripple)
+      for (const r of [...targets].sort((a, b) => b.start - a.start))
+        clips = clips.map((c) => (c.track === r.track && c.start >= clipEndT(r) - 0.001 ? { ...c, start: c.start - clipDur(r) } : c))
+    setSelected([])
+    change({ ...dataRef.current, clips })
+  }
+
+  /** gravação descartada: some da timeline, do projeto e o arquivo vai pra Lixeira */
+  const discardRecording = async (targets: MontageClip[]) => {
+    const d = dataRef.current
+    const medias = [...new Set(targets.map((c) => c.media))].map((id) => d.media.find((m) => m.id === id)!).filter((m) => m && /[\\/]assets[\\/]gravacoes[\\/]/i.test(m.path))
+    if (!medias.length) return
+    const others = d.clips.filter((c) => medias.some((m) => m.id === c.media) && !targets.includes(c)).length
+    if (!confirm(`Descartar ${medias.length === 1 ? 'a gravação ' + medias[0].name : medias.length + ' gravações'}?${others ? ` Ela também está em ${others} outro(s) corte(s), que saem junto.` : ''} O arquivo vai pra Lixeira.`)) return
+    const gone = new Set(medias.map((m) => m.id))
+    setSelected([])
+    change({ ...d, media: d.media.filter((m) => !gone.has(m.id)), clips: d.clips.filter((c) => !gone.has(c.media)) })
+    for (const m of medias) await api.trashRecording(m.path)
+  }
+
   const recStart = useRef<number | null>(null)
   /** grava o microfone na faixa armada, a partir do playhead (a timeline toca junto) */
   const startRec = async () => {
@@ -888,6 +938,89 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
         </button>
       </div>
 
+      {clipMenu &&
+        (() => {
+          const targets = menuTargets()
+          const one = targets.length === 1 ? targets[0] : null
+          const m = one ? media.get(one.media) : null
+          const tr = one ? data.tracks.find((t) => t.id === one.track) : null
+          const sameKind = tr ? data.tracks.filter((t) => t.kind === tr.kind && t.id !== tr.id) : []
+          const isRec = targets.some((c) => /[\\/]assets[\\/]gravacoes[\\/]/i.test(media.get(c.media)?.path ?? ''))
+          const t = posRef.current
+          const canSplit = targets.some((c) => c.start < t && clipEndT(c) > t)
+          const act = (fn: () => void) => () => {
+            setClipMenu(null)
+            fn()
+          }
+          return (
+            <div
+              className="ctx-menu"
+              style={{ left: Math.min(clipMenu.x, window.innerWidth - 260), top: Math.min(clipMenu.y, window.innerHeight - 380) }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="ctx-label">{one ? m?.name ?? 'corte' : `${targets.length} cortes`}</div>
+              <button onClick={act(() => removeClips(targets, false))}>
+                Excluir <kbd>Delete</kbd>
+              </button>
+              <button onClick={act(() => removeClips(targets, true))}>
+                Excluir e juntar o resto <kbd>Shift+Delete</kbd>
+              </button>
+              <div className="ctx-sep" />
+              <button disabled={!canSplit} onClick={act(splitAtPlayhead)}>
+                Dividir no playhead <kbd>S</kbd>
+              </button>
+              <button
+                onClick={act(() => {
+                  const end = Math.max(...targets.map(clipEndT))
+                  const first = Math.min(...targets.map((c) => c.start))
+                  const copies = targets.map((c) => ({ ...c, id: uid(), start: c.start - first + end, splice: undefined }))
+                  change({ ...dataRef.current, clips: [...dataRef.current.clips, ...copies] })
+                  setSelected(copies.map((c) => c.id))
+                })}
+              >
+                Duplicar logo depois
+              </button>
+              {one && prevOf(one) && (
+                <button onClick={act(() => patchClip(one.id, { splice: one.splice ? undefined : spliceLen }))}>
+                  {one.splice ? 'Tirar a Emenda' : 'Emenda com o corte anterior'} <kbd>E</kbd>
+                </button>
+              )}
+              {one && sameKind.length > 0 && (
+                <>
+                  <div className="ctx-sep" />
+                  <div className="ctx-label">Mover pra faixa</div>
+                  {sameKind.map((k) => (
+                    <button key={k.id} onClick={act(() => patchClip(one.id, { track: k.id }))}>
+                      {k.name}
+                    </button>
+                  ))}
+                </>
+              )}
+              <div className="ctx-sep" />
+              {m && (
+                <>
+                  <button
+                    onClick={act(() => {
+                      setBin(m.bin)
+                      engine.pause()
+                      setPlaying(false)
+                      setSource(m)
+                    })}
+                  >
+                    Ver o arquivo inteiro no visualizador
+                  </button>
+                  <button onClick={act(() => api.showItem(m.path))}>Mostrar o arquivo na pasta</button>
+                </>
+              )}
+              {isRec && (
+                <button className="danger" onClick={act(() => discardRecording(targets))}>
+                  Descartar gravação (arquivo vai pra Lixeira)
+                </button>
+              )}
+            </div>
+          )
+        })()}
+
       {/* ---------- timeline de edição ---------- */}
       <section className="mt-timeline">
         <EditTimeline
@@ -904,6 +1037,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           playheadRef={playheadRef}
           scrollRef={scrollRef}
           wavesVersion={wavesVersion}
+          onClipMenu={onClipMenu}
           armed={armed}
           onArm={(id) => setArmed((a) => (a === id ? null : id))}
           recording={rec}

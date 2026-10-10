@@ -27,6 +27,8 @@ interface Props {
   onArm: (trackId: string) => void
   recording: { track: string; start: number } | null
   recClipRef: React.RefObject<HTMLDivElement | null>
+  /** botão direito num corte */
+  onClipMenu: (e: React.MouseEvent, c: MontageClip) => void
 }
 
 const HEAD_W = 132
@@ -249,6 +251,7 @@ export function EditTimeline(p: Props) {
                     engine={p.engine}
                     wavesVersion={p.wavesVersion}
                     onDown={onClipDown}
+                    onMenu={p.onClipMenu}
                   />
                 ))}
               {p.recording?.track === tr.id && (
@@ -281,7 +284,8 @@ const ClipView = memo(function ClipView({
   blade,
   engine,
   wavesVersion,
-  onDown
+  onDown,
+  onMenu
 }: {
   c: MontageClip
   m?: MontageMedia
@@ -291,6 +295,7 @@ const ClipView = memo(function ClipView({
   engine: MontageEngine
   wavesVersion: number
   onDown: (e: React.PointerEvent, c: MontageClip) => void
+  onMenu: (e: React.MouseEvent, c: MontageClip) => void
 }) {
   const w = Math.max(2, clipDur(c) * pps)
   const kind = m?.kind ?? 'audio'
@@ -299,6 +304,7 @@ const ClipView = memo(function ClipView({
       className={'mt-clip k-' + kind + (sel ? ' sel' : '') + (blade ? ' blade' : '') + (!m ? ' missing' : '')}
       style={{ left: c.start * pps, width: w }}
       onPointerDown={(e) => onDown(e, c)}
+      onContextMenu={(e) => onMenu(e, c)}
       title={`${m?.name ?? 'mídia sumiu'}\n${formatTime(c.start)} → ${formatTime(clipEndT(c))} (${clipDur(c).toFixed(2)}s)`}
     >
       {m?.hasAudio && <Wave c={c} engine={engine} width={w} version={wavesVersion} />}

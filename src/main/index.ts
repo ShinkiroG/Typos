@@ -845,3 +845,15 @@ ipcMain.handle('media:saveRecording', async (_e, dir: string, bytes: Uint8Array)
     return { error: 'Não deu pra salvar a gravação: ' + String(err) }
   }
 })
+
+// arquivo de gravação que o usuário descartou (vai pra Lixeira; só dentro de assets/gravacoes)
+ipcMain.handle('media:trashRecording', async (_e, path: string) => {
+  if (!/[\\/]assets[\\/]gravacoes[\\/][^\\/]+\.wav$/i.test(path)) return { error: 'só gravações do Typos' }
+  try {
+    await shell.trashItem(path)
+    return { ok: true }
+  } catch (err) {
+    return { error: String(err) }
+  }
+})
+ipcMain.handle('shell:showItem', (_e, path: string) => shell.showItemInFolder(path))

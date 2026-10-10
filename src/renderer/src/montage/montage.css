@@ -611,3 +611,22 @@
   top: 4px;
   right: 4px;
 }
+
+/* menu do botão direito nos cortes */
+.ctx-menu kbd {
+  float: right;
+  margin-left: 18px;
+  font: 10px var(--font-console);
+  color: var(--muted);
+}
+.ctx-menu button:disabled {
+  color: var(--muted);
+  cursor: default;
+  background: transparent;
+}
+.mt-insp-grid label,
+.mt-insp-grid input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
