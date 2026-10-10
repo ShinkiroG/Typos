@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { BookOpen, Copy, X, AlertTriangle, Pencil } from 'lucide-react'
+import { BookOpen, Copy, X, AlertTriangle, Pencil, Clapperboard } from 'lucide-react'
 import { referencesText, type RefRange } from '../editor/reference'
 
 type Ref = RefRange & { excerpt: string; block: number }
@@ -8,11 +8,13 @@ type Ref = RefRange & { excerpt: string; block: number }
 export function RefModal({
   edit,
   onCancel,
-  onSave
+  onSave,
+  kind = 'ref'
 }: {
   edit: { text: string; excerpt: string; id?: string }
   onCancel: () => void
   onSave: (text: string) => void
+  kind?: 'ref' | 'prompt'
 }) {
   const [text, setText] = useState(edit.text)
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -24,14 +26,19 @@ export function RefModal({
     <div className="modal-backdrop" onMouseDown={onCancel}>
       <div className="modal ref-modal" onMouseDown={(e) => e.stopPropagation()}>
         <h3>
-          <BookOpen size={16} /> {edit.id ? 'Editar referência' : 'Nova referência'}
+          {kind === 'prompt' ? <Clapperboard size={16} /> : <BookOpen size={16} />}{' '}
+          {kind === 'prompt' ? (edit.id ? 'Editar prompt do trecho' : 'Prompt pra este trecho') : edit.id ? 'Editar referência' : 'Nova referência'}
         </h3>
-        <blockquote className="ref-excerpt">{edit.excerpt.length > 220 ? edit.excerpt.slice(0, 220) + '…' : edit.excerpt}</blockquote>
+        <blockquote className={'ref-excerpt' + (kind === 'prompt' ? ' k-prompt' : '')}>{edit.excerpt.length > 220 ? edit.excerpt.slice(0, 220) + '…' : edit.excerpt}</blockquote>
         <textarea
           ref={ref}
           rows={4}
           value={text}
-          placeholder="Ex.: VG Insights. Steam Games Market Report 2025. Disponível em: https://vginsights.com/… Acesso em: 10 out. 2026."
+          placeholder={
+            kind === 'prompt'
+              ? 'O motion desse trecho: ex. tabela animada linha a linha, destaque no número, zoom punch na palavra…'
+              : 'Ex.: VG Insights. Steam Games Market Report 2025. Disponível em: https://vginsights.com/… Acesso em: 10 out. 2026.'
+          }
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') onCancel()

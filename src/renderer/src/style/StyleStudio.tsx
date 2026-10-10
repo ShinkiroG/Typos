@@ -17,7 +17,9 @@ import {
   Languages,
   Palette,
   Clipboard,
-  Sparkles
+  Sparkles,
+  ExternalLink,
+  FolderOpen
 } from 'lucide-react'
 import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type FontCase, DEFAULT_FONT_CASES } from '../lib'
 import { FontPicker } from './FontPicker'
@@ -280,9 +282,15 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
   // a demo roda de um arquivo (rs://), não do srcdoc: assim o JS dela funciona isolado
   const demoHtml = f.motion?.learned?.demoHtml
   const [demoSrc, setDemoSrc] = useState<string | null>(null)
+  const [demoPath, setDemoPath] = useState<string | null>(null)
   useEffect(() => {
     setDemoSrc(null)
-    if (demoHtml) api.motionDemoFile(demoHtml).then((p) => setDemoSrc(fileUrl(p)))
+    setDemoPath(null)
+    if (demoHtml)
+      api.motionDemoFile(demoHtml).then((p) => {
+        setDemoPath(p)
+        setDemoSrc(fileUrl(p))
+      })
   }, [demoHtml])
 
   const [pw, ph] = f.aspect === '9:16' ? [540, 960] : f.aspect === '1:1' ? [720, 720] : f.aspect === '4:5' ? [576, 720] : [960, 540]
@@ -664,9 +672,21 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
         <div className="st-preview-head">
           <span>Prévia do estilo ({pw}×{ph})</span>
           {f.motion?.learned?.demoHtml && (
-            <button className="icon-btn" title="Rodar de novo" onClick={() => setReplay((n) => n + 1)}>
-              <RotateCcw size={14} />
-            </button>
+            <span className="st-preview-actions">
+              {demoPath && (
+                <>
+                  <button className="icon-btn" title="Abrir a demo no navegador (tela cheia)" onClick={() => api.openPath(demoPath)}>
+                    <ExternalLink size={14} />
+                  </button>
+                  <button className="icon-btn" title="Mostrar o arquivo da demo na pasta" onClick={() => api.showItem(demoPath)}>
+                    <FolderOpen size={14} />
+                  </button>
+                </>
+              )}
+              <button className="icon-btn" title="Rodar de novo" onClick={() => setReplay((n) => n + 1)}>
+                <RotateCcw size={14} />
+              </button>
+            </span>
           )}
         </div>
         <div className="st-stage" ref={stageRef}>

@@ -1,5 +1,6 @@
 import type { JSONContent } from '@tiptap/core'
 import { api, countWords, inlineMd, mdToJson } from './lib'
+import { blockPrompts, markExcerpt } from './editor/promptMark'
 
 /**
  * Formato de troca com a IA: um bloco por linha, com etiqueta.
@@ -22,7 +23,9 @@ export function blockToLine(n: JSONContent): string | null {
     case 'prompt':
       return `[PROMPT] ${t}`
     case 'paragraph':
-      return t ? `[FALA] ${t}` : null
+      if (!t) return null
+      // prompts de trecho viram linhas logo depois da fala (a IA vê, mexe e devolve)
+      return [`[FALA] ${t}`, ...blockPrompts(n).map((p) => `[PROMPT NO TRECHO: "${p.excerpt}"] ${p.text}`)].join('\n')
     case 'transition':
       return `[TRANSIÇÃO: ${n.attrs?.kind ?? 'Corte seco'}] ${t}`
     case 'soundUp':
@@ -45,7 +48,13 @@ export function linesToBlocks(text: string): JSONContent[] {
     if (!line || /^```/.test(line)) continue
     let m: RegExpMatchArray | null
     if ((m = line.match(/^\[CAP[IÍ]TULO\]\s*(.*)$/i))) out.push({ type: 'chapter', content: txt(m[1]) })
-    else if ((m = line.match(/^\[PROMPT\]\s*(.*)$/i))) out.push({ type: 'prompt', content: txt(m[1]) })
+    else if ((m = line.match(/^\[PROMPT NO TRECHO:\s*"([^"]*)"\]\s*(.*)$/i))) {
+      // volta pro trecho da fala anterior; se a fala mudou e o trecho sumiu, vira bloco de prompt
+      const last = out[out.length - 1]
+      const marked = last?.type === 'paragraph' ? markExcerpt(last.content, m[1], { id: Math.random().toString(36).slice(2, 10), text: m[2].trim() }) : null
+      if (marked) last.content = marked
+      else out.push({ type: 'prompt', content: txt(`${m[2]} (sobre "${m[1]}")`) })
+    } else if ((m = line.match(/^\[PROMPT\]\s*(.*)$/i))) out.push({ type: 'prompt', content: txt(m[1]) })
     else if ((m = line.match(/^\[FALA\]\s*(.*)$/i))) out.push({ type: 'paragraph', content: txt(m[1]) })
     else if ((m = line.match(/^\[TRANSI[CÇ][AÃ]O(?::\s*([^\]]*))?\]\s*(.*)$/i)))
       out.push({ type: 'transition', attrs: { kind: (m[1] || 'Corte seco').trim() }, content: txt(m[2]) })

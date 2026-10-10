@@ -674,3 +674,7 @@
   font-weight: 600;
   opacity: 0.9;
 }
+.st-preview-actions {
+  display: flex;
+  gap: 2px;
+}

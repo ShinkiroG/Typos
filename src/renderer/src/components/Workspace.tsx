@@ -9,7 +9,9 @@ import type { JSONContent } from '@tiptap/core'
 import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput, Palette } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming, convertBracketLines } from '../editor/nodes'
 import { Timestamps, setTimestamps } from '../editor/timestamps'
+import { TimeGutter } from './TimeGutter'
 import { Reference, referenceAt, allReferences, referencesText, type RefRange } from '../editor/reference'
+import { PromptRange, promptAt, type PromptRangeInfo } from '../editor/promptMark'
 import { FilterBar } from './FilterBar'
 import { TrackGutter } from './TrackGutter'
 import { AiLineAssist } from './AiLineAssist'
@@ -119,10 +121,18 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   // elementos da área do texto (o ícone de IA se posiciona na página e segue o mouse no scroll)
   const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null)
   const [pageEl, setPageEl] = useState<HTMLDivElement | null>(null)
-  const [menu, setMenu] = useState<{ x: number; y: number; pos: number; sel?: { from: number; to: number }; ref?: RefRange | null } | null>(null)
+  const [menu, setMenu] = useState<{
+    x: number
+    y: number
+    pos: number
+    sel?: { from: number; to: number }
+    ref?: RefRange | null
+    prompt?: PromptRangeInfo | null
+  } | null>(null)
+  const [promptEdit, setPromptEdit] = useState<{ from: number; to: number; text: string; id?: string; excerpt: string } | null>(null)
   // referência bibliográfica sendo criada/editada, dica ao passar o mouse e a lista inteira
   const [refEdit, setRefEdit] = useState<{ from: number; to: number; text: string; id?: string; excerpt: string } | null>(null)
-  const [refTip, setRefTip] = useState<{ x: number; y: number; text: string } | null>(null)
+  const [refTip, setRefTip] = useState<{ x: number; y: number; text: string; prompt?: string } | null>(null)
   const [refsOpen, setRefsOpen] = useState(false)
   const [audioOpen, setAudioOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState<'keys' | 'about' | null>(null)
@@ -330,6 +340,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       ScriptKeys,
       Timestamps,
       Reference,
+      PromptRange,
       PlaybackHighlight,
       SpellCheck
     ],
@@ -469,7 +480,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   }, [historyStep])
 
   useEffect(() => {
-    if (timing) setTimestamps(editor, showTimes, timing.blockStarts)
+    if (timing) setTimestamps(editor, false, timing.blockStarts)
   }, [editor, showTimes, timing])
 
   useEffect(() => {
@@ -855,9 +866,10 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     const { from, to, empty } = editor.state.selection
     const sel = !empty && editor.state.doc.textBetween(from, to).trim() ? { from, to } : undefined
     const ref = at ? referenceAt(editor, at.inside >= 0 ? at.pos : at.pos) : null
-    if (!hit && !wrong && !sel && !ref) return setMenu(null)
+    const prompt = at ? promptAt(editor, at.pos) : null
+    if (!hit && !wrong && !sel && !ref && !prompt) return setMenu(null)
     e.preventDefault()
-    setMenu({ x: e.clientX, y: e.clientY, pos: hit ? hit.pos : -1, sel, ref })
+    setMenu({ x: e.clientX, y: e.clientY, pos: hit ? hit.pos : -1, sel, ref, prompt })
   }
 
   const menuNode = menu && menu.pos >= 0 ? editor?.state.doc.nodeAt(menu.pos) : null
@@ -1111,10 +1123,13 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         onDrop={onMarginDrop}
         onMouseOver={(e) => {
           // passar o mouse num trecho com referência mostra a fonte
-          const el = (e.target as HTMLElement).closest?.('.ref-mark') as HTMLElement | null
+          const el = (e.target as HTMLElement).closest?.('.ref-mark, .prompt-mark') as HTMLElement | null
           if (!el) return refTip && setRefTip(null)
           const r = el.getBoundingClientRect()
-          setRefTip({ x: Math.min(r.left, window.innerWidth - 380), y: r.bottom + 6, text: el.dataset.ref ?? '' })
+          // trecho com prompt e referência ao mesmo tempo: mostra os dois
+          const pr = (e.target as HTMLElement).closest?.('.prompt-mark') as HTMLElement | null
+          const rf = (e.target as HTMLElement).closest?.('.ref-mark') as HTMLElement | null
+          setRefTip({ x: Math.min(r.left, window.innerWidth - 380), y: r.bottom + 6, text: rf?.dataset.ref ?? '', prompt: pr?.dataset.prompt })
         }}
         onMouseLeave={() => setRefTip(null)}
         onScroll={() => refTip && setRefTip(null)}
@@ -1137,7 +1152,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             onRequestChanges={reviseDraft}
           />
         )}
-        <div className={'page aspect-' + (format?.aspect ?? '16:9').replace(':', 'x')} ref={setPageEl} style={review ? { display: 'none' } : undefined}>
+        <div className={'page aspect-' + (format?.aspect ?? '16:9').replace(':', 'x') + (showTimes ? ' with-times' : '')} ref={setPageEl} style={review ? { display: 'none' } : undefined}>
           <AiLineAssist
             editor={editor}
             dir={dir}
@@ -1148,6 +1163,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             pageEl={pageEl}
           />
           {showTrack && timing && <TrackGutter editor={editor} timing={timing} clips={clips} assets={assets} />}
+          {showTimes && timing && <TimeGutter editor={editor} timing={timing} />}
           {/* título do roteiro no topo da página (o mesmo do campo lá em cima) */}
           <input
             className="page-title"
@@ -1246,7 +1262,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         )}
       </footer>
 
-      {menu && (menuNode || spell || menu.sel || menu.ref) && (
+      {menu && (menuNode || spell || menu.sel || menu.ref || menu.prompt) && (
         <div
           className="ctx-menu"
           style={{ left: menu.x, top: menu.y }}
@@ -1263,7 +1279,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             e.stopPropagation()
           }}
         >
-          {(menu.sel || menu.ref) && (
+          {(menu.sel || menu.ref || menu.prompt) && (
             <>
               {menu.sel && (
                 <button
@@ -1274,6 +1290,68 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
                 >
                   {selIsBold ? <><b>N</b> Tirar negrito</> : <><b>N</b> Negritar</>} <kbd>Ctrl+B</kbd>
                 </button>
+              )}
+              {menu.sel && !menu.prompt && (
+                <button
+                  onClick={() => {
+                    setPromptEdit({ ...menu.sel!, text: '', excerpt: editor!.state.doc.textBetween(menu.sel!.from, menu.sel!.to, ' ') })
+                    setMenu(null)
+                  }}
+                >
+                  🎬 Criar prompt pra este trecho
+                </button>
+              )}
+              {menu.prompt && (
+                <>
+                  <div className="ctx-label ctx-prompt">🎬 {menu.prompt.text.length > 60 ? menu.prompt.text.slice(0, 60) + '…' : menu.prompt.text}</div>
+                  <button
+                    onClick={() => {
+                      const p = menu.prompt!
+                      setPromptEdit({ from: p.from, to: p.to, text: p.text, id: p.id, excerpt: editor!.state.doc.textBetween(p.from, p.to, ' ') })
+                      setMenu(null)
+                    }}
+                  >
+                    Editar prompt do trecho
+                  </button>
+                  <button
+                    onClick={() => {
+                      // vira um bloco de prompt logo antes da fala (o jeito antigo)
+                      const p = menu.prompt!
+                      const ed = editor!
+                      const $p = ed.state.doc.resolve(p.from)
+                      const before = $p.before(1)
+                      const excerpt = ed.state.doc.textBetween(p.from, p.to, ' ')
+                      ed.chain()
+                        .focus()
+                        .command(({ tr }) => {
+                          tr.removeMark(p.from, p.to, ed.schema.marks.promptRange)
+                          tr.insert(before, ed.schema.nodes.prompt.create({}, ed.schema.text(`${p.text} (sobre "${excerpt}")`)))
+                          return true
+                        })
+                        .run()
+                      setMenu(null)
+                    }}
+                  >
+                    Virar bloco de prompt
+                  </button>
+                  <button
+                    className="danger"
+                    onClick={() => {
+                      const p = menu.prompt!
+                      editor!
+                        .chain()
+                        .focus()
+                        .command(({ tr }) => {
+                          tr.removeMark(p.from, p.to, editor!.schema.marks.promptRange)
+                          return true
+                        })
+                        .run()
+                      setMenu(null)
+                    }}
+                  >
+                    Apagar prompt do trecho
+                  </button>
+                </>
               )}
               {menu.sel && !menu.ref && (
                 <button
@@ -1445,8 +1523,18 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       )}
       {refTip && (
         <div className="ref-tip" style={{ left: refTip.x, top: refTip.y }}>
-          <b>📚 Referência</b>
-          {refTip.text}
+          {refTip.prompt && (
+            <>
+              <b className="k-prompt">🎬 Prompt do trecho</b>
+              {refTip.prompt}
+            </>
+          )}
+          {refTip.text && (
+            <>
+              <b>📚 Referência</b>
+              {refTip.text}
+            </>
+          )}
         </div>
       )}
       {refEdit && (
@@ -1465,6 +1553,26 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
               })
               .run()
             setRefEdit(null)
+          }}
+        />
+      )}
+      {promptEdit && (
+        <RefModal
+          kind="prompt"
+          edit={promptEdit}
+          onCancel={() => setPromptEdit(null)}
+          onSave={(text) => {
+            const ed = editor!
+            const mark = ed.schema.marks.promptRange.create({ id: promptEdit.id ?? uid(), text: text.trim() })
+            ed.chain()
+              .focus()
+              .command(({ tr }) => {
+                tr.removeMark(promptEdit.from, promptEdit.to, ed.schema.marks.promptRange)
+                tr.addMark(promptEdit.from, promptEdit.to, mark)
+                return true
+              })
+              .run()
+            setPromptEdit(null)
           }}
         />
       )}

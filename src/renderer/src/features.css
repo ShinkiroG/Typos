@@ -2305,3 +2305,60 @@ body.resizing * {
   font-weight: 800;
   color: #fff;
 }
+
+/* ---------- tempos: coluna fixa à esquerda do texto ---------- */
+.time-gutter {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.time-gutter .ts-chip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translate(calc(-100% - 10px), -50%);
+  margin: 0;
+  border: 0;
+  pointer-events: auto;
+  min-width: 38px;
+  text-align: center;
+}
+/* trilha e prévias de margem andam pra esquerda pra dar lugar aos tempos */
+.page.with-times .track-gutter {
+  transform: translateX(-50px);
+}
+.page.with-times .blk .thumbs.margin {
+  transform: translateX(-50px);
+}
+@container (max-width: 1059.98px) {
+  .page.with-times {
+    padding-left: 54px;
+  }
+  .page.with-times:has(.thumbs.margin),
+  .editor-scroll.drag-file .page.with-times {
+    padding-left: 200px;
+  }
+}
+
+/* prompt preso a um trecho da fala */
+.prompt-mark {
+  background: color-mix(in srgb, var(--c-prompt) 14%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--c-prompt) 70%, transparent);
+  border-radius: 3px;
+  cursor: help;
+}
+.ctx-label.ctx-prompt {
+  color: var(--c-prompt);
+  max-width: 280px;
+  white-space: normal;
+}
+.ref-tip b.k-prompt {
+  color: var(--c-prompt);
+}
+.ref-excerpt.k-prompt {
+  border-left-color: var(--c-prompt);
+}

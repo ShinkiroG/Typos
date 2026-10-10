@@ -1,4 +1,5 @@
 import type { JSONContent } from '@tiptap/core'
+import { blockPrompts } from './editor/promptMark'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Api } from '../../preload'
 
@@ -446,7 +447,12 @@ export function toMarkdown(data: ProjectData, format: Format | undefined, stats:
         out.push('', `## ${chapter}. ${text} ${at}`, '')
         break
       case 'paragraph':
-        if (text) out.push(`${at} ${text}${n.attrs?.seconds ? ` (ritmo: ${n.attrs.seconds}s)` : ''}`, '')
+        if (text) {
+          out.push(`${at} ${text}${n.attrs?.seconds ? ` (ritmo: ${n.attrs.seconds}s)` : ''}`)
+          // prompts presos a trechos dessa fala
+          for (const p of blockPrompts(n)) out.push(`> [PROMPT em "${p.excerpt}"] ${p.text}`)
+          out.push('')
+        }
         break
       case 'prompt': {
         out.push(`${at} [PROMPT] ${text}`)
