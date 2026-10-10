@@ -66,6 +66,7 @@ const envAt = (s: Span, rel: number) => {
  */
 export class MontageEngine {
   private ctx: AudioContext | null = null
+  private master: DynamicsCompressorNode | null = null
   private loading = new Map<string, Promise<LoadedAudio | null>>()
   private ready = new Map<string, LoadedAudio>()
   private nodes: { src: AudioBufferSourceNode; gain: GainNode }[] = []
@@ -79,6 +80,15 @@ export class MontageEngine {
     if (!this.ctx) {
       this.ctx = new AudioContext()
       followOutput(this.ctx)
+      // limitador (estilo broadcast): segura os picos depois da normalização, sem mexer no resto
+      const lim = this.ctx.createDynamicsCompressor()
+      lim.threshold.value = -1.5
+      lim.knee.value = 0
+      lim.ratio.value = 20
+      lim.attack.value = 0.002
+      lim.release.value = 0.12
+      lim.connect(this.ctx.destination)
+      this.master = lim
     }
     return this.ctx
   }
@@ -154,7 +164,7 @@ export class MontageEngine {
         if (p <= rel0 || p > d) continue
         g.linearRampToValueAtTime(s.gain * envAt(s, p), when + (p - rel0))
       }
-      src.connect(gain).connect(ctx.destination)
+      src.connect(gain).connect(this.master ?? ctx.destination)
       src.start(when, srcFrom, len)
       this.nodes.push({ src, gain })
     }

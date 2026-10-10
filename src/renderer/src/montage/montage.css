@@ -681,3 +681,25 @@
   font: 12px var(--font-console);
   color: var(--text);
 }
+
+/* normalizar */
+.mt-loud {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 5px;
+  font-size: 11px;
+  color: var(--text);
+  max-width: 190px;
+}
+.mt-norm-msg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--c-prompt);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}

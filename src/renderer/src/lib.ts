@@ -554,6 +554,8 @@ export interface MontageData {
   clips: MontageClip[]
   /** duração padrão da Emenda (s) */
   spliceDefault?: number
+  /** alvo da normalização da narração (LUFS) */
+  loudTarget?: number
 }
 
 export const clipDur = (c: MontageClip) => c.out - c.in

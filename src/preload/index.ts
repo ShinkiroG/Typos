@@ -99,6 +99,7 @@ const api = {
   ): Promise<{ duration: number; hasVideo: boolean; hasAudio: boolean; width?: number; height?: number; fps?: number } | { error: string }> =>
     ipcRenderer.invoke('media:probe', path),
   proxyAudio: (path: string): Promise<string | { error: string }> => ipcRenderer.invoke('media:proxy', path),
+  loudness: (path: string, start: number, dur: number): Promise<{ i: number; tp: number } | null> => ipcRenderer.invoke('media:loudness', path, start, dur),
   mediaExists: (paths: string[]): Promise<boolean[]> => ipcRenderer.invoke('media:exists', paths),
   trashRecording: (path: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('media:trashRecording', path),
   showItem: (path: string) => ipcRenderer.invoke('shell:showItem', path),

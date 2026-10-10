@@ -24,7 +24,8 @@ import {
   FileCheck2,
   Circle,
   Square,
-  Settings2
+  Settings2,
+  Gauge
 } from 'lucide-react'
 import { api, clipDur, clipEndT, fileUrl, uid, type MontageBin, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
@@ -434,6 +435,57 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     change({ ...d, media: d.media.filter((m) => !gone.has(m.id)), clips: d.clips.filter((c) => !gone.has(c.media)) })
     for (const m of medias) await api.trashRecording(m.path)
   }
+
+  // ---------- normalizar a narração ----------
+  const loudTarget = data.loudTarget ?? -16
+  const [normMsg, setNormMsg] = useState('')
+  /**
+   * Mede o volume percebido (LUFS) de cada corte e acerta o volume dele pro alvo.
+   * Sem corte selecionado: todos os cortes da narração (pasta Narração / faixas de narração).
+   */
+  const normalize = async () => {
+    const d = dataRef.current
+    const narrBins = new Set(d.bins.filter((b) => b.role === 'narration').map((b) => b.id))
+    const sel = d.clips.filter((c) => selected.includes(c.id))
+    const targets = (sel.length ? sel : d.clips.filter((c) => narrBins.has(mediaRef.current.get(c.media)?.bin ?? '') || c.block !== undefined)).filter(
+      (c) => mediaRef.current.get(c.media)?.hasAudio
+    )
+    if (!targets.length) return setNormMsg('Nenhum corte de narração com áudio pra normalizar.')
+    engine.pause()
+    setPlaying(false)
+    const gains = new Map<string, number>()
+    let skipped = 0
+    let limited = 0
+    try {
+      for (const [i, c] of targets.entries()) {
+        setBusy({ label: `Medindo o volume (${i + 1}/${targets.length})`, pct: i / targets.length })
+        const m = mediaRef.current.get(c.media)!
+        const l = await api.loudness(m.path, c.in, c.out - c.in)
+        if (!l) {
+          skipped++
+          continue
+        }
+        const g = Math.max(-24, Math.min(24, loudTarget - l.i))
+        if (l.tp + g > -1) limited++
+        gains.set(c.id, Math.round(g * 10) / 10)
+      }
+    } finally {
+      setBusy(null)
+    }
+    if (!gains.size) return setNormMsg('Os cortes são curtos demais (ou mudos) pra medir.')
+    change({ ...dataRef.current, clips: dataRef.current.clips.map((c) => (gains.has(c.id) ? { ...c, gainDb: gains.get(c.id) } : c)) })
+    setNormMsg(
+      `${gains.size} corte(s) em ${loudTarget} LUFS` +
+        (limited ? ` · em ${limited} o limitador segura os picos` : '') +
+        (skipped ? ` · ${skipped} curto(s)/mudo(s) ficaram como estavam` : '') +
+        ' · Ctrl+Z desfaz'
+    )
+  }
+  useEffect(() => {
+    if (!normMsg) return
+    const t = setTimeout(() => setNormMsg(''), 7000)
+    return () => clearTimeout(t)
+  }, [normMsg])
 
   const recStart = useRef<number | null>(null)
   /** grava o microfone na faixa armada, a partir do playhead (a timeline toca junto) */
@@ -969,6 +1021,31 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           />
           ms
         </label>
+        <span className="mt-sep" />
+        <button
+          className="btn small"
+          disabled={!!busy}
+          title="Deixa a narração no volume ideal: mede cada corte (LUFS) e ajusta o volume dele. Com cortes selecionados, só neles."
+          onClick={normalize}
+        >
+          <Gauge size={13} /> Normalizar
+        </button>
+        <select
+          className="mt-loud"
+          value={loudTarget}
+          title="Alvo de volume percebido"
+          onChange={(e) => change({ ...data, loudTarget: Number(e.target.value) }, 'loud-target')}
+        >
+          <option value={-14}>−14 LUFS · YouTube (voz sozinha)</option>
+          <option value={-16}>−16 LUFS · narração com trilha</option>
+          <option value={-19}>−19 LUFS · mais baixo / podcast</option>
+        </select>
+        {normMsg && <span className="mt-norm-msg">{normMsg}</span>}
+        {busy && !normMsg && (
+          <span className="mt-norm-msg">
+            <Loader2 size={12} className="spin" /> {busy.label}
+          </span>
+        )}
         <span className="mt-sep" />
         <button className="icon-btn" title="Desfazer (Ctrl+Z)" onClick={undo}>
           <Undo2 size={15} />

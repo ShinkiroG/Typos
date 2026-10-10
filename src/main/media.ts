@@ -149,8 +149,26 @@ export function initMedia() {
 
   ipcMain.handle('media:probe', (_e, path: string) => probe(path))
   ipcMain.handle('media:proxy', (_e, path: string) => proxyAudio(path))
+  ipcMain.handle('media:loudness', (_e, path: string, start: number, dur: number) => loudness(path, start, dur))
   ipcMain.handle('media:exists', (_e, paths: string[]) => paths.map((p) => existsSync(p)))
 }
 
 export const isMediaFile = (p: string) => MEDIA_EXT.includes(extname(p).toLowerCase())
 export const nameOf = (p: string) => basename(p)
+
+/** volume percebido (LUFS integrado) e pico real (dBTP) de um trecho, pelo loudnorm do ffmpeg */
+export async function loudness(path: string, start: number, dur: number): Promise<{ i: number; tp: number } | null> {
+  const ff = await findFfmpeg()
+  if (!ff || dur < 0.4) return null
+  const r = await run(ff.ffmpeg, ['-hide_banner', '-nostats', '-ss', String(Math.max(0, start)), '-t', String(dur), '-i', path, '-vn', '-af', 'loudnorm=print_format=json', '-f', 'null', '-'], { timeoutMs: 120000 })
+  const m = r.err.match(/\{[^{}]*"input_i"[^{}]*\}/)
+  if (!m) return null
+  try {
+    const j = JSON.parse(m[0])
+    const i = Number(j.input_i)
+    const tp = Number(j.input_tp)
+    return Number.isFinite(i) && i > -70 ? { i, tp: Number.isFinite(tp) ? tp : 0 } : null
+  } catch {
+    return null
+  }
+}
