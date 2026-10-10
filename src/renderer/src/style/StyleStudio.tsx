@@ -480,6 +480,26 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
         </section>
 
         <section className="st-sec">
+          <h4>Tipografia</h4>
+          <div className="st-grid3">
+            <FontPicker label="Título" fonts={fonts} value={m.fonts?.title} onChange={(v) => patchM({ fonts: { ...m.fonts, title: v } })} />
+            <FontPicker label="Texto" fonts={fonts} value={m.fonts?.body} onChange={(v) => patchM({ fonts: { ...m.fonts, body: v } })} />
+            <FontPicker label="Destaque" fonts={fonts} value={m.fonts?.accent} onChange={(v) => patchM({ fonts: { ...m.fonts, accent: v } })} />
+          </div>
+          <input className="st-sample-input" value={sample} onChange={(e) => setSample(e.target.value)} placeholder="Texto de exemplo" />
+          <div className="st-type-preview" style={{ background: m.colors?.[0] ?? '#0b0d12' }}>
+            <div style={{ fontFamily: m.fonts?.title ? `"${m.fonts.title}"` : undefined, color: m.colors?.[1] ?? '#fff' }} className="tp-title">
+              {sample}
+            </div>
+            <div style={{ fontFamily: m.fonts?.body ? `"${m.fonts.body}"` : undefined, color: m.colors?.[2] ?? m.colors?.[1] ?? '#d6dae3' }} className="tp-body">
+              Mais da metade dos jogos lançados na Steam não passa de mil avaliações.
+            </div>
+            <div style={{ fontFamily: m.fonts?.accent ? `"${m.fonts.accent}"` : undefined, color: m.colors?.[3] ?? '#ffd34d' }} className="tp-accent">
+              73% · 2025
+            </div>
+          </div>
+        </section>
+        <section className="st-sec">
           <h4>Visual</h4>
           <div className="st-row">
             <span className="st-lbl">Fundo</span>
@@ -548,26 +568,6 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
           </div>
         </section>
 
-        <section className="st-sec">
-          <h4>Tipografia</h4>
-          <div className="st-grid3">
-            <FontPicker label="Título" fonts={fonts} value={m.fonts?.title} onChange={(v) => patchM({ fonts: { ...m.fonts, title: v } })} />
-            <FontPicker label="Texto" fonts={fonts} value={m.fonts?.body} onChange={(v) => patchM({ fonts: { ...m.fonts, body: v } })} />
-            <FontPicker label="Destaque" fonts={fonts} value={m.fonts?.accent} onChange={(v) => patchM({ fonts: { ...m.fonts, accent: v } })} />
-          </div>
-          <input className="st-sample-input" value={sample} onChange={(e) => setSample(e.target.value)} placeholder="Texto de exemplo" />
-          <div className="st-type-preview" style={{ background: m.colors?.[0] ?? '#0b0d12' }}>
-            <div style={{ fontFamily: m.fonts?.title ? `"${m.fonts.title}"` : undefined, color: m.colors?.[1] ?? '#fff' }} className="tp-title">
-              {sample}
-            </div>
-            <div style={{ fontFamily: m.fonts?.body ? `"${m.fonts.body}"` : undefined, color: m.colors?.[2] ?? m.colors?.[1] ?? '#d6dae3' }} className="tp-body">
-              Mais da metade dos jogos lançados na Steam não passa de mil avaliações.
-            </div>
-            <div style={{ fontFamily: m.fonts?.accent ? `"${m.fonts.accent}"` : undefined, color: m.colors?.[3] ?? '#ffd34d' }} className="tp-accent">
-              73% · 2025
-            </div>
-          </div>
-        </section>
       </main>
 
       {/* ---------- treinar + prévia ---------- */}
