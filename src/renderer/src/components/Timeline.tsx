@@ -46,6 +46,8 @@ interface Props {
   onTracksChange: (t: Track[]) => void
   assets: TimelineAsset[]
   onAssetsChange: (a: TimelineAsset[]) => void
+  /** narração montada na Montagem: só toca junto (não aparece nem se edita aqui) */
+  voice?: Clip[]
 }
 
 const ASSET_MIME = 'application/x-typos-asset'
@@ -108,7 +110,8 @@ export function Timeline({
   tracks,
   onTracksChange,
   assets,
-  onAssetsChange
+  onAssetsChange,
+  voice
 }: Props) {
   const engine = useMemo(() => new AudioEngine(), [])
   const [pps, setPps] = useState(() => Number(localStorage.getItem('typos.pps')) || 40)
@@ -144,6 +147,9 @@ export function Timeline({
   const drag = useRef<Drag | null>(null)
   const clipsRef = useRef(clips)
   clipsRef.current = clips
+  // o que toca = clipes daqui + narração da Montagem
+  const playRef = useRef<Clip[]>([])
+  playRef.current = voice?.length ? [...clips, ...voice] : clips
   const timingRef = useRef(timing)
   timingRef.current = timing
   const ppsRef = useRef(pps)
@@ -173,8 +179,8 @@ export function Timeline({
 
   // mexeu nos clipes durante o play → reagenda
   useEffect(() => {
-    engine.restart(clips)
-  }, [clips, engine])
+    engine.restart(playRef.current)
+  }, [clips, voice, engine])
 
   const contentEnd = Math.max(timing.total, ...clips.map(clipEnd), 10)
   const width = (contentEnd + 15) * pps
@@ -339,7 +345,7 @@ export function Timeline({
 
   const seek = useCallback(
     (t: number, showWord = true) => {
-      engine.seek(Math.max(0, t), clipsRef.current)
+      engine.seek(Math.max(0, t), playRef.current)
       paint(engine.position(), showWord, false)
     },
     [engine, paint]
@@ -350,8 +356,8 @@ export function Timeline({
       engine.pause()
       setPlaying(false)
     } else {
-      await Promise.all(clipsRef.current.filter((c) => c.path).map((c) => engine.load(c).catch(() => null)))
-      await engine.play(clipsRef.current)
+      await Promise.all(playRef.current.filter((c) => c.path).map((c) => engine.load(c).catch(() => null)))
+      await engine.play(playRef.current)
       setPlaying(true)
     }
   }, [engine])
@@ -369,7 +375,7 @@ export function Timeline({
       if (i < 0) return
       const t = words[i].from <= from ? words[i].start : (words[i - 1]?.end ?? 0)
       setTimeout(() => {
-        engine.seek(t, clipsRef.current)
+        engine.seek(t, playRef.current)
         paint(t, false, false)
       }, 0)
     }

@@ -4,6 +4,7 @@ import { undoDepth } from '@tiptap/pm/history'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
+import type { Node as PMNode } from '@tiptap/pm/model'
 import type { JSONContent } from '@tiptap/core'
 import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming, convertBracketLines } from '../editor/nodes'
@@ -117,6 +118,52 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [notes, setNotes] = useState(data.notes ?? '')
   const [montage, setMontage] = useState<MontageData>(() => data.montage ?? defaultMontage())
   const [montageVisited, setMontageVisited] = useState(false)
+  // áudio da Montagem tocando junto na timeline do roteiro (pelas prévias do ffmpeg)
+  const [voice, setVoice] = useState<Clip[]>([])
+  useEffect(() => {
+    let alive = true
+    const muted = new Set(montage.tracks.filter((t) => t.muted).map((t) => t.id))
+    const used = montage.clips.filter((c) => !muted.has(c.track))
+    const media = new Map(montage.media.map((m) => [m.id, m]))
+    ;(async () => {
+      const proxies = new Map<string, string>()
+      for (const id of new Set(used.map((c) => c.media))) {
+        const m = media.get(id)
+        if (!m?.hasAudio) continue
+        const p = await api.proxyAudio(m.path)
+        if (typeof p === 'string') proxies.set(id, p)
+      }
+      if (!alive) return
+      setVoice(
+        used
+          .filter((c) => proxies.has(c.media))
+          .map((c) => {
+            const fi = c.fadeIn ?? 0
+            const fo = c.fadeOut ?? 0
+            const keys = [
+              ...(fi ? [{ t: c.in, v: 0 }, { t: c.in + fi, v: 1 }] : []),
+              ...(fo ? [{ t: c.out - fo, v: 1 }, { t: c.out, v: 0 }] : [])
+            ]
+            return {
+              id: 'voice-' + c.id,
+              path: proxies.get(c.media)!,
+              name: media.get(c.media)?.name ?? '',
+              kind: 'music' as const,
+              lane: -1,
+              start: c.start,
+              offset: c.in,
+              duration: c.out - c.in,
+              sourceDuration: media.get(c.media)?.duration ?? c.out,
+              gain: Math.pow(10, (c.gainDb ?? 0) / 20),
+              keys
+            }
+          })
+      )
+    })()
+    return () => {
+      alive = false
+    }
+  }, [montage.clips, montage.media, montage.tracks])
   // revisão lado a lado (rascunho da IA × roteiro atual)
   const [review, setReview] = useState<{ original: JSONContent[]; draft: JSONContent[]; request: string; provider?: string; busy: boolean } | null>(null)
   // larguras dos painéis (arrastando a borda)
@@ -514,6 +561,47 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     api.importPaths(dirRef.current, paths).then((atts: Attachment[]) => attachTo(target, atts.map((a) => ({ ...a, place: 'margin' as const }))))
   }
 
+  /**
+   * Montagem → roteiro: cada Fala ganha o tempo real dos cortes dela e as pausas entre as falas
+   * ganham o espaço que ficou na timeline. Dá pra desfazer no roteiro (Ctrl+Z).
+   */
+  const syncFromMontage = (m: MontageData) => {
+    const ed = editorRef.current
+    if (!ed) return 0
+    const muted = new Set(m.tracks.filter((t) => t.muted).map((t) => t.id))
+    const span = new Map<number, { s: number; e: number }>()
+    for (const c of m.clips) {
+      if (c.block === undefined || muted.has(c.track)) continue
+      const e = c.start + c.out - c.in
+      const cur = span.get(c.block)
+      span.set(c.block, cur ? { s: Math.min(cur.s, c.start), e: Math.max(cur.e, e) } : { s: c.start, e })
+    }
+    const nodes: { node: PMNode; pos: number; i: number }[] = []
+    ed.state.doc.forEach((node, pos, i) => nodes.push({ node, pos, i }))
+    const withTime = nodes.filter((n) => n.node.type.name === 'paragraph' && span.has(n.i))
+    if (!withTime.length) return 0
+    const tr = ed.state.tr
+    const r3 = (x: number) => Math.round(x * 1000) / 1000
+    withTime.forEach((cur, k) => {
+      const a = span.get(cur.i)!
+      let dur = a.e - a.s
+      const next = withTime[k + 1]
+      if (next) {
+        const gap = span.get(next.i)!.s - a.e
+        const pauses = nodes.filter((n) => n.i > cur.i && n.i < next.i && (n.node.type.name === 'sonora' || n.node.type.name === 'soundUp'))
+        if (pauses.length && gap > 0) {
+          // o espaço vai pras pausas que já existem, na proporção de antes
+          const old = pauses.reduce((s, p) => s + (Number(p.node.attrs.seconds) || 1), 0)
+          for (const p of pauses) tr.setNodeMarkup(p.pos, undefined, { ...p.node.attrs, seconds: r3((gap * (Number(p.node.attrs.seconds) || 1)) / old) })
+        } else if (gap > 0) dur += gap
+      }
+      tr.setNodeMarkup(cur.pos, undefined, { ...cur.node.attrs, seconds: r3(dur) })
+    })
+    ed.view.dispatch(tr)
+    setToast(`Roteiro sincronizado: ${withTime.length} falas com o tempo da narração.`)
+    return withTime.length
+  }
+
   const snapshot = useCallback(() => {
     const ed = editorRef.current
     if (!ed || ed.isDestroyed) return null
@@ -839,6 +927,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             active={mode === 'montage'}
             data={montage}
             onChange={setMontage}
+            onSyncScript={syncFromMontage}
             lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
             getBlocks={() => {
               const out: { index: number; type: string; text: string; seconds?: number }[] = []
@@ -963,6 +1052,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             onTracksChange={changeTracks}
             assets={assets}
             onAssetsChange={changeAssets}
+            voice={voice}
             wpm={wpm}
             formatWpm={format?.wpm ?? 150}
             customWpm={customWpm !== null}

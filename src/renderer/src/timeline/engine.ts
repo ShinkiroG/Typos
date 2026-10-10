@@ -34,7 +34,8 @@ export class AudioEngine {
     let p = this.cache.get(c.path)
     if (!p) {
       p = (async () => {
-        const res = await fetch(fileUrl(absPath({ id: '', name: '', path: c.path })))
+        const abs = /^[a-zA-Z]:[\/]/.test(c.path) ? c.path : absPath({ id: '', name: '', path: c.path })
+        const res = await fetch(fileUrl(abs))
         if (!res.ok) throw new Error(`Não achei o áudio ${c.path}`)
         const buffer = await this.context().decodeAudioData(await res.arrayBuffer())
         const loaded = { buffer, peaks: computePeaks(buffer) }

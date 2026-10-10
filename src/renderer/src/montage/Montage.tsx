@@ -20,7 +20,8 @@ import {
   Undo2,
   Redo2,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  FileCheck2
 } from 'lucide-react'
 import { api, clipDur, clipEndT, fileUrl, uid, type MontageBin, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
@@ -45,11 +46,13 @@ interface Props {
   lang: string
   /** blocos do roteiro, na ordem (pro corte automático achar cada frase) */
   getBlocks: () => ScriptBlock[]
+  /** grava os tempos da narração nos blocos do roteiro; devolve quantas falas mudaram */
+  onSyncScript: (d: MontageData) => number
 }
 
 type WStatus = Awaited<ReturnType<typeof api.whisperStatus>>
 
-export function Montage({ active, data, onChange, lang, getBlocks }: Props) {
+export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript }: Props) {
   const engine = useMemo(() => new MontageEngine(), [])
   const [wavesVersion, setWavesVersion] = useState(0)
   const [selected, setSelected] = useState<string[]>([])
@@ -698,6 +701,17 @@ export function Montage({ active, data, onChange, lang, getBlocks }: Props) {
           <Redo2 size={15} />
         </button>
         <span className="mt-grow" />
+        <button
+          className="btn small primary"
+          disabled={!data.clips.some((c) => c.block !== undefined)}
+          title="Grava o tempo real de cada fala (e das pausas) no roteiro. A timeline do roteiro passa a tocar esta narração."
+          onClick={() => {
+            const n = onSyncScript(dataRef.current)
+            if (!n) alert('Nenhum corte está ligado a uma fala do roteiro. Use o Corte automático primeiro.')
+          }}
+        >
+          <FileCheck2 size={13} /> Atualizar roteiro
+        </button>
         <button className="icon-btn" title="Menos zoom (-)" onClick={() => setPps((p) => Math.max(2, p / 1.4))}>
           <ZoomOut size={15} />
         </button>
