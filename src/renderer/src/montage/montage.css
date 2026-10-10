@@ -630,3 +630,54 @@
   width: 100%;
   box-sizing: border-box;
 }
+
+/* teleprompter: o texto começa na linha-guia (35% da altura) e desce sozinho */
+.mt-screen {
+  container-type: size;
+}
+.mt-prompter {
+  padding: 35cqh 12% 70cqh;
+  scroll-behavior: auto;
+}
+.mt-prompter-guide {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 35cqh;
+  height: 1.6em;
+  margin-top: -0.2em;
+  z-index: 4;
+  pointer-events: none;
+  font-size: 30px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.mt-prompter-hud {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  z-index: 4;
+  font: 11px var(--font-ui);
+  color: var(--muted);
+  background: #000a;
+  padding: 3px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+}
+.mt-prompter-speed {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mt-prompter-speed input {
+  width: 54px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 5px;
+  font: 12px var(--font-console);
+  color: var(--text);
+}

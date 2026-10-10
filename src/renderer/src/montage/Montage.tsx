@@ -125,6 +125,25 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
   const meterRef = useRef<HTMLDivElement>(null)
   const [prompter, setPrompter] = useState(() => localStorage.getItem('typos.prompter') !== '0')
   const prompterRef = useRef<HTMLDivElement>(null)
+  // velocidade própria do teleprompter (palavras/min); começa no ppm do formato
+  const [prompterWpm, setPrompterWpmState] = useState(() => Number(localStorage.getItem('typos.prompterWpm')) || wpm)
+  const prompterWpmRef = useRef(prompterWpm)
+  prompterWpmRef.current = prompterWpm
+  const setPrompterWpm = (v: number) => {
+    const n = Math.max(40, Math.min(400, Math.round(v)))
+    setPrompterWpmState(n)
+    try {
+      localStorage.setItem('typos.prompterWpm', String(n))
+    } catch {
+      /* sem storage */
+    }
+  }
+  /** ensaio: o teleprompter rola sem gravar */
+  const [rehearse, setRehearse] = useState(false)
+  const rehearseRef = useRef(false)
+  rehearseRef.current = rehearse
+  const scrollAcc = useRef(0)
+  const lastFrame = useRef(0)
 
   const [wstatus, setWstatus] = useState<WStatus | null>(null)
   const [busy, setBusy] = useState<{ label: string; pct: number | null } | null>(null)
@@ -293,12 +312,15 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
       }
       if (r && recClipRef.current) recClipRef.current.style.width = `${Math.max(2, (t - (recStart.current ?? t)) * pps)}px`
       const pr = prompterRef.current
-      if (r && pr && engine.playing) {
-        // rola no ritmo do roteiro (ppm do formato); a roda do mouse ajusta
-        const words = pr.textContent?.split(/\s+/).length ?? 1
-        const total = (words / Math.max(60, wpm)) * 60
-        const speed = (pr.scrollHeight - pr.clientHeight) / Math.max(10, total)
-        pr.scrollTop += speed / 60
+      const now = performance.now()
+      const dt = Math.min(0.1, (now - (lastFrame.current || now)) / 1000)
+      lastFrame.current = now
+      if (pr && (r || rehearseRef.current)) {
+        // desce sozinho na velocidade escolhida: pixels por palavra × palavras por segundo
+        const words = Math.max(1, (pr.textContent ?? '').split(/\s+/).filter(Boolean).length)
+        const text = Math.max(1, pr.scrollHeight - pr.clientHeight * 0.9)
+        scrollAcc.current += (text / words) * (prompterWpmRef.current / 60) * dt
+        pr.scrollTop = scrollAcc.current
       }
       const sc = scrollRef.current
       if (engine.playing && sc) {
@@ -434,6 +456,8 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     r.start()
     setRec({ track, start: t0 })
     if (prompterRef.current) prompterRef.current.scrollTop = 0
+    scrollAcc.current = 0
+    setRehearse(false)
     await engine.play(dataRef.current, dur)
     setPlaying(true)
   }
@@ -539,8 +563,10 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
         e.stopPropagation()
         fn()
       }
-      if (k === ' ') run(recRef.current ? stopRec : toggle)
+      if (k === ' ') run(recRef.current ? stopRec : rehearseRef.current ? () => setRehearse(false) : toggle)
       else if (k === 'r') run(startRec)
+      else if ((k === 'arrowup' || k === 'arrowdown') && (recRef.current || rehearseRef.current))
+        run(() => setPrompterWpm(prompterWpmRef.current + (k === 'arrowup' ? 10 : -10)))
       else if (k === 'v') run(() => setTool('select'))
       else if (k === 'c') run(() => setTool((t) => (t === 'blade' ? 'select' : 'blade')))
       else if (k === 's') run(splitAtPlayhead)
@@ -798,12 +824,23 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
               <img ref={imgRef} alt="" style={{ visibility: 'hidden' }} />
             </>
           )}
-          {!source && prompter && rec && (
-            <div className="mt-prompter" ref={prompterRef}>
-              {getBlocks()
-                .filter((b) => (b.type === 'paragraph' || b.type === 'chapter') && b.text.trim())
-                .map((b) => (b.type === 'chapter' ? <h4 key={b.index}>{b.text}</h4> : <p key={b.index}>{b.text}</p>))}
-            </div>
+          {!source && prompter && (rec || rehearse) && (
+            <>
+              <div
+                className="mt-prompter"
+                ref={prompterRef}
+                // a roda do mouse adianta/volta; a rolagem automática continua dali
+                onWheel={() => requestAnimationFrame(() => (scrollAcc.current = prompterRef.current?.scrollTop ?? scrollAcc.current))}
+              >
+                {getBlocks()
+                  .filter((b) => (b.type === 'paragraph' || b.type === 'chapter') && b.text.trim())
+                  .map((b) => (b.type === 'chapter' ? <h4 key={b.index}>{b.text}</h4> : <p key={b.index}>{b.text}</p>))}
+              </div>
+              <div className="mt-prompter-guide" />
+              <div className="mt-prompter-hud">
+                {prompterWpm} ppm · ↑/↓ muda · roda do mouse adianta/volta{rehearse ? ' · Espaço para' : ''}
+              </div>
+            </>
           )}
           {source && (
             <button className="btn small mt-source-back" onClick={() => setSource(null)}>
@@ -851,6 +888,27 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
             />
             Teleprompter
           </label>
+          {prompter && (
+            <>
+              <label className="mt-prompter-speed" title="Velocidade de leitura do teleprompter (palavras por minuto). Enquanto rola: ↑/↓">
+                <input type="number" min={40} max={400} step={5} value={prompterWpm} onChange={(e) => setPrompterWpm(Number(e.target.value) || wpm)} />
+                ppm
+              </label>
+              <button
+                className={'btn small' + (rehearse ? ' primary' : '')}
+                disabled={!!rec}
+                title="Rola o teleprompter sem gravar, pra achar a velocidade"
+                onClick={() => {
+                  scrollAcc.current = 0
+                  if (prompterRef.current) prompterRef.current.scrollTop = 0
+                  setSource(null)
+                  setRehearse((v) => !v)
+                }}
+              >
+                {rehearse ? 'Parar ensaio' : 'Ensaiar'}
+              </button>
+            </>
+          )}
           <button className="icon-btn" title="Áudio: microfone, saída e níveis" onClick={onAudioSettings}>
             <Settings2 size={15} />
           </button>
