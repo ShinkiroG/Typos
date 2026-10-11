@@ -1,7 +1,7 @@
 {
   "name": "typos",
   "productName": "Typos",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "description": "Editor de roteiros para YouTube",
   "main": "out/main/index.js",
@@ -65,7 +65,7 @@
       "package.json"
     ],
     "win": {
-      "icon": "build/icon.png",
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
