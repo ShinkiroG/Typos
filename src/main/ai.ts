@@ -33,24 +33,67 @@ const DEFAULT_MODELS = {
 }
 
 // ---------- Claude Code: achar o executável ----------
-function run(file: string, args: string[], opts: { cwd?: string; input?: string; timeoutMs?: number } = {}) {
-  return new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
+interface RunOpts {
+  cwd?: string
+  input?: string
+  /** limite total */
+  timeoutMs?: number
+  /** limite sem nenhuma saída nova (só com stream-json, que fala o tempo todo) */
+  idleMs?: number
+  onLine?: (line: string) => void
+}
+
+/** mata o processo e os filhos (no Windows o p.kill() deixa o node do claude.cmd vivo) */
+function killTree(pid?: number) {
+  if (!pid) return
+  if (process.platform === 'win32') execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {})
+  else
+    try {
+      process.kill(pid)
+    } catch {
+      /* já saiu */
+    }
+}
+
+function run(file: string, args: string[], opts: RunOpts = {}) {
+  return new Promise<{ code: number | null; out: string; err: string; timedOut?: 'idle' | 'total' }>((resolve) => {
     const p = spawn(file, args, { cwd: opts.cwd, windowsHide: true, env: process.env })
     let out = ''
     let err = ''
-    const timer = setTimeout(() => {
-      p.kill()
-      err += '\n(tempo esgotado)'
-    }, opts.timeoutMs ?? 120000)
-    p.stdout.on('data', (d) => (out += d))
+    let partial = ''
+    let timedOut: 'idle' | 'total' | undefined
+    const stop = (why: 'idle' | 'total') => {
+      if (timedOut) return
+      timedOut = why
+      killTree(p.pid)
+    }
+    const total = setTimeout(() => stop('total'), opts.timeoutMs ?? 120000)
+    let idle: NodeJS.Timeout | undefined
+    const bump = () => {
+      if (!opts.idleMs) return
+      clearTimeout(idle)
+      idle = setTimeout(() => stop('idle'), opts.idleMs)
+    }
+    bump()
+    const clear = () => (clearTimeout(total), clearTimeout(idle))
+    p.stdout.on('data', (d) => {
+      out += d
+      bump()
+      if (!opts.onLine) return
+      partial += d
+      const lines = partial.split(/\r?\n/)
+      partial = lines.pop() ?? ''
+      for (const l of lines) if (l.trim()) opts.onLine(l)
+    })
     p.stderr.on('data', (d) => (err += d))
     p.on('error', (e) => {
-      clearTimeout(timer)
-      resolve({ code: -1, out, err: String(e) })
+      clear()
+      resolve({ code: -1, out, err: String(e), timedOut })
     })
     p.on('close', (code) => {
-      clearTimeout(timer)
-      resolve({ code, out, err })
+      clear()
+      if (opts.onLine && partial.trim()) opts.onLine(partial)
+      resolve({ code, out, err, timedOut })
     })
     if (opts.input !== undefined) p.stdin.end(opts.input)
     else p.stdin.end()
@@ -83,21 +126,66 @@ interface TextJob {
   dir?: string
 }
 
-async function textClaudeCode(s: AiSettings, job: TextJob) {
+export type AiProgress = { stage: 'start' | 'thinking' | 'searching' | 'writing'; chars: number; seconds: number }
+
+/** limite total do Claude Code em minutos (Configurações → IA); padrão 20 */
+const ccMaxMs = (s: AiSettings) => Math.min(Math.max(Number(s.claudeCodeMaxMin) || 20, 1), 120) * 60000
+/** sem nenhum sinal de vida por esse tempo = travou */
+const CC_IDLE_MS = 4 * 60000
+
+async function textClaudeCode(s: AiSettings, job: TextJob, onProgress?: (p: AiProgress) => void) {
   const cc = await findClaudeCode(s)
   if (!cc) throw new Error('Claude Code não encontrado neste PC. Instale e faça login (Configurações → IA).')
   const prompt = `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}`
   // prompt vai pela entrada padrão (sem limite de tamanho da linha de comando do Windows)
   // no modo -p só roda ferramenta liberada aqui: busca na web sim, mexer em arquivo não
-  const r = await run(cc.path, ['-p', '--output-format', 'json', '--allowedTools', 'WebSearch,WebFetch'], { cwd: job.dir, input: prompt, timeoutMs: 180000 })
-  let parsed: any = null
-  try {
-    parsed = JSON.parse(r.out)
-  } catch {
-    /* saída não-JSON: erro abaixo */
+  // stream-json: o Claude Code avisa cada pedaço que escreve, então dá pra mostrar progresso
+  // e só desistir quando ele para de dar sinal de vida (pedido sobre o roteiro todo demora)
+  const t0 = Date.now()
+  let chars = 0
+  let last = 0
+  let result: any = null
+  const tell = (stage: AiProgress['stage'], force = false) => {
+    if (!onProgress || (!force && Date.now() - last < 400)) return
+    last = Date.now()
+    onProgress({ stage, chars, seconds: Math.round((Date.now() - t0) / 1000) })
   }
-  if (parsed && !parsed.is_error && typeof parsed.result === 'string') return parsed.result.trim()
-  const why = (parsed?.result || r.err || r.out || '').toString().trim()
+  tell('start', true)
+  const maxMs = ccMaxMs(s)
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--allowedTools', 'WebSearch,WebFetch']
+  const r = await run(cc.path, args, {
+    cwd: job.dir,
+    input: prompt,
+    timeoutMs: maxMs,
+    idleMs: CC_IDLE_MS,
+    onLine: (line) => {
+      let ev: any
+      try {
+        ev = JSON.parse(line)
+      } catch {
+        return
+      }
+      if (ev.type === 'result') result = ev
+      else if (ev.type === 'stream_event') {
+        const e = ev.event
+        if (e?.type === 'content_block_start' && e.content_block?.type === 'tool_use') tell('searching', true)
+        else if (e?.delta?.type === 'text_delta') {
+          chars += e.delta.text?.length ?? 0
+          tell('writing')
+        } else if (e?.delta?.type === 'thinking_delta') tell('thinking')
+      }
+    }
+  })
+  if (result && !result.is_error && typeof result.result === 'string') return result.result.trim()
+  if (r.timedOut) {
+    const min = Math.round((Date.now() - t0) / 60000)
+    throw new Error(
+      r.timedOut === 'idle'
+        ? `O Claude Code ficou ${CC_IDLE_MS / 60000} min sem dar sinal de vida e foi interrompido (${chars ? `tinha escrito ${chars} caracteres` : 'não chegou a escrever nada'}). Tente de novo; se repetir, rode "claude" num terminal pra ver se ele pede login ou atualização.`
+        : `O Claude Code passou do limite de ${maxMs / 60000} min (${min} min, ${chars} caracteres escritos) e foi interrompido. Peça uma parte do roteiro por vez ou aumente o limite em Configurações → IA.`
+    )
+  }
+  const why = (result?.result || r.err || r.out.slice(-300) || '').toString().trim()
   if (/log ?in|auth|credential|\/login/i.test(why)) throw new Error('O Claude Code não está logado. Abra um terminal, rode "claude" e faça o login.')
   throw new Error(`Claude Code: ${why.slice(0, 300) || 'falhou sem mensagem'}`)
 }
@@ -189,7 +277,8 @@ async function status() {
       anthropicModel: s.anthropicModel || DEFAULT_MODELS.anthropic,
       openaiTextModel: s.openaiTextModel || DEFAULT_MODELS.openaiText,
       openaiImageModel: s.openaiImageModel || DEFAULT_MODELS.openaiImage,
-      claudeCodePath: s.claudeCodePath ?? ''
+      claudeCodePath: s.claudeCodePath ?? '',
+      claudeCodeMaxMin: String(ccMaxMs(s) / 60000)
     }
   }
 }
@@ -234,7 +323,7 @@ export function initAi() {
     const next: AiSettings = { ...cur }
     for (const k of ['anthropicKey', 'openaiKey'] as const)
       if (typeof patch[k] === 'string') next[k] = patch[k]!.trim() || undefined
-    for (const k of ['anthropicModel', 'openaiTextModel', 'openaiImageModel', 'claudeCodePath'] as const)
+    for (const k of ['anthropicModel', 'openaiTextModel', 'openaiImageModel', 'claudeCodePath', 'claudeCodeMaxMin'] as const)
       if (typeof patch[k] === 'string') next[k] = patch[k]!.trim() || undefined
     if (patch.routeText !== undefined) next.routeText = patch.routeText || undefined
     if (patch.routeImage !== undefined) next.routeImage = patch.routeImage || undefined
@@ -243,12 +332,13 @@ export function initAi() {
 
   ipcMain.handle('ai:test', (_e, id: ProviderId) => test(id))
 
-  ipcMain.handle('ai:text', async (_e, job: TextJob) => {
+  ipcMain.handle('ai:text', async (e, job: TextJob) => {
     try {
       const provider = await routeFor('text')
       const s = (await loadSettings()).ai ?? {}
+      const progress = (p: AiProgress) => !e.sender.isDestroyed() && e.sender.send('ai:progress', p)
       const text =
-        provider === 'claude-code' ? await textClaudeCode(s, job) : provider === 'anthropic' ? await textAnthropic(s, job) : await textOpenAI(s, job)
+        provider === 'claude-code' ? await textClaudeCode(s, job, progress) : provider === 'anthropic' ? await textAnthropic(s, job) : await textOpenAI(s, job)
       return { text, provider }
     } catch (e: any) {
       return { error: String(e?.message ?? e) }

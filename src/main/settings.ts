@@ -11,6 +11,8 @@ export interface AiSettings {
   openaiImageModel?: string
   /** caminho manual do claude.exe, se não for achado sozinho */
   claudeCodePath?: string
+  /** limite de tempo do Claude Code por pedido, em minutos (texto, ex.: "20") */
+  claudeCodeMaxMin?: string
   routeText?: 'claude-code' | 'anthropic' | 'openai'
   routeImage?: 'claude-code' | 'anthropic' | 'openai'
 }
