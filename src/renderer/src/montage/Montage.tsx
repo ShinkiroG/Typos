@@ -612,9 +612,10 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
   useEffect(() => {
     if (!active) return
     const onKey = (e: KeyboardEvent) => {
-      // campos da Montagem usam o teclado deles; o resto (até o texto escondido do roteiro) é nosso
+      // qualquer campo de texto ou janelinha (nome de pasta, configurações…) usa o teclado dele;
+      // o resto (até o texto escondido do roteiro) é nosso
       const el = e.target as HTMLElement
-      if (el.closest?.('.montage') && el.closest('input, textarea, select')) return
+      if (el.closest?.('input, textarea, select, [role="dialog"], .ask-modal, .modal, .modal-backdrop')) return
       const k = e.key.toLowerCase()
       if ((e.ctrlKey || e.metaKey) && k === 'z') {
         e.preventDefault()
