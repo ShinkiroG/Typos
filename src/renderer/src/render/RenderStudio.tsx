@@ -257,7 +257,7 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     if (format) out.push(`- Formato: ${format.name} (${format.aspect})`)
     out.push(
       `- Saída: ${dir}\\render\\previa-${outW}x${outH}.mp4`,
-      `- Resolução da prévia: ${outW}×${outH} (${quality.pct === -1 ? 'Full HD' : quality.pct + '% do formato'}), ${quality.fps} fps, H.264 (crf 23, preset veryfast) + AAC 192k`,
+      `- Resolução da prévia: ${outW}×${outH} (${quality.pct === -1 ? 'Full HD' : quality.pct + '% do formato'}), ${quality.fps} fps, H.264 (crf 23, preset veryfast no final, ultrafast nos intermediários) + AAC 192k`,
       '- Todo caminho abaixo é absoluto. Arquivos que o Typos não conseguiu acessar estão marcados com (SEM ACESSO): ignore-os.',
       ''
     )

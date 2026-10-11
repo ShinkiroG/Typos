@@ -95,7 +95,10 @@ async function start(sender: WebContents, job: RenderJob) {
     `Leia o pedido completo em ${join(out, 'pedido.md')}${job.styleGuide ? ` e o guia de estilo em ${join(out, 'estilo.md')}` : ''}.`,
     'Use o ffmpeg (já está no PATH; ffprobe também) pra montar o vídeo seguindo a timeline, o roteiro e o estilo.',
     `Trabalhe só dentro de ${out} (arquivos temporários, legendas .ass, listas de concat, etc.). Nunca altere nem apague os arquivos originais de mídia.`,
-    'Vá em etapas curtas e confira cada uma com ffprobe. No fim, responda com um resumo curto do que foi feito e o caminho do vídeo final.'
+    'É uma prévia: velocidade importa mais que perfeição. Planeje tudo antes de rodar e use poucos comandos ffmpeg grandes, não dezenas de pequenos.',
+    'Pra ser rápido: corte trechos com -ss/-t ANTES do -i (busca no arquivo, sem decodificar desde o começo); reduza pra resolução da prévia logo no começo do filtro; use -preset ultrafast nos intermediários;',
+    'gere os pedaços com o mesmo codec/resolução/fps e junte com o concat demuxer usando -c copy (sem re-encodar de novo). Não re-encode o vídeo final só pra mexer no áudio: use -c:v copy.',
+    'Confira com ffprobe só os arquivos finais, não cada passo. No fim, responda com um resumo curto do que foi feito e o caminho do vídeo final.'
   ].join('\n')
   const dirs = [...new Set([job.dir, ...job.readDirs].filter((d) => d && existsSync(d)))]
   const args = [
@@ -107,7 +110,13 @@ async function start(sender: WebContents, job: RenderJob) {
     'Read,Write,Edit,Glob,Grep,Bash(ffmpeg:*),Bash(ffprobe:*),Bash(mkdir:*),Bash(ls:*),Bash(dir:*)',
     ...dirs.flatMap((d) => ['--add-dir', d])
   ]
-  const env = { ...process.env, PATH: dirname(ff.ffmpeg) + (process.platform === 'win32' ? ';' : ':') + (process.env.PATH ?? '') }
+  const env = {
+    ...process.env,
+    PATH: dirname(ff.ffmpeg) + (process.platform === 'win32' ? ';' : ':') + (process.env.PATH ?? ''),
+    // o Bash do Claude Code mata qualquer comando depois de 2 min por padrão; um encode longo era morto e refeito
+    BASH_DEFAULT_TIMEOUT_MS: process.env.BASH_DEFAULT_TIMEOUT_MS ?? String(20 * 60000),
+    BASH_MAX_TIMEOUT_MS: process.env.BASH_MAX_TIMEOUT_MS ?? String(60 * 60000)
+  }
   send({ kind: 'info', text: 'Claude Code iniciado. Pedido salvo em render/pedido.md.' })
   return await new Promise<{ path?: string; summary: string; seconds: number }>((resolve, reject) => {
     const p = spawn(cc.path, args, { cwd: out, windowsHide: true, env })
