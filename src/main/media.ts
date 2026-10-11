@@ -322,10 +322,14 @@ export function initDownloads() {
         // o --print deixa o yt-dlp quieto: religa a saída pra ter o progresso
         '--no-quiet',
         '--progress',
+        // caminho com acento ("você está…") volta certo (sem isso vem na página de código do Windows)
+        '--encoding',
+        'utf-8',
         url
       ]
+      const started = Date.now()
       return new Promise((resolve) => {
-        const p = spawn(yt, args, { windowsHide: true })
+        const p = spawn(yt, args, { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' } })
         dlProc = p
         let out = ''
         let err = ''
@@ -358,15 +362,28 @@ export function initDownloads() {
           err += d
           String(d).split(/\r\n|\r|\n/).forEach(onLine)
         })
-        p.on('close', (code) => {
+        p.on('close', async (code) => {
           dlProc = null
-          const file = out
+          let file = out
             .split(/\r?\n/)
             .map((l) => l.trim())
             .filter((l) => l && existsSync(l))
             .pop()
-          if (code === 0 && file) resolve({ path: file })
-          else resolve({ error: code === null ? 'download cancelado' : 'yt-dlp: ' + (err.split('\n').filter((l) => /ERROR/.test(l)).pop() ?? err.slice(-300)).trim() })
+          // plano B: o arquivo mais novo da pasta, criado durante este download
+          if (code === 0 && !file) {
+            let best: { f: string; t: number } | null = null
+            for (const n of await fs.readdir(dest).catch(() => [] as string[])) {
+              if (/\.(part|ytdl|temp)$/i.test(n)) continue
+              const st = await fs.stat(join(dest, n)).catch(() => null)
+              if (st && st.mtimeMs >= started - 2000 && (!best || st.mtimeMs > best.t)) best = { f: join(dest, n), t: st.mtimeMs }
+            }
+            file = best?.f
+          }
+          if (code === 0 && file) return resolve({ path: file })
+          if (code === null) return resolve({ error: 'download cancelado' })
+          const lines = (err + '\n' + out).split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+          const why = lines.filter((l) => /ERROR/.test(l)).pop() ?? lines.filter((l) => !/^\[download\]\s+[\d.]+%|frame=/.test(l)).slice(-2).join(' · ')
+          resolve({ error: 'yt-dlp: ' + (why || `terminou sem dizer o motivo (código ${code})`).slice(0, 400) })
         })
         p.on('error', (er) => {
           dlProc = null
