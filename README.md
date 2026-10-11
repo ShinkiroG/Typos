@@ -6,7 +6,7 @@ Editor de roteiros pra YouTube: fala, prompts de motion, transições, sobe som,
 
 ## Baixar
 
-Na página de [Releases](https://github.com/ShinkiroG/Typos/releases/latest):
+Na página de [Releases](https://github.com/ShinkiroG/Typos_Release/releases/latest):
 
 - **`Typos-Setup-x.y.z.exe`**: instalador; você escolhe a pasta de instalação.
 - **`Typos-x.y.z-portable.zip`**: já "instalado"; extraia em qualquer pasta e abra o `Typos.exe`.
@@ -60,6 +60,7 @@ Biblioteca, formatos e configurações ficam em `%APPDATA%/Typos/`.
 npm install
 npm run dev        # abre em modo dev (F12 = DevTools)
 npm run dist       # gera dist/Typos-Setup-x.y.z.exe e o .zip
-npm run release -- "notas"   # publica no GitHub Releases (precisa do gh logado)
+npm run release -- "notas"   # publica em ShinkiroG/Typos_Release (precisa do gh logado)
 ```
 Pra lançar uma versão nova: suba o `version` no package.json, rode `dist` e depois `release`.
+Na primeira versão depois da troca de repositório, use `npm run release -- --ponte "notas"`: publica também no repositório antigo, pra quem tem versão antiga receber a atualização.

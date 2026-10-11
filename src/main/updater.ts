@@ -4,7 +4,8 @@ import { existsSync, promises as fs } from 'fs'
 import { join, dirname } from 'path'
 import { spawn } from 'child_process'
 
-const REPO = 'ShinkiroG/Typos'
+// Repositório público só com os instaladores (o código fica no ShinkiroG/Typos, privado).
+const REPO = 'ShinkiroG/Typos_Release'
 
 /**
  * installer = instalado pelo Setup.exe (atualiza com electron-updater)
