@@ -40,6 +40,7 @@ import { api, clipDur, clipEndT, fileUrl, uid, type MontageBin, type MontageClip
 import { MontageEngine } from './engine'
 import { Recorder } from '../audio'
 import { askText } from '../components/AskDialog'
+import { YoutubeDownload } from '../components/YoutubeDownload'
 import { EditTimeline, MEDIA_MIME, PCFILE_MIME, mediaLen, splitClip, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
 
@@ -776,29 +777,6 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
   }
   // ---------- baixar do YouTube (yt-dlp) pro Material bruto ----------
   const [ytOpen, setYtOpen] = useState(false)
-  const [yt, setYt] = useState<{ url: string; quality: '1080' | '720' | 'audio'; from: string; to: string }>({ url: '', quality: '1080', from: '', to: '' })
-  const [ytdlp, setYtdlp] = useState<{ path: string } | null | undefined>(undefined)
-  const [dl, setDl] = useState<{ pct: number; speed: string; eta: string } | null>(null)
-  const [dlMsg, setDlMsg] = useState('')
-  useEffect(() => {
-    if (!ytOpen || ytdlp !== undefined) return
-    api.ytdlpInfo().then(setYtdlp)
-    api.onDownloadProgress((p) => setDl(p))
-  }, [ytOpen])
-  const download = async () => {
-    const url = yt.url.trim()
-    if (!/^https?:\/\//i.test(url) || !curBin) return
-    const toBin = curBin.id
-    setDlMsg('')
-    setDl({ pct: 0, speed: '', eta: '' })
-    const r = await api.downloadVideo(url, dir, { quality: yt.quality, from: yt.from.trim() || undefined, to: yt.to.trim() || undefined })
-    setDl(null)
-    if ('error' in r) return setDlMsg(r.error)
-    setDlMsg('Baixado: ' + (r.path.split(/[\\/]/).pop() ?? ''))
-    setYt((y) => ({ ...y, url: '', from: '', to: '' }))
-    await importPaths([r.path], toBin)
-    setRecheck((n) => n + 1)
-  }
   const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   const [areaMenu, setAreaMenu] = useState<{ x: number; y: number } | null>(null)
   // ---------- o Claude procura bibliotecas de som no PC ----------
@@ -1035,73 +1013,15 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
             )}
           </div>
         )}
-        {ytOpen && curRoot?.role !== 'narration' && (
-          <div className="mt-yt">
-            {ytdlp === undefined ? (
-              <span className="muted small">
-                <Loader2 size={12} className="spin" /> procurando o yt-dlp…
-              </span>
-            ) : ytdlp === null ? (
-              <div className="mt-yt-install">
-                <span className="small">Pra baixar vídeos o Typos usa o <b>yt-dlp</b> (gratuito). Ele ainda não está neste PC.</span>
-                <button
-                  className="btn small primary"
-                  disabled={dlMsg === 'instalando'}
-                  onClick={async () => {
-                    setDlMsg('instalando')
-                    const r = await api.installYtdlp()
-                    setDlMsg('error' in r ? r.error : '')
-                    if (!('error' in r)) setYtdlp(r)
-                  }}
-                >
-                  {dlMsg === 'instalando' ? <Loader2 size={12} className="spin" /> : <Download size={12} />} Instalar yt-dlp
-                </button>
-              </div>
-            ) : (
-              <>
-                <input
-                  className="mt-yt-url"
-                  placeholder="Cole o link do YouTube…"
-                  value={yt.url}
-                  disabled={!!dl}
-                  onChange={(e) => setYt((y) => ({ ...y, url: e.target.value }))}
-                  onKeyDown={(e) => e.key === 'Enter' && !dl && download()}
-                />
-                <div className="mt-yt-row">
-                  <select value={yt.quality} disabled={!!dl} onChange={(e) => setYt((y) => ({ ...y, quality: e.target.value as typeof y.quality }))}>
-                    <option value="1080">até 1080p</option>
-                    <option value="720">até 720p</option>
-                    <option value="audio">só áudio</option>
-                  </select>
-                  <span className="muted small">trecho</span>
-                  <input className="mt-yt-t" placeholder="início" value={yt.from} disabled={!!dl} onChange={(e) => setYt((y) => ({ ...y, from: e.target.value }))} title="Opcional, ex.: 1:20" />
-                  <input className="mt-yt-t" placeholder="fim" value={yt.to} disabled={!!dl} onChange={(e) => setYt((y) => ({ ...y, to: e.target.value }))} title="Opcional, ex.: 2:05" />
-                  {dl ? (
-                    <button className="btn small" onClick={() => api.cancelDownload()}>
-                      <X size={12} /> Parar
-                    </button>
-                  ) : (
-                    <button className="btn small primary" disabled={!/^https?:\/\//i.test(yt.url.trim())} onClick={download}>
-                      <Download size={12} /> Baixar
-                    </button>
-                  )}
-                </div>
-                {dl && (
-                  <div className="mt-progress">
-                    <span>
-                      <Loader2 size={12} className="spin" /> baixando {Math.round(dl.pct * 100)}%{dl.speed ? ` · ${dl.speed}` : ''}
-                      {dl.eta ? ` · ${dl.eta}` : ''}
-                    </span>
-                    <div className="mt-bar">
-                      <i style={{ width: `${Math.round(dl.pct * 100)}%` }} />
-                    </div>
-                  </div>
-                )}
-                <span className="mt-yt-hint">Vai pra assets/material-bruto do projeto. Use só o que você tem direito de usar (licença, fair use, comentário).</span>
-              </>
-            )}
-            {dlMsg && dlMsg !== 'instalando' && <span className={'small ' + (dlMsg.startsWith('Baixado') ? 'ok' : 'error')}>{dlMsg}</span>}
-          </div>
+        {ytOpen && curRoot?.role !== 'narration' && curBin && (
+          <YoutubeDownload
+            dir={dir}
+            hint="Vai pra assets/material-bruto do projeto. Use só o que você tem direito de usar (licença, fair use, comentário)."
+            onDone={((toBin) => async (path: string) => {
+              await importPaths([path], toBin)
+              setRecheck((n) => n + 1)
+            })(curBin.id)}
+          />
         )}
         {curRoot?.role === 'narration' && wstatus && ffmpeg && (
           <div className="mt-whisper">

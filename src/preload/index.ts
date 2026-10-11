@@ -111,7 +111,7 @@ const api = {
   saveRecording: (dir: string, bytes: Uint8Array): Promise<string | { error: string }> => ipcRenderer.invoke('media:saveRecording', dir, bytes),
   ytdlpInfo: (): Promise<{ path: string } | null> => ipcRenderer.invoke('media:ytdlp'),
   installYtdlp: (): Promise<{ path: string } | { error: string }> => ipcRenderer.invoke('media:installYtdlp'),
-  downloadVideo: (url: string, dir: string, opts: { quality: '1080' | '720' | 'audio'; from?: string; to?: string }): Promise<{ path: string } | { error: string }> =>
+  downloadVideo: (url: string, dir: string, opts: { quality: '1080' | '720' | 'audio'; from?: string; to?: string; target?: 'motion' }): Promise<{ path: string } | { error: string }> =>
     ipcRenderer.invoke('media:download', url, dir, opts),
   cancelDownload: () => ipcRenderer.invoke('media:dlCancel'),
   onDownloadProgress: (cb: (p: { pct: number; speed: string; eta: string }) => void) => {

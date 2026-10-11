@@ -297,12 +297,13 @@ export function initDownloads() {
 
   ipcMain.handle(
     'media:download',
-    async (e, url: string, dir: string, opts: { quality: '1080' | '720' | 'audio'; from?: string; to?: string }): Promise<{ path: string } | { error: string }> => {
+    async (e, url: string, dir: string, opts: { quality: '1080' | '720' | 'audio'; from?: string; to?: string; target?: 'motion' }): Promise<{ path: string } | { error: string }> => {
       const yt = await findYtDlp()
       if (!yt) return { error: 'yt-dlp não encontrado' }
       if (dlProc) return { error: 'já tem um download em andamento' }
       const ff = await findFfmpeg()
-      const dest = join(dir, 'assets', 'material-bruto')
+      // referências de motion são globais (servem pra todo formato): ficam no userData
+      const dest = opts.target === 'motion' ? join(app.getPath('userData'), 'format-media', 'videos') : join(dir, 'assets', 'material-bruto')
       await fs.mkdir(dest, { recursive: true })
       const fmt =
         opts.quality === 'audio' ? 'ba[ext=m4a]/ba' : `bv*[height<=${opts.quality}][ext=mp4]+ba[ext=m4a]/bv*[height<=${opts.quality}]+ba/b[height<=${opts.quality}]/b`

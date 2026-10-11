@@ -6,6 +6,7 @@ import {
   Undo2,
   Check,
   Link2,
+  Download,
   ImagePlus,
   Film,
   X,
@@ -23,6 +24,7 @@ import {
 } from 'lucide-react'
 import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type FontCase, DEFAULT_FONT_CASES } from '../lib'
 import { FontPicker } from './FontPicker'
+import { YoutubeDownload } from '../components/YoutubeDownload'
 
 const CAMERA = [
   'estática',
@@ -158,6 +160,7 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
   const [langs, setLangs] = useState<string[]>(PREFERRED_LANGS)
   const [fonts, setFonts] = useState<string[]>([])
   const [link, setLink] = useState('')
+  const [ytOpen, setYtOpen] = useState(false)
   const [sample, setSample] = useState('Você está fazendo o marketing errado')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -510,6 +513,9 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
             <button className="btn small" onClick={async () => addFiles(await api.motionPickFiles())}>
               <ImagePlus size={13} /> Arquivos…
             </button>
+            <button className={'btn small' + (ytOpen ? ' primary' : '')} onClick={() => setYtOpen((o) => !o)} title="Baixar um trecho do YouTube (ou outro site) como referência">
+              <Download size={13} /> YouTube
+            </button>
             <span className="st-paste">
               <Clipboard size={12} /> Ctrl+V cola print
             </span>
@@ -521,6 +527,15 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
               </button>
             </div>
           </div>
+          {ytOpen && (
+            <YoutubeDownload
+              dir=""
+              target="motion"
+              allowAudio={false}
+              hint="Baixe só o trecho do motion (início/fim). Vira referência deste formato: o Typos tira os quadros pra IA olhar."
+              onDone={(path) => addFiles([path])}
+            />
+          )}
           {busy && !busy.startsWith('O Claude') && (
             <div className="st-note">
               <Loader2 size={12} className="spin" /> {busy}
