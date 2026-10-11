@@ -6,7 +6,7 @@ import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { JSONContent } from '@tiptap/core'
-import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput, Palette, Scissors, Copy, ClipboardPaste } from 'lucide-react'
+import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput, Palette, Clapperboard, Scissors, Copy, ClipboardPaste } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming, convertBracketLines } from '../editor/nodes'
 import { Timestamps, setTimestamps } from '../editor/timestamps'
 import { TimeGutter } from './TimeGutter'
@@ -15,6 +15,7 @@ import { PromptRange, promptAt, type PromptRangeInfo } from '../editor/promptMar
 import { TextStyle, Color, FontFamily, FontSize } from '@tiptap/extension-text-style'
 import Highlight from '@tiptap/extension-highlight'
 import { FormatBubble } from './FormatBubble'
+import { RenderStudio } from '../render/RenderStudio'
 import { FilterBar } from './FilterBar'
 import { TrackGutter } from './TrackGutter'
 import { AiLineAssist } from './AiLineAssist'
@@ -229,8 +230,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [toast, setToast] = useState('')
   const [spell, setSpell] = useState<{ word: string; from: number; to: number; suggestions: string[] | null } | null>(null)
 
-  const [mode, setMode] = useState<'script' | 'montage' | 'style'>('script')
+  const [mode, setMode] = useState<'script' | 'montage' | 'style' | 'render'>('script')
   const [styleVisited, setStyleVisited] = useState(false)
+  const [renderVisited, setRenderVisited] = useState(false)
   const format = formats.find((f) => f.id === formatId) ?? formats[0]
   const wpm = customWpm ?? format?.wpm ?? 150
   useEffect(() => {
@@ -660,10 +662,11 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     return withTime.length
   }
 
-  const goMode = (m: 'script' | 'montage' | 'style') => {
+  const goMode = (m: 'script' | 'montage' | 'style' | 'render') => {
     setMode(m)
     if (m === 'montage') setMontageVisited(true)
     if (m === 'style') setStyleVisited(true)
+    if (m === 'render') setRenderVisited(true)
   }
 
   // ---------- menus do topo ----------
@@ -713,6 +716,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         { label: 'Roteiro', checked: mode === 'script', onClick: () => goMode('script') },
         { label: 'Montagem', checked: mode === 'montage', onClick: () => goMode('montage') },
         { label: 'Estilo (treinar motion e formato)', checked: mode === 'style', onClick: () => goMode('style') },
+        { label: 'Render (criar o vídeo com o Claude)', checked: mode === 'render', onClick: () => goMode('render') },
         { sep: true },
         { label: 'Painel Inserir', checked: leftOpen, onClick: () => setLeftOpen((o) => !o) },
         { label: 'Painel lateral', checked: panelOpen, onClick: () => setPanelOpen((o) => !o) },
@@ -1045,6 +1049,10 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
               <Palette size={15} />
               <span>Estilo</span>
             </button>
+            <button className={mode === 'render' ? 'on' : ''} title="Render: confere tudo que vai pro Claude e cria o vídeo" onClick={() => goMode('render')}>
+              <Clapperboard size={15} />
+              <span>Render</span>
+            </button>
           </nav>
 
           <div className="tb-doc">
@@ -1094,9 +1102,6 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
                 <FolderInput size={16} />
               </button>
             </div>
-            <button className="btn small claude-btn" title="Salva e copia um pedido pronto pra colar no Claude" onClick={sendToClaude}>
-              <Send size={14} /> Claude
-            </button>
           </div>
         </div>
 
@@ -1132,6 +1137,20 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         )}
       </header>
 
+      {renderVisited && (
+        <div className="montage-layer" style={mode === 'render' ? undefined : { display: 'none' }}>
+          <RenderStudio
+            active={mode === 'render'}
+            dir={dir}
+            title={title}
+            format={format}
+            montage={montage}
+            timelineAssets={assets}
+            getDoc={() => editorRef.current?.getJSON()}
+            save={save}
+          />
+        </div>
+      )}
       {styleVisited && (
         <div className="montage-layer" style={mode === 'style' ? undefined : { display: 'none' }}>
           <StyleStudio active={mode === 'style'} formats={formats} activeId={formatId} onChange={onFormatsChange} onSelect={setFormatId} />

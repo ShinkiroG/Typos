@@ -8,6 +8,7 @@ import { loadSettings, saveSettings } from './settings'
 import { initUpdater, checkManually, installDownloadedNow, installMode } from './updater'
 import { initSpell } from './spell'
 import { initAi, initMotionAi, initSfxFinder } from './ai'
+import { initRender } from './render'
 import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, initDownloads } from './media'
 import { initWhisper } from './whisper'
 
@@ -247,6 +248,7 @@ initSpell()
 initAi()
 initMotionAi()
 initSfxFinder()
+initRender()
 initMedia()
 initDownloads()
 initWhisper()

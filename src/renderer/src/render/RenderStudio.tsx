@@ -1,0 +1,509 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { JSONContent } from '@tiptap/core'
+import {
+  Clapperboard,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  RefreshCw,
+  FileText,
+  Image as ImageIcon,
+  Mic,
+  Film,
+  AudioLines,
+  Palette,
+  FolderOpen,
+  Square,
+  Star,
+  Sparkles,
+  Music
+} from 'lucide-react'
+import { api, absPath, fileUrl, RESOLUTIONS, type Attachment, type Format, type MontageData, type MontageBin, type TimelineAsset } from '../lib'
+import './render.css'
+
+/**
+ * Workspace Render: mostra tudo que vai alimentar o Claude, confere se ele consegue acessar
+ * cada arquivo/pasta, escolhe a qualidade da prévia e manda o Claude Code criar o vídeo.
+ */
+
+interface Props {
+  active: boolean
+  dir: string
+  title: string
+  format?: Format
+  montage: MontageData
+  timelineAssets: TimelineAsset[]
+  getDoc: () => JSONContent | undefined
+  save: () => Promise<void>
+}
+
+type Check = { path: string; ok: boolean; files?: number; error?: string }
+type GroupId = 'script' | 'attach' | 'narration' | 'edit' | 'raw' | 'sfx' | 'track' | 'style'
+interface Group {
+  id: GroupId
+  label: string
+  icon: React.ReactNode
+  summary: string
+  /** linhas (arquivos/pastas) que o Claude vai ler */
+  items: { label: string; path?: string; note?: string; star?: boolean }[]
+  empty?: boolean
+}
+
+const QUALITY_KEY = 'typos.renderQuality'
+const loadQuality = (): { pct: number; fps: number } => {
+  try {
+    return { pct: 50, fps: 30, ...JSON.parse(localStorage.getItem(QUALITY_KEY) || '{}') }
+  } catch {
+    return { pct: 50, fps: 30 }
+  }
+}
+
+const fmtT = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
+const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
+const r2 = (n: number) => Math.round(n * 100) / 100
+
+/** todos os nós de um JSON do TipTap */
+function walk(n: JSONContent | undefined, f: (n: JSONContent) => void) {
+  if (!n) return
+  f(n)
+  n.content?.forEach((c) => walk(c, f))
+}
+
+export function RenderStudio({ active, dir, title, format, montage, timelineAssets, getDoc, save }: Props) {
+  const [quality, setQuality] = useState(loadQuality)
+  const [off, setOff] = useState<Set<GroupId>>(new Set())
+  const [checks, setChecks] = useState<Record<string, Check>>({})
+  const [checking, setChecking] = useState(false)
+  const [doc, setDoc] = useState<JSONContent | undefined>()
+  const [job, setJob] = useState<{ busy: boolean; log: { kind: string; text: string }[]; t0: number; path?: string; summary?: string; error?: string; seconds?: number } | null>(null)
+  const [now, setNow] = useState(Date.now())
+  /** salvou ao entrar (o roteiro.md fica em dia antes de conferir) */
+  const [ready, setReady] = useState(false)
+  const logRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(QUALITY_KEY, JSON.stringify(quality))
+    } catch {
+      /* sem storage: só não lembra */
+    }
+  }, [quality])
+
+  // ao entrar no workspace, relê o roteiro (o editor fica no Roteiro)
+  useEffect(() => {
+    if (!active) return setReady(false)
+    setDoc(getDoc())
+    save().then(() => setReady(true))
+  }, [active])
+
+  // ---------- resolução ----------
+  const [baseW, baseH] = (RESOLUTIONS[format?.aspect ?? '16:9'] ?? '1920×1080').split('×').map(Number)
+  const fullHd = (() => {
+    const k = 1080 / Math.min(baseW, baseH)
+    return [even(baseW * k), even(baseH * k)]
+  })()
+  const [outW, outH] = quality.pct === -1 ? fullHd : [even((baseW * quality.pct) / 100), even((baseH * quality.pct) / 100)]
+
+  // ---------- inventário: o que vai pro Claude ----------
+  const groups = useMemo<Group[]>(() => {
+    const binById = new Map(montage.bins.map((b) => [b.id, b]))
+    const rootOf = (b?: MontageBin): MontageBin | undefined => {
+      let cur = b
+      for (let i = 0; cur?.parent && i < 20; i++) cur = binById.get(cur.parent)
+      return cur
+    }
+    const roleOfBin = (id: string) => rootOf(binById.get(id))?.role
+    const mediaById = new Map(montage.media.map((m) => [m.id, m]))
+
+    // roteiro
+    let falas = 0
+    let prompts = 0
+    let chapters = 0
+    const attachments: Attachment[] = []
+    walk(doc, (n) => {
+      if (n.type === 'paragraph' && n.content?.length) falas++
+      if (n.type === 'prompt') prompts++
+      if (n.type === 'chapter') chapters++
+      const a = n.attrs?.attachments as Attachment[] | undefined
+      if (Array.isArray(a)) attachments.push(...a)
+    })
+
+    const STATUS: Record<string, string> = { ref: 'referência', aprovado: 'aprovado', recortar: 'RECORTAR', regerar: 'REGERAR' }
+    const narrClips = montage.clips.filter((c) => roleOfBin(mediaById.get(c.media)?.bin ?? '') === 'narration')
+    const narrDur = narrClips.reduce((s, c) => s + c.out - c.in, 0)
+    const editEnd = montage.clips.reduce((s, c) => Math.max(s, c.start + c.out - c.in), 0)
+    const inRole = (role: string) => montage.media.filter((m) => roleOfBin(m.bin) === role)
+    const linkedIn = (role: string) =>
+      montage.bins.filter((b) => b.linked && rootOf(b)?.role === role).sort((a, b) => Number(!!b.star) - Number(!!a.star))
+    const raw = inRole('raw')
+    const rawLinked = linkedIn('raw')
+    const sfx = inRole('sfx')
+    const sfxLinked = linkedIn('sfx')
+    const track = timelineAssets.filter((a) => a.path)
+    const m = format?.motion
+    const styleItems: Group['items'] = []
+    if (format?.rules?.trim()) styleItems.push({ label: 'Regras do formato', note: format.rules.trim().slice(0, 90) })
+    if (m?.learned) styleItems.push({ label: 'Guia de estilo treinado', note: `aprendido em ${new Date(m.learned.at).toLocaleDateString('pt-BR')}` })
+    const fonts = Object.values(m?.fonts ?? {}).filter(Boolean)
+    if (fonts.length) styleItems.push({ label: 'Fontes', note: fonts.join(', ') })
+    if (m?.colors?.length) styleItems.push({ label: 'Cores', note: m.colors.join(' ') })
+    for (const r of m?.refs ?? []) if (r.path) styleItems.push({ label: 'Referência: ' + r.name, path: r.path })
+    for (const f of format?.assetFolders ?? []) styleItems.push({ label: 'Pasta do formato', path: f })
+
+    return [
+      {
+        id: 'script',
+        label: 'Roteiro',
+        icon: <FileText size={15} />,
+        summary: `${falas} falas · ${chapters} capítulos · ${prompts} prompts`,
+        items: [{ label: 'roteiro.md (texto, prompts, transições e tempos)', path: dir + '\\roteiro.md' }]
+      },
+      {
+        id: 'attach',
+        label: 'Arquivos escolhidos a dedo',
+        icon: <ImageIcon size={15} />,
+        summary: `${attachments.length} anexos nos prompts`,
+        items: attachments.map((a) => ({ label: a.name, path: absPath(a), note: a.status ? STATUS[a.status] ?? a.status : undefined })),
+        empty: !attachments.length
+      },
+      {
+        id: 'narration',
+        label: 'Narração cortada',
+        icon: <Mic size={15} />,
+        summary: narrClips.length ? `${narrClips.length} cortes · ${fmtT(narrDur)}` : 'sem cortes na Montagem',
+        items: [...new Set(narrClips.map((c) => mediaById.get(c.media)?.path).filter(Boolean) as string[])].map((p) => ({ label: p.split(/[\\/]/).pop()!, path: p })),
+        empty: !narrClips.length
+      },
+      {
+        id: 'edit',
+        label: 'Timeline de edição',
+        icon: <Film size={15} />,
+        summary: montage.clips.length ? `${montage.clips.length} clipes em ${montage.tracks.length} faixas · ${fmtT(editEnd)}` : 'vazia (o Claude monta pelo roteiro)',
+        items: montage.tracks.map((t) => ({ label: t.name, note: `${montage.clips.filter((c) => c.track === t.id).length} clipes${t.muted ? ' · mudo' : ''}` })),
+        empty: !montage.clips.length
+      },
+      {
+        id: 'raw',
+        label: 'Material bruto (B-roll)',
+        icon: <FolderOpen size={15} />,
+        summary: `${raw.length} arquivos · ${rawLinked.length} pastas do PC`,
+        items: [
+          ...rawLinked.map((b) => ({ label: b.name, path: b.linked, star: b.star, note: 'pasta do PC' })),
+          ...raw.map((x) => ({ label: x.name, path: x.path }))
+        ],
+        empty: !raw.length && !rawLinked.length
+      },
+      {
+        id: 'sfx',
+        label: 'Áudios e SFX',
+        icon: <AudioLines size={15} />,
+        summary: `${sfx.length} arquivos · ${sfxLinked.length} bibliotecas (${sfxLinked.filter((b) => b.star).length} ⭐)`,
+        items: [
+          ...sfxLinked.map((b) => ({ label: b.name, path: b.linked, star: b.star, note: 'biblioteca do PC' })),
+          ...sfx.map((x) => ({ label: x.name, path: x.path }))
+        ],
+        empty: !sfx.length && !sfxLinked.length
+      },
+      {
+        id: 'track',
+        label: 'Trilha do roteiro',
+        icon: <Music size={15} />,
+        summary: `${track.length} músicas/efeitos marcados no texto`,
+        items: track.map((a) => ({ label: a.name, path: absPath({ id: a.id, name: a.name, path: a.path! }) })),
+        empty: !track.length
+      },
+      {
+        id: 'style',
+        label: 'Estilo do formato',
+        icon: <Palette size={15} />,
+        summary: format ? `${format.name} · ${m?.learned ? 'motion treinado' : 'sem treino de motion'}` : '—',
+        items: styleItems,
+        empty: !styleItems.length
+      }
+    ]
+  }, [doc, montage, timelineAssets, format, dir])
+
+  const allPaths = useMemo(() => [...new Set(groups.flatMap((g) => g.items.map((i) => i.path).filter(Boolean) as string[]))], [groups])
+
+  const runChecks = async () => {
+    setChecking(true)
+    const r = await api.renderCheck(allPaths)
+    setChecks(Object.fromEntries(r.map((c) => [c.path, c])))
+    setChecking(false)
+  }
+  useEffect(() => {
+    if (active && ready) runChecks()
+  }, [active, ready, allPaths.join('|')])
+
+  const bad = allPaths.filter((p) => checks[p] && !checks[p].ok && !off.has(groups.find((g) => g.items.some((i) => i.path === p))!.id))
+
+  // ---------- criar vídeo ----------
+  useEffect(() => {
+    api.onRenderProgress((ev) => setJob((j) => (j ? { ...j, log: [...j.log, ev].slice(-300) } : j)))
+  }, [])
+  useEffect(() => {
+    if (!job?.busy) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [job?.busy])
+  useEffect(() => {
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
+  }, [job?.log.length])
+
+  const buildBrief = () => {
+    const on = (id: GroupId) => !off.has(id) && !groups.find((g) => g.id === id)?.empty
+    const g = (id: GroupId) => groups.find((x) => x.id === id)!
+    const out: string[] = [`# Pedido de vídeo: ${title}`, '', `- Pasta do projeto: ${dir}`]
+    if (format) out.push(`- Formato: ${format.name} (${format.aspect})`)
+    out.push(
+      `- Saída: ${dir}\\render\\previa-${outW}x${outH}.mp4`,
+      `- Resolução da prévia: ${outW}×${outH} (${quality.pct === -1 ? 'Full HD' : quality.pct + '% do formato'}), ${quality.fps} fps, H.264 (crf 23, preset veryfast) + AAC 192k`,
+      '- Todo caminho abaixo é absoluto. Arquivos que o Typos não conseguiu acessar estão marcados com (SEM ACESSO): ignore-os.',
+      ''
+    )
+    const line = (i: Group['items'][number]) => {
+      const c = i.path ? checks[i.path] : undefined
+      return `- ${i.star ? '⭐ ' : ''}${i.label}${i.note ? ` (${i.note})` : ''}${i.path ? `: ${i.path}` : ''}${c && !c.ok ? ' (SEM ACESSO)' : ''}`
+    }
+    if (on('script'))
+      out.push(
+        '## Roteiro',
+        `${dir}\\roteiro.md: ${g('script').summary}.`,
+        'As falas são a narração. [PROMPT] e [PROMPT NO TRECHO] dizem o que mostrar na tela naquele momento; [TRANSIÇÃO] e [SOBE SOM] são instruções de edição; capítulos com LETTERING viram um título capitular animado.',
+        ''
+      )
+    if (on('attach')) out.push('## Arquivos escolhidos a dedo (anexos dos prompts: use exatamente onde o prompt pede)', ...g('attach').items.map(line), '')
+    if (on('edit')) {
+      const media = new Map(montage.media.map((m) => [m.id, m]))
+      const tl = montage.tracks.map((t) => ({
+        faixa: t.name,
+        tipo: t.kind,
+        mudo: !!t.muted || undefined,
+        clipes: montage.clips
+          .filter((c) => c.track === t.id)
+          .sort((a, b) => a.start - b.start)
+          .map((c) => ({
+            arquivo: media.get(c.media)?.path,
+            inicio: r2(c.start),
+            de: r2(c.in),
+            ate: r2(c.out),
+            ganhoDb: c.gainDb || undefined,
+            fadeIn: c.fadeIn || undefined,
+            fadeOut: c.fadeOut || undefined,
+            emenda: c.splice || undefined,
+            bloco: c.block
+          }))
+      }))
+      out.push(
+        '## Timeline de edição (a montagem do autor: siga à risca)',
+        '`inicio` = segundo na timeline; `de`/`ate` = trecho do arquivo; `emenda` = crossfade curto com o clipe anterior; `bloco` = índice do bloco do roteiro que esse trecho fala.',
+        montage.norm ? `Normalização da narração: ${montage.norm} (peak = pico em dBFS, lufs = volume percebido).` : '',
+        '```json',
+        JSON.stringify(tl, null, 1),
+        '```',
+        ''
+      )
+    } else if (on('narration')) out.push('## Narração cortada', ...g('narration').items.map(line), '')
+    if (!on('edit')) out.push('A timeline de edição está vazia: monte a ordem pelo roteiro, usando a narração e o material disponível.', '')
+    if (on('raw')) out.push('## Material bruto (B-roll: escolha o que combina com cada prompt; pastas ⭐ são as preferidas)', ...g('raw').items.map(line), '')
+    if (on('sfx')) out.push('## Áudios e SFX (bibliotecas ⭐ são as referências essenciais de som: use com mais frequência)', ...g('sfx').items.map(line), '')
+    if (on('track')) out.push('## Trilha marcada no roteiro', ...g('track').items.map(line), '')
+    if (on('style')) {
+      const m = format?.motion
+      out.push('## Estilo', ...g('style').items.filter((i) => i.path).map(line))
+      if (format?.rules?.trim()) out.push('', 'Regras do formato:', format.rules.trim())
+      if (m) {
+        if (m.fonts) out.push(`Fontes: título ${m.fonts.title ?? '-'}, subtítulo ${m.fonts.subtitle ?? '-'}, texto ${m.fonts.body ?? '-'}, destaque ${m.fonts.accent ?? '-'}`)
+        if (m.fontCases?.length) out.push('Fontes por situação: ' + m.fontCases.map((f) => `${f.name}: ${f.mode === 'favorites' && f.favorites.length ? f.favorites.join('/') : 'você escolhe'}`).join('; '))
+        if (m.colors?.length) out.push('Cores: ' + m.colors.join(', '))
+        if (m.background) out.push('Fundo: ' + m.background)
+        if (m.camera?.length) out.push('Câmera: ' + m.camera.join(', '))
+        if (m.transitions?.length) out.push('Transições: ' + m.transitions.join(', '))
+        if (m.pace) out.push('Ritmo: ' + m.pace)
+        if (m.learned) out.push('Guia completo do estilo: render\\estilo.md')
+      }
+      out.push('')
+    }
+    out.push(
+      '## Como fazer',
+      '- É uma PRÉVIA: priorize ter o vídeo inteiro montado e sincronizado com a narração; capriche nos letterings e textos na tela (legendas .ass com as fontes instaladas) e nos cortes de B-roll.',
+      '- Onde o prompt pede algo que não existe nos arquivos, use um cartão simples (fundo do estilo + texto do prompt) pra marcar o lugar.',
+      '- Áudio: narração na frente, música por baixo (uns -18 dB), SFX nos pontos de impacto. Sem clipping.'
+    )
+    return out.filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n')
+  }
+
+  const readDirs = () => {
+    const ds = new Set<string>()
+    for (const p of allPaths) {
+      const c = checks[p]
+      if (!c?.ok) continue
+      ds.add(c.files === 1 && /\.[a-z0-9]{2,5}$/i.test(p) ? p.replace(/[\\/][^\\/]+$/, '') : p)
+    }
+    return [...ds]
+  }
+
+  const create = async () => {
+    await save()
+    setJob({ busy: true, log: [], t0: Date.now() })
+    const r = await api.renderStart({ dir, brief: buildBrief(), readDirs: readDirs(), styleGuide: off.has('style') ? undefined : format?.motion?.learned?.guide })
+    setJob((j) => ({ ...(j ?? { log: [], t0: Date.now() }), busy: false, ...('error' in r ? { error: r.error } : r) }))
+  }
+
+  const toggle = (id: GroupId) =>
+    setOff((s) => {
+      const n = new Set(s)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+
+  const statusOf = (g: Group) => {
+    const ps = g.items.map((i) => i.path).filter(Boolean) as string[]
+    if (!ps.length) return null
+    const known = ps.filter((p) => checks[p])
+    if (known.length < ps.length) return <Loader2 size={13} className="spin" />
+    const fails = known.filter((p) => !checks[p].ok)
+    return fails.length ? (
+      <span className="rn-bad">
+        <XCircle size={13} /> {fails.length} sem acesso
+      </span>
+    ) : (
+      <span className="rn-ok">
+        <CheckCircle2 size={13} /> acesso ok
+      </span>
+    )
+  }
+
+  return (
+    <div className="render-studio">
+      <div className="rn-main">
+        <header className="rn-head">
+          <div>
+            <h2>
+              <Clapperboard size={20} /> Render
+            </h2>
+            <p className="muted">Tudo o que vai alimentar o Claude pra montar o vídeo. Desmarque o que não deve ir.</p>
+          </div>
+          <button className="btn small" onClick={runChecks} disabled={checking} title="Confere de novo se cada arquivo e pasta está acessível">
+            {checking ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />} Verificar acessos
+          </button>
+        </header>
+
+        <div className="rn-groups">
+          {groups.map((g) => (
+            <section key={g.id} className={'rn-group' + (off.has(g.id) || g.empty ? ' off' : '')}>
+              <label className="rn-ghead">
+                <input type="checkbox" checked={!off.has(g.id) && !g.empty} disabled={g.empty} onChange={() => toggle(g.id)} />
+                <span className="rn-gicon">{g.icon}</span>
+                <b>{g.label}</b>
+                <span className="rn-gsum">{g.summary}</span>
+                <span className="tb-grow" />
+                {!off.has(g.id) && statusOf(g)}
+              </label>
+              {!!g.items.length && !off.has(g.id) && (
+                <ul className="rn-items">
+                  {g.items.slice(0, 40).map((i, k) => {
+                    const c = i.path ? checks[i.path] : undefined
+                    return (
+                      <li key={k} className={c && !c.ok ? 'bad' : ''} title={i.path}>
+                        {i.star && <Star size={11} className="rn-star" />}
+                        <span className="rn-iname">{i.label}</span>
+                        {i.note && <span className="rn-note">{i.note}</span>}
+                        {c && (c.ok ? (c.files && c.files > 1 ? <span className="rn-note">{c.files >= 2000 ? '2000+' : c.files} arquivos</span> : null) : <span className="rn-err">{c.error}</span>)}
+                      </li>
+                    )
+                  })}
+                  {g.items.length > 40 && <li className="muted">… e mais {g.items.length - 40}</li>}
+                </ul>
+              )}
+            </section>
+          ))}
+        </div>
+      </div>
+
+      <aside className="rn-side">
+        <section className="rn-card">
+          <h3>Qualidade da prévia</h3>
+          <div className="rn-res">
+            {outW}×{outH}
+            <small>{quality.pct === -1 ? 'Full HD' : `${quality.pct}% de ${baseW}×${baseH}`}</small>
+          </div>
+          <input
+            type="range"
+            min={25}
+            max={100}
+            step={5}
+            value={quality.pct === -1 ? 100 : quality.pct}
+            onChange={(e) => setQuality((q) => ({ ...q, pct: Number(e.target.value) }))}
+          />
+          <div className="rn-chips">
+            {[25, 50, 75, 100].map((p) => (
+              <button key={p} className={'rn-chip' + (quality.pct === p ? ' on' : '')} onClick={() => setQuality((q) => ({ ...q, pct: p }))}>
+                {p}%
+              </button>
+            ))}
+            <button className={'rn-chip' + (quality.pct === -1 ? ' on' : '')} onClick={() => setQuality((q) => ({ ...q, pct: -1 }))} title={`${fullHd[0]}×${fullHd[1]}`}>
+              Full HD
+            </button>
+          </div>
+          <label className="rn-fps">
+            Quadros por segundo
+            <select value={quality.fps} onChange={(e) => setQuality((q) => ({ ...q, fps: Number(e.target.value) }))}>
+              {[24, 30, 60].map((f) => (
+                <option key={f} value={f}>
+                  {f} fps
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="muted small">Prévia menor sai bem mais rápido. Use Full HD/100% pra versão final.</p>
+        </section>
+
+        <section className="rn-card rn-go">
+          {bad.length > 0 && !job?.busy && (
+            <p className="rn-warn">
+              <XCircle size={13} /> {bad.length} item(ns) sem acesso: o Claude vai ignorar. Confira a lista ao lado.
+            </p>
+          )}
+          {job?.busy ? (
+            <>
+              <div className="rn-busy">
+                <Loader2 size={16} className="spin" /> Criando o vídeo… {fmtT((now - job.t0) / 1000)}
+              </div>
+              <button className="btn small" onClick={() => api.renderCancel()}>
+                <Square size={12} /> Cancelar
+              </button>
+            </>
+          ) : (
+            <button className="rn-create" onClick={create}>
+              <Sparkles size={18} /> Criar Vídeo
+            </button>
+          )}
+          {job && (
+            <div className="rn-log" ref={logRef}>
+              {job.log.map((l, i) => (
+                <div key={i} className={'rn-ev ' + l.kind}>
+                  {l.text}
+                </div>
+              ))}
+              {job.error && <div className="rn-ev error">{job.error}</div>}
+            </div>
+          )}
+          {job && !job.busy && job.path && (
+            <div className="rn-result">
+              <video src={fileUrl(job.path)} controls />
+              <div className="rn-chips">
+                <button className="btn small" onClick={() => api.showItem(job.path!)}>
+                  <FolderOpen size={13} /> Mostrar na pasta
+                </button>
+                <span className="muted small">pronto em {fmtT(job.seconds ?? 0)}</span>
+              </div>
+            </div>
+          )}
+          {job && !job.busy && !job.error && job.summary && <p className="rn-summary">{job.summary}</p>}
+        </section>
+      </aside>
+    </div>
+  )
+}

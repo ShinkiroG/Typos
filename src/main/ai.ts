@@ -63,7 +63,7 @@ const whereClaude = () =>
   )
 
 /** Onde está o Claude Code: caminho escolhido > comando no PATH > instalador oficial. */
-async function findClaudeCode(s: AiSettings): Promise<{ path: string; source: string } | null> {
+export async function findClaudeCode(s: AiSettings): Promise<{ path: string; source: string } | null> {
   if (s.claudeCodePath && existsSync(s.claudeCodePath)) return { path: s.claudeCodePath, source: 'caminho escolhido' }
   const onPath = await whereClaude()
   if (onPath) return { path: onPath.trim(), source: 'comando claude' }

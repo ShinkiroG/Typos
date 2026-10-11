@@ -147,6 +147,14 @@ const api = {
   motionPasteImage: (bytes: Uint8Array, name: string): Promise<string> => ipcRenderer.invoke('motion:pasteImage', bytes, name),
   systemFonts: (): Promise<string[]> => ipcRenderer.invoke('sys:fonts'),
   motionDemoFile: (html: string): Promise<string> => ipcRenderer.invoke('motion:demoFile', html),
+  renderCheck: (paths: string[]): Promise<{ path: string; ok: boolean; files?: number; size?: number; error?: string }[]> => ipcRenderer.invoke('render:check', paths),
+  renderStart: (job: { dir: string; brief: string; readDirs: string[]; styleGuide?: string }): Promise<{ path?: string; summary: string; seconds: number } | { error: string }> =>
+    ipcRenderer.invoke('render:start', job),
+  renderCancel: () => ipcRenderer.invoke('render:cancel'),
+  onRenderProgress: (cb: (ev: { kind: 'tool' | 'say' | 'info'; text: string }) => void) => {
+    ipcRenderer.removeAllListeners('render:progress')
+    ipcRenderer.on('render:progress', (_e, ev) => cb(ev))
+  },
   findSfxLibraries: (): Promise<{ libs: { path: string; name: string; program: string; why: string; files: number }[]; hints: number } | { error: string }> =>
     ipcRenderer.invoke('ai:findSfx'),
   motionTrain: (job: { prompt: string; images: string[] }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
