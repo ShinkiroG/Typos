@@ -1011,94 +1011,116 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   }
 
   return (
-    <div className="workspace" style={gridLayout(leftOpen, panelOpen, timelineOpen, leftW, rightW)}>
-      <header className="topbar">
-        <div className="tb-left">
+    <div className="workspace" style={gridLayout(leftOpen, panelOpen, timelineOpen, leftW, rightW, mode === 'script')}>
+      <header className={'topbar v2' + (mode === 'script' ? ' with-context' : '')}>
+        {/* ---------- barra principal: navegação, documento, ações ---------- */}
+        <div className="tb-row tb-main">
+          <div className="tb-brand" title="Typos">
+            <span className="tb-logo">T</span>
+          </div>
           <MenuBar menus={menus} />
-          <button className="icon-btn" title="Painel Inserir" onClick={() => setLeftOpen((o) => !o)}>
-            {leftOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
-          </button>
+          <span className="tb-div" />
           <button className="icon-btn" title="Voltar pros roteiros" onClick={async () => (await save(), onClose())}>
             <Home size={17} />
           </button>
-          <div className="ws-switch">
+          <nav className="ws-switch v2">
             <button className={mode === 'script' ? 'on' : ''} title="Roteiro: escrever" onClick={() => goMode('script')}>
-              <PenLine size={16} />
+              <PenLine size={15} />
+              <span>Roteiro</span>
             </button>
             <button className={mode === 'montage' ? 'on' : ''} title="Montagem: mídia, cortes da narração e timeline de edição" onClick={() => goMode('montage')}>
-              <Film size={16} />
+              <Film size={15} />
+              <span>Montagem</span>
             </button>
             <button className={mode === 'style' ? 'on' : ''} title="Estilo: treinar o motion com o Claude e configurar o formato" onClick={() => goMode('style')}>
-              <Palette size={16} />
+              <Palette size={15} />
+              <span>Estilo</span>
+            </button>
+          </nav>
+
+          <div className="tb-doc">
+            <input
+              className="title-input"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onFocus={(e) => draft && title === 'Sem título' && e.target.select()}
+              spellCheck={false}
+              placeholder="Nome do roteiro"
+            />
+            <span
+              className={'save-state ' + saveState + (draft ? ' draft' : '')}
+              title={draft ? 'Rascunho: salva sozinho; use "Salvar…" pra escolher a pasta' : 'Salva sozinho (Ctrl+S força · Ctrl+Shift+S salva como)'}
+            >
+              {saveState === 'saving' && <Loader2 size={12} className="spin" />}
+              {saveState === 'saved' && <Check size={12} />}
+              {draft && saveState === 'saved' ? 'Rascunho' : { saved: 'Salvo', dirty: 'Editando…', saving: 'Salvando', error: 'Erro ao salvar' }[saveState]}
+            </span>
+          </div>
+
+          <div className="tb-right">
+            <label className="tb-group tb-format" title={`Formato: ${format?.name} · ${format?.aspect} · corretor ${langLabel(lang)} (muda no workspace Estilo)`}>
+              <span className="tb-group-label">Formato</span>
+              <select className="format-select" value={formatId} onChange={(e) => setFormatId(e.target.value)}>
+                {formats.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="tb-group save-group">
+              {draft ? (
+                <button className="btn small primary" title="Escolher onde salvar (Ctrl+S)" onClick={saveAs}>
+                  <Save size={14} /> Salvar…
+                </button>
+              ) : (
+                <button className="icon-btn" title="Salvar como… (Ctrl+Shift+S): uma cópia em outra pasta, e continua nela" onClick={saveAs}>
+                  <Save size={16} />
+                </button>
+              )}
+              <button className="icon-btn" title="Abrir pasta do projeto" onClick={() => api.openPath(dir)}>
+                <FolderOpen size={16} />
+              </button>
+              <button className="icon-btn" title="Mudar pasta do projeto (move o roteiro e os arquivos dele)" onClick={moveProject}>
+                <FolderInput size={16} />
+              </button>
+            </div>
+            <button className="btn small claude-btn" title="Salva e copia um pedido pronto pra colar no Claude" onClick={sendToClaude}>
+              <Send size={14} /> Claude
             </button>
           </div>
-          <input
-            className="title-input"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onFocus={(e) => draft && title === 'Sem título' && e.target.select()}
-            spellCheck={false}
-            placeholder="Nome do roteiro"
-          />
         </div>
-        {mode === 'script' ? (
-        <FilterBar
-          hidden={hidden}
-          onHidden={setHidden}
-          showTimes={showTimes}
-          onShowTimes={setShowTimes}
-          showTrack={showTrack}
-          onShowTrack={(v) => {
-            setShowTrack(v)
-            if (v && !trackClips.length) setToast('A trilha está vazia: ponha música/SFX na timeline (ou na Montagem) que as barras aparecem ao lado do texto.')
-          }}
-        />
-        ) : (
-          <div className="ws-title">{mode === 'montage' ? 'Montagem' : 'Estilo · treinar motion'}</div>
+
+        {/* ---------- barra de contexto (Roteiro): painéis, filtros, visualização ---------- */}
+        {mode === 'script' && (
+          <div className="tb-row tb-context">
+            <div className="tb-group">
+              <button className={'icon-btn' + (leftOpen ? ' on' : '')} title="Painel Inserir" onClick={() => setLeftOpen((o) => !o)}>
+                {leftOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+              </button>
+            </div>
+            <FilterBar
+              hidden={hidden}
+              onHidden={setHidden}
+              showTimes={showTimes}
+              onShowTimes={setShowTimes}
+              showTrack={showTrack}
+              onShowTrack={(v) => {
+                setShowTrack(v)
+                if (v && !trackClips.length) setToast('A trilha está vazia: ponha música/SFX na timeline (ou na Montagem) que as barras aparecem ao lado do texto.')
+              }}
+            />
+            <span className="tb-grow" />
+            <div className="tb-group">
+              <button className={'icon-btn' + (timelineOpen ? ' on' : '')} title="Timeline (áudio + texto)" onClick={() => setTimelineOpen((o) => !o)}>
+                <AudioLines size={16} />
+              </button>
+              <button className={'icon-btn' + (panelOpen ? ' on' : '')} title="Painel lateral" onClick={() => setPanelOpen((o) => !o)}>
+                {panelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+              </button>
+            </div>
+          </div>
         )}
-        <div className="tb-right">
-          <select className="format-select" value={formatId} onChange={(e) => setFormatId(e.target.value)} title={`Formato: ${format?.name} · ${format?.aspect} · corretor ${langLabel(lang)} (muda em Formatos)`}>
-            {formats.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </select>
-          <div className="save-group">
-            {draft ? (
-              <button className="btn small primary" title="Escolher onde salvar (Ctrl+S)" onClick={saveAs}>
-                <Save size={14} /> Salvar…
-              </button>
-            ) : (
-              <button className="icon-btn" title="Salvar como… (Ctrl+Shift+S): uma cópia em outra pasta, e continua nela" onClick={saveAs}>
-                <Save size={16} />
-              </button>
-            )}
-            <button className="icon-btn" title="Abrir pasta do projeto" onClick={() => api.openPath(dir)}>
-              <FolderOpen size={16} />
-            </button>
-            <button className="icon-btn" title="Mudar pasta do projeto (move o roteiro e os arquivos dele)" onClick={moveProject}>
-              <FolderInput size={16} />
-            </button>
-          </div>
-          <span
-            className={'save-state ' + saveState + (draft ? ' draft' : '')}
-            title={draft ? 'Rascunho: salva sozinho; use "Salvar…" pra escolher a pasta' : 'Salva sozinho (Ctrl+S força · Ctrl+Shift+S salva como)'}
-          >
-            {saveState === 'saving' && <Loader2 size={13} className="spin" />}
-            {saveState === 'saved' && <Check size={13} />}
-            {draft && saveState === 'saved' ? 'Rascunho' : { saved: 'Salvo', dirty: 'Editando…', saving: 'Salvando', error: 'Erro ao salvar' }[saveState]}
-          </span>
-          <button className="btn small claude-btn" title="Salva e copia um pedido pronto pra colar no Claude" onClick={sendToClaude}>
-            <Send size={14} /> Claude
-          </button>
-          <button className={'icon-btn' + (timelineOpen ? ' on' : '')} title="Timeline (áudio + texto)" onClick={() => setTimelineOpen((o) => !o)}>
-            <AudioLines size={17} />
-          </button>
-          <button className="icon-btn" title="Painel lateral" onClick={() => setPanelOpen((o) => !o)}>
-            {panelOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
-          </button>
-        </div>
       </header>
 
       {styleVisited && (
@@ -1739,13 +1761,13 @@ function remember(key: string, value: unknown) {
 }
 
 /** grade da tela: [Inserir] | texto | [painel direito], com timeline opcional embaixo */
-function gridLayout(left: boolean, right: boolean, timeline: boolean, leftW = 230, rightW = 320): React.CSSProperties {
+function gridLayout(left: boolean, right: boolean, timeline: boolean, leftW = 230, rightW = 320, context = true): React.CSSProperties {
   const cols = [left && `${leftW}px`, 'minmax(0, 1fr)', right && `${rightW}px`].filter(Boolean) as string[]
   const mid = [left && 'left', 'main', right && 'side'].filter(Boolean) as string[]
   const row = (name: string) => '"' + cols.map(() => name).join(' ') + '"'
   return {
     gridTemplateColumns: cols.join(' '),
-    gridTemplateRows: '52px 1fr ' + (timeline ? 'auto ' : '') + '30px',
+    gridTemplateRows: (context ? '94px' : '52px') + ' 1fr ' + (timeline ? 'auto ' : '') + '32px',
     gridTemplateAreas: [row('top'), '"' + mid.join(' ') + '"', timeline && row('timeline'), row('status')].filter(Boolean).join(' ')
   }
 }

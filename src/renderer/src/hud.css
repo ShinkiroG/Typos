@@ -1,0 +1,524 @@
+/* =====================================================================
+   HUD v2 — uma linguagem só pro app inteiro
+   camadas de superfície · gradiente de destaque (roxo → rosa) · grupos
+   ===================================================================== */
+:root {
+  --bg: #0b0d12;
+  --bg-2: #10131a;
+  --bg-3: #181c25;
+  --bg-4: #1f2430;
+  --line: #232937;
+  --line-soft: rgba(255, 255, 255, 0.06);
+  --text: #f2f4f8;
+  --muted: #8a93a6;
+  --accent: #6f7dff;
+  --accent-2: #8a4dff;
+  --accent-3: #4fd6f5;
+  --grad: linear-gradient(135deg, #8a3dff 0%, #5b6bff 50%, #4fd6f5 100%);
+  --grad-soft: linear-gradient(135deg, rgba(138, 61, 255, 0.18), rgba(91, 107, 255, 0.12) 50%, rgba(79, 214, 245, 0.1));
+  --glow: 0 6px 22px rgba(98, 92, 255, 0.35);
+  --surface: linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0));
+  --radius: 10px;
+}
+
+body {
+  background: radial-gradient(1200px 600px at 15% -10%, rgba(138, 61, 255, 0.07), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(79, 214, 245, 0.05), transparent 60%), var(--bg);
+}
+
+/* barras de rolagem finas */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+  background-clip: padding-box;
+}
+
+/* ---------- botões ---------- */
+.btn {
+  border-radius: 8px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.04);
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    box-shadow 0.15s,
+    transform 0.1s;
+}
+.btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.btn.primary {
+  background: var(--grad);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: var(--glow);
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--grad);
+  filter: brightness(1.08);
+}
+.btn.primary:disabled {
+  box-shadow: none;
+  filter: saturate(0.4);
+}
+.icon-btn {
+  border-radius: 8px;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+}
+.icon-btn.on {
+  color: #fff;
+  background: rgba(124, 140, 255, 0.2);
+}
+
+/* ---------- topo v2: duas camadas ---------- */
+.topbar.v2 {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  position: relative;
+  overflow: visible;
+  background: linear-gradient(180deg, #151925 0%, #0f121a 100%);
+  border-bottom: 0;
+  z-index: 40;
+}
+.topbar.v2::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--grad);
+  opacity: 0.45;
+}
+.tb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  min-width: 0;
+}
+.tb-main {
+  height: 52px;
+  flex: none;
+}
+.tb-context {
+  height: 42px;
+  flex: none;
+  border-top: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.015);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tb-context::-webkit-scrollbar {
+  display: none;
+}
+.tb-brand {
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.tb-logo {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--grad);
+  color: #fff;
+  font: 800 16px var(--font-script);
+  box-shadow: var(--glow);
+}
+.tb-div {
+  width: 1px;
+  height: 22px;
+  background: var(--line);
+  flex: none;
+}
+.tb-grow {
+  flex: 1;
+}
+.tb-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  flex: none;
+}
+.tb-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0 4px 0 8px;
+}
+.tb-format .format-select {
+  background: transparent;
+  border: 0;
+  font-weight: 600;
+  padding: 4px 6px;
+  max-width: 220px;
+}
+.topbar.v2 .menubar {
+  margin-right: 0;
+}
+
+/* workspaces: a navegação principal, com nome */
+.ws-switch.v2 {
+  padding: 3px;
+  gap: 2px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--line-soft);
+}
+.ws-switch.v2 button {
+  width: auto;
+  height: 30px;
+  padding: 0 12px 0 10px;
+  gap: 7px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 8px;
+  font: 600 13px var(--font-ui);
+  color: var(--muted);
+  transition:
+    background 0.15s,
+    color 0.15s,
+    box-shadow 0.15s;
+}
+.ws-switch.v2 button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+.ws-switch.v2 button.on {
+  background: var(--grad);
+  color: #fff;
+  box-shadow: var(--glow);
+}
+
+/* documento no centro: título + estado de salvo */
+.tb-doc {
+  flex: 1;
+  min-width: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.topbar.v2 .title-input {
+  max-width: 560px;
+  field-sizing: content;
+  min-width: 80px;
+  text-align: center;
+  font: 650 15px var(--font-ui);
+  padding: 5px 10px;
+  border-radius: 8px;
+}
+.topbar.v2 .title-input:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.topbar.v2 .save-state {
+  flex: none;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line-soft);
+}
+.topbar.v2 .tb-right {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
+  gap: 8px;
+}
+.claude-btn {
+  background: var(--grad) !important;
+  border-color: transparent !important;
+  color: #fff !important;
+  box-shadow: var(--glow);
+  font-weight: 600;
+}
+.claude-btn:hover {
+  filter: brightness(1.08);
+}
+
+/* filtros na barra de contexto */
+.tb-context .tb-filters {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+  flex: none;
+}
+.tb-context .filter-btn {
+  border-radius: 7px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.tb-context .filter-btn.on:not(.t-time) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--tc, var(--accent)) 14%, transparent);
+}
+.tb-context .filter-btn.t-time.on {
+  color: #fff;
+  background: rgba(124, 140, 255, 0.22);
+}
+
+/* ---------- painéis laterais ---------- */
+.left-panel,
+.side {
+  background: linear-gradient(180deg, #11141c, #0e1117);
+}
+.left-panel {
+  border-right: 1px solid var(--line-soft);
+}
+.side {
+  border-left: 1px solid var(--line-soft);
+}
+.lp-title {
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+.insert-btn {
+  border-radius: 10px;
+}
+.insert-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+/* abas da lateral: controle segmentado */
+.side .tabs {
+  margin: 10px 10px 4px;
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.side .tabs button {
+  flex: 1;
+  border-radius: 7px;
+  border-bottom: 0 !important;
+  padding: 6px 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.side .tabs button.active {
+  background: var(--grad-soft);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(124, 140, 255, 0.35);
+}
+.search {
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
+  border-color: var(--line-soft);
+}
+
+/* ---------- área do texto ---------- */
+.editor-scroll {
+  background: radial-gradient(900px 400px at 50% -80px, rgba(124, 140, 255, 0.05), transparent 70%);
+}
+
+/* ---------- barra de status ---------- */
+.statusbar {
+  position: relative;
+  background: linear-gradient(0deg, #0e1118, #12151d);
+  border-top: 0;
+  gap: 6px;
+  padding: 0 10px;
+}
+.statusbar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--grad);
+  opacity: 0.3;
+}
+.statusbar .stat {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line-soft);
+  font-size: 11.5px;
+}
+.statusbar .stat.time {
+  background: var(--grad-soft);
+  border-color: rgba(124, 140, 255, 0.3);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---------- timelines e transporte ---------- */
+.timeline-area {
+  background: linear-gradient(180deg, #10131a, #0c0e13);
+  border-top: 1px solid var(--line-soft);
+}
+.tl-head {
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--line-soft);
+}
+.play-btn,
+.mt-play {
+  background: var(--grad) !important;
+  color: #fff !important;
+  box-shadow: var(--glow);
+}
+.mt-toolbar {
+  background: linear-gradient(180deg, #141822, #10131a);
+}
+.mt-pool,
+.mt-inspector {
+  background: linear-gradient(180deg, #11141c, #0e1117);
+}
+.mt-bin.on {
+  background: var(--grad-soft);
+  border-color: rgba(124, 140, 255, 0.45);
+}
+
+/* ---------- menus, modais ---------- */
+.ctx-menu,
+.mb-list {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(20, 23, 31, 0.92);
+  backdrop-filter: blur(14px);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+.modal {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, #171b25, #12151d);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+}
+.modal-backdrop {
+  backdrop-filter: blur(4px);
+}
+.toast {
+  border-radius: 12px;
+  background: rgba(20, 23, 31, 0.95);
+  border: 1px solid rgba(124, 140, 255, 0.35);
+  box-shadow: var(--glow);
+}
+
+/* ---------- tela inicial ---------- */
+.welcome h1 {
+  background: var(--grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.welcome-logo svg {
+  color: var(--accent-2);
+}
+.welcome .btn.big {
+  border-radius: 12px;
+  padding: 12px 20px;
+}
+.recent li {
+  border-radius: 12px;
+  border: 1px solid transparent;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.recent li:hover {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(124, 140, 255, 0.3);
+}
+
+/* ---------- Estilo ---------- */
+.st-list,
+.st-side {
+  background: linear-gradient(180deg, #11141c, #0e1117);
+}
+.st-chip.on {
+  background: var(--grad-soft);
+  border-color: rgba(124, 140, 255, 0.5);
+}
+.st-chip.custom {
+  border-style: solid;
+}
+.st-chip.add {
+  border-style: dashed;
+}
+.st-sec h4 {
+  background: var(--grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  display: inline-block;
+}
+
+/* ---------- ajustes v2 ---------- */
+.topbar.v2 .title-input {
+  width: auto;
+  flex: 0 1 auto;
+}
+/* barra da mídia na Montagem: botões numa linha (quebra a fileira, não o texto) */
+.mt-pool-bar {
+  flex-wrap: wrap;
+}
+.mt-pool-bar .btn {
+  white-space: nowrap;
+}
+.st-rocket {
+  background: var(--grad);
+  box-shadow: var(--glow);
+}
+/* tela inicial: blocos com superfície própria */
+.welcome-card {
+  padding: 34px 36px;
+  border-radius: 20px;
+  border: 1px solid var(--line-soft);
+  background:
+    radial-gradient(600px 200px at 0% 0%, rgba(138, 61, 255, 0.12), transparent 70%),
+    linear-gradient(180deg, rgba(23, 27, 37, 0.85), rgba(15, 18, 25, 0.85));
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+}
+.welcome-logo h1 {
+  font-size: 38px;
+  letter-spacing: -0.01em;
+}
+.welcome-lists section {
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--line-soft);
+}
+.welcome-lists h3 {
+  margin-top: 0;
+}

@@ -24,7 +24,19 @@ import {
 import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type FontCase, DEFAULT_FONT_CASES } from '../lib'
 import { FontPicker } from './FontPicker'
 
-const CAMERA = ['estática', 'zoom-in lento', 'zoom punch (rápido)', 'pan lateral', 'parallax 2.5D', 'câmera na mão (tremida)', 'whip pan', 'rotação leve', 'dolly / push-in', 'tracking em elemento']
+const CAMERA = [
+  'estática',
+  'zoom-in lento',
+  'zoom punch (rápido)',
+  'pan lateral',
+  'parallax 2.5D',
+  'câmera na mão (tremida)',
+  'câmera com shake leve suavizado',
+  'whip pan',
+  'rotação leve',
+  'dolly / push-in',
+  'tracking em elemento'
+]
 const TRANSITIONS = ['corte seco', 'whip / swipe', 'zoom through', 'glitch', 'fade', 'slide', 'máscara / wipe', 'flash branco', 'match cut', 'luma fade']
 const BACKGROUNDS = ['sólido escuro', 'gradiente suave', 'textura / grão', 'gameplay desfocado', 'papel / colagem', 'grid / tech', 'ilustração plana', 'foto com overlay']
 const PACES: MotionStyle['pace'][] = ['calmo', 'médio', 'frenético']
@@ -670,6 +682,7 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
                   {c}
                 </button>
               ))}
+              <CustomChips list={m.camera} presets={CAMERA} onChange={(camera) => patchM({ camera })} />
             </div>
           </div>
           <div className="st-row">
@@ -680,6 +693,7 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
                   {c}
                 </button>
               ))}
+              <CustomChips list={m.transitions} presets={TRANSITIONS} onChange={(transitions) => patchM({ transitions })} />
             </div>
           </div>
           <div className="st-row">
@@ -779,5 +793,46 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
         )}
       </aside>
     </div>
+  )
+}
+
+/** estilos que você digitou (aparecem ligados, com x) + botão "+ outro" pra digitar mais */
+function CustomChips({ list, presets, onChange }: { list?: string[]; presets: string[]; onChange: (v: string[]) => void }) {
+  const [typing, setTyping] = useState(false)
+  const [text, setText] = useState('')
+  const custom = (list ?? []).filter((x) => !presets.includes(x))
+  const add = () => {
+    const v = text.trim()
+    if (v && !(list ?? []).includes(v)) onChange([...(list ?? []), v])
+    setText('')
+    setTyping(false)
+  }
+  return (
+    <>
+      {custom.map((c) => (
+        <span key={c} className="st-chip on custom" title="Seu estilo (clique no x pra tirar)">
+          {c}
+          <X size={11} onClick={() => onChange((list ?? []).filter((x) => x !== c))} />
+        </span>
+      ))}
+      {typing ? (
+        <input
+          autoFocus
+          className="st-chip-input"
+          placeholder="digite e Enter…"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') add()
+            if (e.key === 'Escape') setTyping(false)
+          }}
+          onBlur={add}
+        />
+      ) : (
+        <button className="st-chip add" onClick={() => setTyping(true)} title="Digitar um estilo seu">
+          <Plus size={11} /> outro
+        </button>
+      )}
+    </>
   )
 }
