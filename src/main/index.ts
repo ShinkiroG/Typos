@@ -197,6 +197,7 @@ function createWindow() {
     backgroundColor: '#0e1014',
     autoHideMenuBar: true,
     title: 'Typos',
+    ...(existsSync(join(app.getAppPath(), 'build', 'icon.png')) ? { icon: join(app.getAppPath(), 'build', 'icon.png') } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,

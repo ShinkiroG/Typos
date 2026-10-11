@@ -16,6 +16,7 @@ import { TextStyle, Color, FontFamily, FontSize } from '@tiptap/extension-text-s
 import Highlight from '@tiptap/extension-highlight'
 import { FormatBubble } from './FormatBubble'
 import { RenderStudio } from '../render/RenderStudio'
+import logoUrl from '../assets/logo.png'
 import { FilterBar } from './FilterBar'
 import { TrackGutter } from './TrackGutter'
 import { AiLineAssist } from './AiLineAssist'
@@ -1029,7 +1030,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         {/* ---------- barra principal: navegação, documento, ações ---------- */}
         <div className="tb-row tb-main">
           <div className="tb-brand" title="Typos">
-            <span className="tb-logo">T</span>
+            <img className="tb-logo img" src={logoUrl} alt="Typos" />
           </div>
           <MenuBar menus={menus} />
           <span className="tb-div" />

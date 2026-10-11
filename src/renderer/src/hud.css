@@ -860,3 +860,12 @@ body {
   display: flex;
   gap: 6px;
 }
+
+/* logo de verdade (ícone do app) */
+.tb-logo.img {
+  background: none;
+  box-shadow: none;
+  border-radius: 7px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 8px rgba(91, 107, 255, 0.45));
+}

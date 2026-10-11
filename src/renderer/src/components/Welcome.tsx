@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { FilePlus2, FolderOpen, Settings, X, Trash2, FileClock, History, PenLine, Film, Palette, Clapperboard, ArrowRight, Lightbulb, Play } from 'lucide-react'
 import { api, type ProjectData } from '../lib'
 import '../home.css'
+import logoUrl from '../assets/logo.png'
 
 type Recent = { dir: string; title: string; openedAt: string }
 type Draft = Awaited<ReturnType<typeof api.drafts>>[number]
@@ -46,6 +47,18 @@ const INTRO_LINES: { kind: string; text: string; w?: number }[] = [
 ]
 
 const INTRO_KEY = 'typos.introPlayed'
+/** abertura noturna: enquanto o app não tem a chave de modo noturno, segue a hora (18h–6h) */
+const isNight = () => {
+  const h = new Date().getHours()
+  return h >= 18 || h < 6
+}
+/** estrelas do céu da abertura noturna (posições fixas, pseudo-aleatórias) */
+const STARS = Array.from({ length: 70 }, (_, i) => ({
+  x: (i * 53.7) % 100,
+  y: (i * 31.3 + (i % 7) * 11) % 100,
+  s: 1 + ((i * 7) % 3),
+  d: (i * 0.37) % 3
+}))
 const shouldPlayIntro = () => {
   try {
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return false
@@ -55,7 +68,7 @@ const shouldPlayIntro = () => {
   }
 }
 
-function Intro({ onDone }: { onDone: () => void }) {
+function Intro({ onDone, night }: { onDone: () => void; night: boolean }) {
   const [leaving, setLeaving] = useState(false)
   useEffect(() => {
     try {
@@ -63,8 +76,8 @@ function Intro({ onDone }: { onDone: () => void }) {
     } catch {
       /* sem storage: toca de novo na próxima vez, tudo bem */
     }
-    const a = setTimeout(() => setLeaving(true), 2500)
-    const b = setTimeout(onDone, 3100)
+    const a = setTimeout(() => setLeaving(true), night ? 3100 : 2500)
+    const b = setTimeout(onDone, night ? 3700 : 3100)
     return () => (clearTimeout(a), clearTimeout(b))
   }, [])
   const skip = () => {
@@ -72,7 +85,16 @@ function Intro({ onDone }: { onDone: () => void }) {
     setTimeout(onDone, 350)
   }
   return (
-    <div className={'intro' + (leaving ? ' leaving' : '')} onClick={skip} title="Clique pra pular">
+    <div className={'intro' + (night ? ' night' : '') + (leaving ? ' leaving' : '')} onClick={skip} title="Clique pra pular">
+      {night && (
+        <div className="intro-sky" aria-hidden>
+          {STARS.map((st, i) => (
+            <i key={i} style={{ left: st.x + '%', top: st.y + '%', width: st.s, height: st.s, animationDelay: st.d + 's' }} />
+          ))}
+          <span className="intro-moon" />
+        </div>
+      )}
+      {night && <img className="intro-icon" src={logoUrl} alt="" />}
       <div className="intro-page">
         {INTRO_LINES.map((l, i) => (
           <div key={i} className={'intro-line ' + l.kind} style={{ animationDelay: `${0.15 + i * 0.22}s`, ...(l.w ? { width: l.w + '%' } : {}) }}>
@@ -83,7 +105,7 @@ function Intro({ onDone }: { onDone: () => void }) {
       </div>
       <div className="intro-word">
         {'Typos'.split('').map((c, i) => (
-          <span key={i} style={{ animationDelay: `${1.55 + i * 0.08}s` }}>
+          <span key={i} style={{ animationDelay: `${(night ? 2.1 : 1.55) + i * 0.08}s` }}>
             {c}
           </span>
         ))}
@@ -102,7 +124,14 @@ export function Welcome({
   const [recent, setRecent] = useState<Recent[]>([])
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [error, setError] = useState('')
-  const [intro, setIntro] = useState(shouldPlayIntro)
+  const [intro, setIntro] = useState<false | 'day' | 'night'>(() => (shouldPlayIntro() ? (isNight() ? 'night' : 'day') : false))
+  /** clicar no logo repete a abertura, alternando dia/noite */
+  const lastIntro = useRef<'day' | 'night'>(isNight() ? 'day' : 'night')
+  const replayIntro = () => {
+    const next = lastIntro.current === 'night' ? 'day' : 'night'
+    lastIntro.current = next
+    setIntro(next)
+  }
   const tip = useMemo(() => TIPS[Math.floor(Math.random() * TIPS.length)], [])
 
   const refresh = () => {
@@ -130,7 +159,7 @@ export function Welcome({
 
   return (
     <div className={'welcome home2' + (intro ? ' behind-intro' : '')}>
-      {intro && <Intro onDone={() => setIntro(false)} />}
+      {intro && <Intro key={intro} night={intro === 'night'} onDone={() => setIntro(false)} />}
       <div className="home-bg" aria-hidden>
         <span className="blob b1" />
         <span className="blob b2" />
@@ -149,7 +178,7 @@ export function Welcome({
       <div className="home-wrap">
         <section className="home-hero">
           <div className="home-brand">
-            <span className="home-logo">T</span>
+            <img className="home-logo" src={logoUrl} alt="Typos" title="Ver a abertura de novo (alterna dia/noite)" onClick={replayIntro} />
             <div>
               <h1>Typos</h1>
               <span className="home-ver">V2</span>

@@ -496,3 +496,133 @@
     animation: none;
   }
 }
+
+/* logo da home = ícone do app */
+.home2 img.home-logo {
+  background: none;
+  object-fit: contain;
+  border-radius: 16px;
+  cursor: pointer;
+  box-shadow: none;
+  filter: drop-shadow(0 12px 30px rgba(91, 107, 255, 0.45));
+  transition: transform 0.2s;
+}
+.home2 img.home-logo:hover {
+  transform: rotate(-4deg) scale(1.05);
+}
+
+/* ---------- abertura noturna: céu, lua e o roteiro escrito em luz ---------- */
+.intro.night {
+  background: radial-gradient(ellipse at 50% 120%, #1b1f4a 0%, #0a0c1d 45%, #04050b 100%);
+}
+.intro-sky {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.intro-sky i {
+  position: absolute;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0;
+  box-shadow: 0 0 6px rgba(180, 200, 255, 0.9);
+  animation:
+    star-in 0.8s ease-out forwards,
+    star-twinkle 2.4s ease-in-out 0.8s infinite alternate;
+}
+@keyframes star-in {
+  to {
+    opacity: 0.8;
+  }
+}
+@keyframes star-twinkle {
+  to {
+    opacity: 0.25;
+  }
+}
+.intro-moon {
+  position: absolute;
+  right: 14%;
+  top: 12%;
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  box-shadow:
+    inset -16px 8px 0 0 #e9ecff,
+    0 0 40px rgba(170, 185, 255, 0.25);
+  transform: rotate(-20deg);
+  animation: moon-in 1.2s ease-out both;
+}
+@keyframes moon-in {
+  from {
+    opacity: 0;
+    transform: rotate(-60deg) translateY(30px);
+  }
+}
+.intro.night .intro-page {
+  background: linear-gradient(180deg, #141a33, #0e1226);
+  border: 1px solid rgba(124, 140, 255, 0.35);
+  box-shadow:
+    0 0 0 1px rgba(79, 214, 245, 0.08),
+    0 40px 120px rgba(91, 107, 255, 0.4);
+  animation:
+    intro-page 0.7s cubic-bezier(0.2, 0.9, 0.3, 1.2) both,
+    night-page-out 0.6s 1.75s ease-in forwards;
+}
+@keyframes night-page-out {
+  to {
+    opacity: 0;
+    transform: rotate(0deg) scale(0.6);
+    filter: blur(6px);
+  }
+}
+.intro.night .intro-line {
+  background: linear-gradient(90deg, #8a3dff, #5b6bff 50%, #4fd6f5);
+  box-shadow: 0 0 12px rgba(91, 107, 255, 0.7);
+  opacity: 0.9;
+}
+.intro.night .intro-line.chapter {
+  background: none;
+  box-shadow: none;
+  color: #c4b5ff;
+  text-shadow: 0 0 12px rgba(138, 61, 255, 0.9);
+}
+.intro.night .intro-line.prompt {
+  background: rgba(79, 224, 196, 0.12);
+  color: #6ff5da;
+  box-shadow: 0 0 14px rgba(79, 224, 196, 0.45);
+  text-shadow: 0 0 8px rgba(79, 224, 196, 0.8);
+}
+.intro.night .intro-line.sound {
+  background: rgba(244, 114, 182, 0.12);
+  color: #ff9fd0;
+  box-shadow: 0 0 14px rgba(244, 114, 182, 0.45);
+  text-shadow: 0 0 8px rgba(244, 114, 182, 0.8);
+}
+.intro.night .intro-caret {
+  background: #4fd6f5;
+  box-shadow: 0 0 10px #4fd6f5;
+}
+.intro-icon {
+  position: absolute;
+  width: 150px;
+  height: 150px;
+  opacity: 0;
+  filter: drop-shadow(0 0 40px rgba(91, 107, 255, 0.7));
+  animation: night-icon 1s 1.95s cubic-bezier(0.2, 0.9, 0.3, 1.25) forwards;
+}
+@keyframes night-icon {
+  from {
+    opacity: 0;
+    transform: scale(0.4) rotate(-12deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+.intro.night .intro-word span {
+  text-shadow: none;
+  filter: drop-shadow(0 0 14px rgba(91, 107, 255, 0.6));
+}
