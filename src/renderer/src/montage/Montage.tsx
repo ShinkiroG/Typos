@@ -27,12 +27,19 @@ import {
   Settings2,
   Gauge,
   Folder,
-  Download
+  Download,
+  Star,
+  Link2,
+  FolderOpen,
+  Settings,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react'
 import { api, clipDur, clipEndT, fileUrl, uid, type MontageBin, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
 import { Recorder } from '../audio'
-import { EditTimeline, MEDIA_MIME, mediaLen, splitClip, type Tool } from './EditTimeline'
+import { askText } from '../components/AskDialog'
+import { EditTimeline, MEDIA_MIME, PCFILE_MIME, mediaLen, splitClip, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
 
 export const fmtTc = (t: number) => {
@@ -248,6 +255,8 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
         future.current = []
       }
       lastGesture.current = gesture ?? null
+      // quem chamar change de novo antes do React redesenhar já enxerga esta versão
+      dataRef.current = next
       onChange(next)
     },
     [onChange]
@@ -642,9 +651,10 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
   })
 
   // ---------- mídia ----------
-  const importPaths = async (paths: string[], toBin: string) => {
-    const fresh = paths.filter((p) => !data.media.some((m) => m.path === p && m.bin === toBin))
-    if (!fresh.length) return
+  const importPaths = async (paths: string[], toBin: string): Promise<MontageMedia[]> => {
+    const already = dataRef.current.media.filter((m) => paths.includes(m.path) && m.bin === toBin)
+    const fresh = paths.filter((p) => !already.some((m) => m.path === p))
+    if (!fresh.length) return already
     setImporting((n) => n + fresh.length)
     const added: MontageMedia[] = []
     for (const p of fresh) {
@@ -667,10 +677,11 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
       })
     }
     if (added.length) change({ ...dataRef.current, media: [...dataRef.current.media, ...added] })
+    return [...already, ...added]
   }
 
-  const addBin = () => {
-    const name = prompt('Nome da pasta:', 'Nova pasta')
+  const addBin = async () => {
+    const name = await askText('Nome da pasta:', 'Nova pasta')
     if (!name?.trim()) return
     const b: MontageBin = { id: uid(), name: name.trim(), role: 'custom' }
     change({ ...data, bins: [...data.bins, b] })
@@ -719,8 +730,8 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     dropFiles(e, toBin)
   }
   const accepts = (e: React.DragEvent) => (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes(MEDIA_MIME)) && e.preventDefault()
-  const newFolder = () => {
-    const name = prompt('Nome da pasta:', 'Nova pasta')
+  const newFolder = async () => {
+    const name = await askText('Nome da pasta:', 'Nova pasta')
     if (!name?.trim() || !curBin) return
     const b: MontageBin = { id: uid(), name: name.trim(), role: 'custom', parent: curBin.id }
     change({ ...dataRef.current, bins: [...dataRef.current.bins, b] })
@@ -751,15 +762,62 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     setRecheck((n) => n + 1)
   }
   const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  const [areaMenu, setAreaMenu] = useState<{ x: number; y: number } | null>(null)
+  const [catsOpen, setCatsOpen] = useState(false)
+  useEffect(() => {
+    if (!areaMenu) return
+    const close = () => setAreaMenu(null)
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [areaMenu])
+
+  // projetos antigos ganham a categoria SFX
+  useEffect(() => {
+    if (!data.bins.some((b) => b.role === 'sfx' && !b.parent)) change({ ...data, bins: [...data.bins, { id: 'sfx', name: 'SFX', role: 'sfx' }] })
+  }, [])
+
+  const toggleStar = (id: string) => change({ ...dataRef.current, bins: dataRef.current.bins.map((b) => (b.id === id ? { ...b, star: !b.star } : b)) })
+
+  /** vincula uma pasta do PC dentro da pasta atual: navega nela sem copiar nada */
+  const linkPcFolder = async () => {
+    const p = await api.pickFolder()
+    if (!p || !curBin) return
+    const b: MontageBin = { id: uid(), name: p.split(/[\\/]/).pop() || p, role: 'custom', parent: curBin.id, linked: p }
+    change({ ...dataRef.current, bins: [...dataRef.current.bins, b] })
+    setBin(b.id)
+  }
+
+  // ---------- navegando dentro de uma pasta do PC ----------
+  const [pcPath, setPcPath] = useState<string | null>(null)
+  const [pcList, setPcList] = useState<{ dirs: { name: string; path: string }[]; files: { name: string; path: string; kind: 'image' | 'audio' | 'video' }[] } | { error: string } | null>(null)
+  useEffect(() => {
+    setPcPath(curBin?.linked ?? null)
+  }, [curBin?.id])
+  useEffect(() => {
+    setPcList(null)
+    if (pcPath) api.listDir(pcPath).then(setPcList)
+  }, [pcPath])
+
+  /** soltou um arquivo do PC na timeline: entra no projeto (na pasta atual) e vira corte */
+  const dropPcFile = async (path: string, kind: 'video' | 'audio', trackId: string | null, start: number) => {
+    const [m] = await importPaths([path], curBin?.id ?? data.bins[0].id)
+    if (!m) return
+    const d = dataRef.current
+    const track = trackId ?? d.tracks.find((t) => t.kind === kind)?.id
+    if (!track) return
+    const clip: MontageClip = { id: uid(), track, media: m.id, start, in: 0, out: m.kind === 'image' ? 5 : m.duration }
+    change({ ...d, clips: [...d.clips, clip] })
+    setSelected([clip.id])
+  }
   useEffect(() => {
     if (!folderMenu) return
     const close = () => setFolderMenu(null)
     window.addEventListener('mousedown', close)
     return () => window.removeEventListener('mousedown', close)
   }, [folderMenu])
-  const renameFolder = (id: string) => {
+  const renameFolder = async (id: string) => {
     const b = data.bins.find((x) => x.id === id)
-    const name = b && prompt('Nome da pasta:', b.name)
+    const name = b && await askText('Nome da pasta:', b.name)
     if (name?.trim()) change({ ...dataRef.current, bins: dataRef.current.bins.map((x) => (x.id === id ? { ...x, name: name.trim() } : x)) })
   }
   /** apagar subpasta: o que tinha dentro (arquivos e pastas) sobe pra pasta de cima */
@@ -801,10 +859,11 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
             <button
               key={b.id}
               className={'mt-bin' + (b.id === curRoot?.id ? ' on' : '') + ' r-' + b.role}
+              style={b.color ? ({ ['--cc' as any]: b.color } as React.CSSProperties) : undefined}
               onClick={() => setBin(b.id)}
-              onDoubleClick={() => {
+              onDoubleClick={async () => {
                 if (b.role !== 'custom') return
-                const name = prompt('Nome da pasta:', b.name)
+                const name = await askText('Nome da pasta:', b.name)
                 if (name?.trim()) change({ ...data, bins: data.bins.map((x) => (x.id === b.id ? { ...x, name: name.trim() } : x)) })
               }}
               onDragOver={accepts}
@@ -815,8 +874,8 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
               <small>{countIn(b.id)}</small>
             </button>
           ))}
-          <button className="mt-bin add" onClick={addBin} title="Nova pasta">
-            <FolderPlus size={13} />
+          <button className="mt-bin add" onClick={() => setCatsOpen(true)} title="Categorias: quantas, nome, cor e ordem">
+            <Settings size={13} />
           </button>
         </div>
 
@@ -990,6 +1049,12 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           className="mt-items"
           onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()}
           onDrop={(e) => curBin && dropFiles(e, curBin.id)}
+          onContextMenu={(e) => {
+            // botão direito no vazio: criar pasta, vincular pasta do PC, importar
+            if ((e.target as HTMLElement).closest('.mt-item, .mt-folder, .mt-pc-row')) return
+            e.preventDefault()
+            setAreaMenu({ x: e.clientX, y: e.clientY })
+          }}
         >
           {curPath.length > 1 && (
             <div className="mt-crumbs">
@@ -1017,10 +1082,80 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
               title="Clique pra abrir · arraste arquivos pra cá · botão direito: renomear/apagar"
             >
               <Folder size={15} />
-              <span className="mt-item-name">{f.name}</span>
-              <span className="mt-item-dur">{countIn(f.id)}</span>
+              <span className="mt-item-name">
+                {f.name}
+                {f.linked && <span className="mt-pc-badge" title={f.linked}>PC</span>}
+              </span>
+              <span className="mt-item-dur">{f.linked ? '' : countIn(f.id)}</span>
+              <button
+                className={'mt-star' + (f.star ? ' on' : '')}
+                title={f.star ? 'Favorita: o Claude usa com mais frequência' : 'Marcar como favorita (o Claude usa com mais frequência)'}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggleStar(f.id)
+                }}
+              >
+                <Star size={13} />
+              </button>
             </div>
           ))}
+          {curBin?.linked && (
+            <div className="mt-pc">
+              <div className="mt-pc-head">
+                <button
+                  className={'mt-star' + (curBin.star ? ' on' : '')}
+                  title="Favorita: o Claude usa com mais frequência"
+                  onClick={() => toggleStar(curBin.id)}
+                >
+                  <Star size={13} />
+                </button>
+                <span title={pcPath ?? ''}>{pcPath && pcPath !== curBin.linked ? pcPath.slice(curBin.linked.length + 1) : 'pasta do PC'}</span>
+                {pcPath && pcPath !== curBin.linked && (
+                  <button className="btn small" onClick={() => setPcPath(pcPath.replace(/[\\/][^\\/]+$/, ''))}>
+                    ↑ voltar
+                  </button>
+                )}
+                <button className="icon-btn" title="Abrir no Explorer" onClick={() => pcPath && api.openPath(pcPath)}>
+                  <FolderOpen size={13} />
+                </button>
+              </div>
+              {!pcList ? (
+                <div className="mt-note">
+                  <Loader2 size={12} className="spin" /> lendo a pasta…
+                </div>
+              ) : 'error' in pcList ? (
+                <div className="mt-note warn">{pcList.error}</div>
+              ) : (
+                <>
+                  {pcList.dirs.map((d) => (
+                    <div key={d.path} className="mt-folder mt-pc-row" onClick={() => setPcPath(d.path)}>
+                      <Folder size={15} />
+                      <span className="mt-item-name">{d.name}</span>
+                      <span />
+                    </div>
+                  ))}
+                  {pcList.files.map((f) => (
+                    <div
+                      key={f.path}
+                      className={'mt-item mt-pc-row k-' + f.kind}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(PCFILE_MIME, f.path)
+                        e.dataTransfer.effectAllowed = 'copy'
+                      }}
+                      onDoubleClick={() => setSource({ id: 'pc', bin: curBin.id, path: f.path, name: f.name, kind: f.kind, duration: 0, hasAudio: f.kind !== 'image', hasVideo: f.kind === 'video' })}
+                      title={`${f.path}\nArraste pra timeline · duplo clique ouve/vê`}
+                    >
+                      <span className="mt-item-ico">{f.kind === 'audio' ? <Music size={14} /> : f.kind === 'image' ? <ImageIcon size={14} /> : <Film size={14} />}</span>
+                      <span className="mt-item-name">{f.name}</span>
+                      <span className="mt-item-dur" />
+                    </div>
+                  ))}
+                  {!pcList.dirs.length && !pcList.files.length && <div className="mt-empty">Pasta vazia (ou sem áudio, vídeo ou imagem).</div>}
+                </>
+              )}
+            </div>
+          )}
           {items.length === 0 && children.length === 0 && (
             <div className="mt-empty">
               {curRoot?.role === 'narration'
@@ -1070,6 +1205,36 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
         </div>
       </section>
 
+      {areaMenu && (
+        <div className="ctx-menu" style={{ left: areaMenu.x, top: areaMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+          <div className="ctx-label">{curBin?.name}</div>
+          <button
+            onClick={() => {
+              setAreaMenu(null)
+              newFolder()
+            }}
+          >
+            <FolderPlus size={13} /> Nova pasta
+          </button>
+          <button
+            onClick={() => {
+              setAreaMenu(null)
+              linkPcFolder()
+            }}
+          >
+            <Link2 size={13} /> Vincular pasta do PC…
+          </button>
+          <button
+            onClick={async () => {
+              setAreaMenu(null)
+              if (curBin) importPaths(await api.pickMedia(), curBin.id)
+            }}
+          >
+            <Import size={13} /> Importar arquivos…
+          </button>
+        </div>
+      )}
+      {catsOpen && <CategoriesModal data={data} onClose={() => setCatsOpen(false)} onSave={(bins, media) => change({ ...dataRef.current, bins, media })} />}
       {folderMenu && (
         <div className="ctx-menu" style={{ left: folderMenu.x, top: folderMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
           <button
@@ -1079,6 +1244,14 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
             }}
           >
             Renomear
+          </button>
+          <button
+            onClick={() => {
+              toggleStar(folderMenu.id)
+              setFolderMenu(null)
+            }}
+          >
+            {data.bins.find((b) => b.id === folderMenu.id)?.star ? '☆ Tirar dos favoritos' : '★ Favorita (o Claude usa mais)'}
           </button>
           <button
             className="danger"
@@ -1445,6 +1618,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           scrollRef={scrollRef}
           wavesVersion={wavesVersion}
           onClipMenu={onClipMenu}
+          onDropFile={dropPcFile}
           armed={armed}
           onArm={(id) => setArmed((a) => (a === id ? null : id))}
           recording={rec}
@@ -1524,6 +1698,75 @@ function ClipInspector({
         ) : null}
         {c.splice ? 'ms' : null}
       </label>
+    </div>
+  )
+}
+
+const ROLE_LABEL: Record<string, string> = { narration: 'narração (corte automático)', raw: 'material bruto', sfx: 'efeitos sonoros', custom: 'categoria' }
+const ROLE_COLOR: Record<string, string> = { narration: '#4fe0c4', raw: '#f7b955', sfx: '#22d3ee', custom: '#a26bff' }
+
+/** Categorias (as abas do topo da mídia): quantas, nome, cor e ordem. */
+function CategoriesModal({ data, onClose, onSave }: { data: MontageData; onClose: () => void; onSave: (bins: MontageBin[], media: MontageMedia[]) => void }) {
+  const [cats, setCats] = useState(() => data.bins.filter((b) => !b.parent).map((b) => ({ ...b, color: b.color ?? ROLE_COLOR[b.role] })))
+  const patch = (id: string, p: Partial<MontageBin>) => setCats((cs) => cs.map((c) => (c.id === id ? { ...c, ...p } : c)))
+  const move = (i: number, d: number) =>
+    setCats((cs) => {
+      const n = [...cs]
+      const j = i + d
+      if (j < 0 || j >= n.length) return cs
+      ;[n[i], n[j]] = [n[j], n[i]]
+      return n
+    })
+  const save = () => {
+    const keep = new Set(cats.map((c) => c.id))
+    const fallback = cats[0].id
+    // categoria apagada: as pastas e os arquivos dela vão pra primeira categoria
+    const removed = new Set(data.bins.filter((b) => !b.parent && !keep.has(b.id)).map((b) => b.id))
+    const sub = data.bins.filter((b) => b.parent).map((b) => (b.parent && removed.has(b.parent) ? { ...b, parent: fallback } : b))
+    const media = data.media.map((m) => (removed.has(m.bin) ? { ...m, bin: fallback } : m))
+    onSave([...cats, ...sub], media)
+    onClose()
+  }
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className="modal cats-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <h3>Categorias da mídia</h3>
+        <p className="muted small">São as abas do topo. Dentro de cada uma você cria pastas, vincula pastas do PC e marca favoritas.</p>
+        <div className="cats-list">
+          {cats.map((c, i) => (
+            <div key={c.id} className="cats-row">
+              <input type="color" value={c.color} onChange={(e) => patch(c.id, { color: e.target.value })} title="Cor" />
+              <input className="cats-name" value={c.name} onChange={(e) => patch(c.id, { name: e.target.value })} />
+              <span className="cats-role">{ROLE_LABEL[c.role]}</span>
+              <button className="icon-btn" disabled={i === 0} onClick={() => move(i, -1)} title="Subir">
+                <ArrowUp size={13} />
+              </button>
+              <button className="icon-btn" disabled={i === cats.length - 1} onClick={() => move(i, 1)} title="Descer">
+                <ArrowDown size={13} />
+              </button>
+              <button
+                className="icon-btn danger"
+                disabled={cats.length <= 1 || c.role === 'narration'}
+                title={c.role === 'narration' ? 'A narração não sai (é dela que sai o corte automático)' : 'Tirar categoria (o conteúdo vai pra primeira)'}
+                onClick={() => setCats((cs) => cs.filter((x) => x.id !== c.id))}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <button className="btn small" onClick={() => setCats((cs) => [...cs, { id: uid(), name: 'Nova categoria', role: 'custom', color: ROLE_COLOR.custom }])}>
+          <FolderPlus size={13} /> Nova categoria
+        </button>
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>
+            Cancelar
+          </button>
+          <button className="btn primary" disabled={cats.some((c) => !c.name.trim())} onClick={save}>
+            Salvar
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

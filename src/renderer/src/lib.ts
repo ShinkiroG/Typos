@@ -612,13 +612,19 @@ export const uid = () => Math.random().toString(36).slice(2, 10)
 
 // ---------- Montagem ----------
 /** narração = vai pro corte automático; bruto = material do vídeo; custom = pasta criada pelo usuário */
-export type BinRole = 'narration' | 'raw' | 'custom'
+export type BinRole = 'narration' | 'raw' | 'sfx' | 'custom'
 export interface MontageBin {
   id: string
   name: string
   role: BinRole
-  /** pasta dentro de outra (organização); sem parent = aba do topo */
+  /** pasta dentro de outra (organização); sem parent = categoria (aba do topo) */
   parent?: string
+  /** cor da categoria */
+  color?: string
+  /** favorita: o Claude usa com mais frequência */
+  star?: boolean
+  /** pasta do PC vinculada: mostra o que tem lá, ao vivo (sem copiar) */
+  linked?: string
 }
 export interface MontageMedia {
   id: string
@@ -676,7 +682,8 @@ export function defaultMontage(): MontageData {
   return {
     bins: [
       { id: 'narration', name: 'Narração / Talking head', role: 'narration' },
-      { id: 'raw', name: 'Material bruto', role: 'raw' }
+      { id: 'raw', name: 'Material bruto', role: 'raw' },
+      { id: 'sfx', name: 'SFX', role: 'sfx' }
     ],
     media: [],
     tracks: [

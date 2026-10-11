@@ -4,6 +4,7 @@ import { api, uid, type Format, type LibraryItem, type ProjectData } from './lib
 import { Welcome } from './components/Welcome'
 import { Workspace } from './components/Workspace'
 import { SettingsModal } from './components/SettingsModal'
+import { AskDialog } from './components/AskDialog'
 
 function Lightbox() {
   const [src, setSrc] = useState<string | null>(null)
@@ -138,6 +139,7 @@ export default function App() {
         />
       )}
       <Lightbox />
+      <AskDialog />
     </>
   )
 }

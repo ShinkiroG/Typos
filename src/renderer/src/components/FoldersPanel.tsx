@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { FolderPlus, RefreshCw, X, ChevronDown, ChevronRight, Search, Play, LayoutGrid, Grid3x3, List, Image as ImageIcon, Music, Film } from 'lucide-react'
 import { api, fileUrl, uid } from '../lib'
 import { AudioPlayButton } from '../editor/views'
+import { askText } from './AskDialog'
 
 type Folder = { id: string; name: string; path: string; fromFormat?: boolean }
 type Item = { path: string; name: string; rel: string; kind: 'image' | 'audio' | 'video' }
@@ -215,9 +216,9 @@ export function FoldersPanel({ extra = [] }: { extra?: string[] }) {
               <span
                 className="folder-name"
                 title={f.path}
-                onDoubleClick={() => {
+                onDoubleClick={async () => {
                   if (f.fromFormat) return
-                  const name = prompt('Nome da pasta no painel:', f.name)
+                  const name = await askText('Nome da pasta no painel:', f.name)
                   if (name?.trim()) save(folders.map((x) => (x.id === f.id ? { ...x, name: name.trim() } : x)))
                 }}
               >

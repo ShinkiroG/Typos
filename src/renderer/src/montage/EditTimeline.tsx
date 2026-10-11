@@ -4,6 +4,8 @@ import { clipDur, clipEndT, formatTime, uid, type MontageClip, type MontageData,
 import { PEAKS_PER_SEC, type MontageEngine } from './engine'
 
 export const MEDIA_MIME = 'application/x-typos-media'
+/** arquivo de uma pasta do PC vinculada (entra no projeto ao soltar) */
+export const PCFILE_MIME = 'application/x-typos-pcfile'
 export type Tool = 'select' | 'blade'
 
 interface Props {
@@ -29,6 +31,8 @@ interface Props {
   recClipRef: React.RefObject<HTMLDivElement | null>
   /** botão direito num corte */
   onClipMenu: (e: React.MouseEvent, c: MontageClip) => void
+  /** soltou um arquivo do PC: o Montage importa e põe o corte */
+  onDropFile: (path: string, trackKind: 'video' | 'audio', trackId: string | null, start: number) => void
 }
 
 const HEAD_W = 132
@@ -201,6 +205,14 @@ export function EditTimeline(p: Props) {
 
   // ---------- soltar mídia do painel ----------
   const onDrop = (e: React.DragEvent) => {
+    const pc = e.dataTransfer.getData(PCFILE_MIME)
+    if (pc) {
+      e.preventDefault()
+      const kind = /\.(mp3|wav|m4a|aac|flac|ogg|opus)$/i.test(pc) ? 'audio' : 'video'
+      const over = trackAt(e.clientY)
+      p.onDropFile(pc, kind, over?.kind === kind ? over.id : null, snap(timeAt(e.clientX), []))
+      return
+    }
     const id = e.dataTransfer.getData(MEDIA_MIME)
     const m = id && p.media.get(id)
     if (!m) return
@@ -235,7 +247,7 @@ export function EditTimeline(p: Props) {
       onPointerMove={onMove}
       onPointerUp={onUp}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes(MEDIA_MIME)) e.preventDefault()
+        if (e.dataTransfer.types.includes(MEDIA_MIME) || e.dataTransfer.types.includes(PCFILE_MIME)) e.preventDefault()
       }}
       onDrop={onDrop}
     >

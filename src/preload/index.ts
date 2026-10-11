@@ -36,6 +36,10 @@ const api = {
   loadFolders: (): Promise<{ id: string; name: string; path: string }[]> => ipcRenderer.invoke('folders:load'),
   saveFolders: (folders: unknown) => ipcRenderer.invoke('folders:save', folders),
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('folders:pick'),
+  listDir: (
+    dir: string
+  ): Promise<{ dirs: { name: string; path: string }[]; files: { name: string; path: string; kind: 'image' | 'audio' | 'video' }[] } | { error: string }> =>
+    ipcRenderer.invoke('fs:list', dir),
   scanFolder: (
     path: string
   ): Promise<{ path: string; name: string; rel: string; kind: 'image' | 'audio' | 'video' }[] | { error: string }> =>

@@ -905,3 +905,18 @@ ipcMain.handle('motion:frames', (_e, path: string, focus: number) => framesForFo
 ipcMain.handle('edit:do', (e, what: 'cut' | 'copy' | 'paste' | 'pasteAndMatchStyle') => {
   if (['cut', 'copy', 'paste', 'pasteAndMatchStyle'].includes(what)) e.sender[what]()
 })
+
+// ---------- explorador de pastas do PC (Montagem: pastas vinculadas) ----------
+ipcMain.handle('fs:list', async (_e, dir: string) => {
+  try {
+    const ents = await fs.readdir(dir, { withFileTypes: true })
+    const dirs = ents.filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => ({ name: e.name, path: join(dir, e.name) }))
+    const files = ents
+      .filter((e) => e.isFile() && mediaKind(e.name))
+      .map((e) => ({ name: e.name, path: join(dir, e.name), kind: mediaKind(e.name)! }))
+    const by = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'pt-BR', { numeric: true })
+    return { dirs: dirs.sort(by), files: files.sort(by) }
+  } catch (err) {
+    return { error: (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'essa pasta não existe mais' : 'sem acesso a essa pasta' }
+  }
+})
