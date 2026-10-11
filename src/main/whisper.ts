@@ -1,5 +1,5 @@
 import { app, ipcMain, type WebContents } from 'electron'
-import { join } from 'path'
+import { join, basename, dirname } from 'path'
 import { promises as fs, existsSync, createWriteStream } from 'fs'
 import { createHash } from 'crypto'
 import { Readable } from 'stream'
@@ -44,6 +44,11 @@ async function download(url: string, dest: string, onPct: (p: number) => void) {
   })
   await fs.mkdir(dir(), { recursive: true })
   await pipeline(body, createWriteStream(tmp))
+  // conexão que cai no meio às vezes termina "sem erro": não deixa um modelo cortado passar por pronto
+  if (total && got < total) {
+    await fs.rm(tmp, { force: true })
+    throw new Error(`veio incompleto (${Math.round(got / 1e6)} de ${Math.round(total / 1e6)} MB)`)
+  }
   await fs.rename(tmp, dest)
 }
 
@@ -110,29 +115,46 @@ async function transcribe(sender: WebContents, path: string, lang: string): Prom
   const total = 'error' in info ? 0 : info.duration
   const out = join(mediaCacheDir(), key + '.whisper.jsonl')
   await fs.rm(out, { force: true })
-  const vad = join(dir(), VAD.file)
-  const opts = [
-    `model=${esc(model)}`,
-    `language=${lang}`,
-    'queue=20',
-    `destination=${esc(out)}`,
-    'format=json',
-    'max_len=1',
-    ...(existsSync(vad) ? [`vad_model=${esc(vad)}`] : [])
-  ]
+  const vad = existsSync(join(dir(), VAD.file))
+  // Modelos vão pelo nome, com o ffmpeg rodando dentro da pasta deles: o whisper.cpp abre o arquivo com
+  // fopen "estreito" e, no Windows, um caminho com acento (nome de usuário, OneDrive...) não abre.
+  const args = (gpu: boolean) => {
+    const opts = [
+      `model=${m.file}`,
+      `language=${lang}`,
+      'queue=20',
+      `use_gpu=${gpu}`,
+      `destination=${esc(out)}`,
+      'format=json',
+      'max_len=1',
+      ...(vad ? [`vad_model=${VAD.file}`] : [])
+    ]
+    return ['-hide_banner', '-nostats', '-y', '-i', proxy, '-af', `aresample=16000,whisper=${opts.join(':')}`, '-f', 'null', '-']
+  }
   // cada rodada do Whisper = um trecho de fala que o VAD achou; guarda onde a fala começa/termina nele
-  const runs: { at: number; vs: number; ve: number }[] = []
+  let runs: { at: number; vs: number; ve: number }[] = []
   let seg = { vs: 0, ve: 0 }
-  const r = await run(ff.ffmpeg, ['-hide_banner', '-nostats', '-y', '-i', proxy, '-af', `aresample=16000,whisper=${opts.join(':')}`, '-f', 'null', '-'], {
-    onErr: (line) => {
-      const v = /VAD detected \d+ segments?, start: (\d+) ms, end: (\d+) ms/.exec(line)
-      if (v) seg = { vs: Number(v[1]) / 1000, ve: Number(v[2]) / 1000 }
-      const at = /run transcription at (\d+) ms/.exec(line)
-      if (at) runs.push({ at: Number(at[1]) / 1000, ...seg })
-      if (at && total && !sender.isDestroyed()) sender.send('whisper:progress', { stage: 'transcribe', path, pct: Math.min(0.99, Number(at[1]) / 1000 / total) })
-    }
-  })
-  if (r.code !== 0) return { error: 'O Whisper falhou: ' + r.err.split('\n').slice(-4).join(' ').slice(0, 300) }
+  const go = (gpu: boolean) => {
+    runs = []
+    seg = { vs: 0, ve: 0 }
+    return run(ff.ffmpeg, args(gpu), {
+      cwd: dir(),
+      onErr: (line) => {
+        const v = /VAD detected \d+ segments?, start: (\d+) ms, end: (\d+) ms/.exec(line)
+        if (v) seg = { vs: Number(v[1]) / 1000, ve: Number(v[2]) / 1000 }
+        const at = /run transcription at (\d+) ms/.exec(line)
+        if (at) runs.push({ at: Number(at[1]) / 1000, ...seg })
+        if (at && total && !sender.isDestroyed()) sender.send('whisper:progress', { stage: 'transcribe', path, pct: Math.min(0.99, Number(at[1]) / 1000 / total) })
+      }
+    })
+  }
+  let r = await go(true)
+  // o filtro não sobe (I/O error no init): costuma ser a GPU sem memória pro modelo; tenta na CPU
+  if (r.code !== 0 && /Error initializing filters/i.test(r.err)) {
+    await fs.rm(out, { force: true })
+    r = await go(false)
+  }
+  if (r.code !== 0) return { error: await whisperError(r.err, join(dir(), m.file), m.mb) }
   const words: Word[] = []
   // O filtro devolve os tempos de cada rodada a partir do começo dela, "esticando" as primeiras palavras
   // por cima do silêncio inicial. Os limites do VAD são exatos: remapeia [0, fim] → [início da fala, fim].
@@ -160,6 +182,17 @@ async function transcribe(sender: WebContents, path: string, lang: string): Prom
   }
   await fs.writeFile(cache, JSON.stringify(words))
   return { words }
+}
+
+/** Mensagem útil quando o ffmpeg/Whisper falha: o motivo real vem antes do "Error initializing filters". */
+async function whisperError(err: string, model: string, mb: number) {
+  const size = (await fs.stat(model).catch(() => null))?.size ?? 0
+  if (size < mb * 1e6 * 0.99) {
+    return `O modelo ${basename(model)} está incompleto (${Math.round(size / 1e6)} de ${mb} MB). Apague-o em ${dirname(model)} e baixe de novo.`
+  }
+  const lines = err.split(/\r?\n|\r/).filter((l) => l.trim())
+  const cause = lines.filter((l) => /whisper|vad|model|Failed|No such|Invalid|Unable|Could not|out of memory/i.test(l) && !/^\s*(Input|Output|Stream|Duration|Metadata)/.test(l))
+  return 'O Whisper falhou: ' + [...cause.slice(-3), ...lines.slice(-2)].filter((l, i, a) => a.indexOf(l) === i).join(' / ').slice(0, 400)
 }
 
 /** trechos de silêncio [início, fim] (s): é onde o corte fica limpo */
