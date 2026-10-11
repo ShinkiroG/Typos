@@ -16,6 +16,7 @@ import { TextStyle, Color, FontFamily, FontSize } from '@tiptap/extension-text-s
 import Highlight from '@tiptap/extension-highlight'
 import { FormatBubble } from './FormatBubble'
 import { RenderStudio } from '../render/RenderStudio'
+import { repairDoubledNarration } from '../montage/autocut'
 import logoUrl from '../assets/logo.png'
 import { FilterBar } from './FilterBar'
 import { TrackGutter } from './TrackGutter'
@@ -150,7 +151,14 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [notes, setNotes] = useState(data.notes ?? '')
   const [chapterLettering, setChapterLettering] = useState(data.chapterLettering ?? true)
   setLetteringDefault(chapterLettering)
-  const [montage, setMontage] = useState<MontageData>(() => data.montage ?? defaultMontage())
+  // projetos cortados antes da 2.0.6: tira a tomada inteira que ficou por baixo do corte automático
+  const repaired = useRef(0)
+  const [montage, setMontage] = useState<MontageData>(() => {
+    if (!data.montage) return defaultMontage()
+    const r = repairDoubledNarration(data.montage)
+    repaired.current = r.removed
+    return r.data
+  })
   const [montageVisited, setMontageVisited] = useState(false)
   // áudio da Montagem tocando junto na timeline do roteiro (pelas prévias do ffmpeg)
   const [voice, setVoice] = useState<Clip[]>([])
@@ -228,7 +236,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       return true
     }
   })
-  const [toast, setToast] = useState('')
+  const [toast, setToast] = useState(() =>
+    repaired.current ? `Narração consertada: ${repaired.current} tomada(s) inteira(s) que tocavam por baixo do corte automático saíram da timeline.` : ''
+  )
   const [spell, setSpell] = useState<{ word: string; from: number; to: number; suggestions: string[] | null } | null>(null)
 
   const [mode, setMode] = useState<'script' | 'montage' | 'style' | 'render'>('script')

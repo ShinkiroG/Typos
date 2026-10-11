@@ -282,3 +282,16 @@ export function autoCut(blocks: ScriptBlock[], takes: Take[], base: MontageData)
 
   return { data: { ...base, clips: [...kept, ...clips] }, found, missing, retakes }
 }
+
+/**
+ * Projetos cortados antes da 2.0.6 ficaram com a tomada inteira por baixo dos cortes automáticos
+ * (a voz tocava duplicada). Ao abrir, tira a tomada inteira cuja gravação já virou cortes automáticos na mesma faixa.
+ */
+export function repairDoubledNarration(m: MontageData): { data: MontageData; removed: number } {
+  const auto = m.clips.filter((c) => c.block !== undefined)
+  // tomada que já virou cortes automáticos na mesma faixa: a versão inteira é sobra (toca por cima de outras frases)
+  const doubled = (c: MontageClip) => c.block === undefined && auto.some((a) => a.track === c.track && a.media === c.media)
+  const clips = m.clips.filter((c) => !doubled(c))
+  const removed = m.clips.length - clips.length
+  return { data: removed ? { ...m, clips } : m, removed }
+}
