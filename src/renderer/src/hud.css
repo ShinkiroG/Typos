@@ -869,3 +869,20 @@ body {
   object-fit: contain;
   filter: drop-shadow(0 0 8px rgba(91, 107, 255, 0.45));
 }
+
+/* listas nativas (select): popup escuro e legível no Windows */
+:root {
+  color-scheme: dark;
+}
+select option,
+select optgroup {
+  background: #161a22;
+  color: #f4f6fa;
+}
+select option:checked {
+  background: #3b46b8;
+  color: #fff;
+}
+select option:disabled {
+  color: #6b7280;
+}
