@@ -23,6 +23,8 @@ export interface AppSettings {
   ai?: AiSettings
   /** caminho manual do ffmpeg.exe (Montagem) */
   ffmpegPath?: string
+  /** caminho manual do yt-dlp.exe */
+  ytdlpPath?: string
   /** modelo do Whisper pro corte automático */
   whisperModel?: string
 }

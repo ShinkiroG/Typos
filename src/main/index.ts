@@ -8,7 +8,7 @@ import { loadSettings, saveSettings } from './settings'
 import { initUpdater, checkManually, installDownloadedNow, installMode } from './updater'
 import { initSpell } from './spell'
 import { initAi, initMotionAi } from './ai'
-import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus } from './media'
+import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, initDownloads } from './media'
 import { initWhisper } from './whisper'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer
@@ -247,6 +247,7 @@ initSpell()
 initAi()
 initMotionAi()
 initMedia()
+initDownloads()
 initWhisper()
 
 // ---------- configurações e atualizações ----------

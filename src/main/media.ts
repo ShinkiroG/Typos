@@ -254,3 +254,113 @@ export async function framesForFocus(
   }
   return out.length ? out : { error: 'não deu pra tirar quadros desse vídeo' }
 }
+
+// ---------- baixar vídeo (YouTube etc.) com o yt-dlp ----------
+let ytdlpFound: string | null | undefined
+export async function findYtDlp(force = false) {
+  if (ytdlpFound !== undefined && !force) return ytdlpFound
+  const s = await loadSettings()
+  const links = join(process.env.LOCALAPPDATA ?? '', 'Microsoft', 'WinGet', 'Links', 'yt-dlp.exe')
+  const cands = [s.ytdlpPath, await which('yt-dlp'), links].filter(Boolean) as string[]
+  let hit = cands.find((p) => existsSync(p)) ?? null
+  if (!hit) {
+    // winget às vezes não cria o atalho: procura na pasta de pacotes
+    const pkgs = join(process.env.LOCALAPPDATA ?? '', 'Microsoft', 'WinGet', 'Packages')
+    for (const d of await fs.readdir(pkgs).catch(() => [] as string[]))
+      if (/yt-dlp/i.test(d)) {
+        const f = join(pkgs, d, 'yt-dlp.exe')
+        if (existsSync(f)) hit = f
+      }
+  }
+  return (ytdlpFound = hit)
+}
+
+let dlProc: ReturnType<typeof spawn> | null = null
+
+export function initDownloads() {
+  ipcMain.handle('media:ytdlp', async () => {
+    const p = await findYtDlp(true)
+    return p ? { path: p } : null
+  })
+
+  /** instala pelo winget (o usuário clicou em "Instalar yt-dlp") */
+  ipcMain.handle('media:installYtdlp', async () => {
+    const r = await run('winget', ['install', '--id', 'yt-dlp.yt-dlp', '-e', '--silent', '--accept-package-agreements', '--accept-source-agreements'], { timeoutMs: 10 * 60000 })
+    const p = await findYtDlp(true)
+    return p ? { path: p } : { error: 'Não deu pra instalar: ' + (r.out + r.err).split('\n').filter(Boolean).slice(-3).join(' ').slice(0, 300) }
+  })
+
+  ipcMain.handle('media:dlCancel', () => {
+    dlProc?.kill()
+    dlProc = null
+  })
+
+  ipcMain.handle(
+    'media:download',
+    async (e, url: string, dir: string, opts: { quality: '1080' | '720' | 'audio'; from?: string; to?: string }): Promise<{ path: string } | { error: string }> => {
+      const yt = await findYtDlp()
+      if (!yt) return { error: 'yt-dlp não encontrado' }
+      if (dlProc) return { error: 'já tem um download em andamento' }
+      const ff = await findFfmpeg()
+      const dest = join(dir, 'assets', 'material-bruto')
+      await fs.mkdir(dest, { recursive: true })
+      const fmt =
+        opts.quality === 'audio' ? 'ba[ext=m4a]/ba' : `bv*[height<=${opts.quality}][ext=mp4]+ba[ext=m4a]/bv*[height<=${opts.quality}]+ba/b[height<=${opts.quality}]/b`
+      const args = [
+        '--no-playlist',
+        '--newline',
+        '--no-mtime',
+        '-f',
+        fmt,
+        ...(opts.quality === 'audio' ? ['-x', '--audio-format', 'm4a'] : ['--merge-output-format', 'mp4']),
+        ...(ff ? ['--ffmpeg-location', dirname(ff.ffmpeg)] : []),
+        ...(opts.from || opts.to ? ['--download-sections', `*${opts.from || '0'}-${opts.to || 'inf'}`, '--force-keyframes-at-cuts'] : []),
+        '-o',
+        join(dest, '%(title).80s [%(id)s]' + (opts.from || opts.to ? ' (trecho)' : '') + '.%(ext)s'),
+        '--print',
+        'after_move:filepath',
+        url
+      ]
+      return new Promise((resolve) => {
+        const p = spawn(yt, args, { windowsHide: true })
+        dlProc = p
+        let out = ''
+        let err = ''
+        let step = 0
+        const onLine = (line: string) => {
+          // vídeo e áudio baixam separados: a barra vai de 0–50% e 50–100%
+          if (/Destination:/.test(line)) step++
+          const m = /\[download\]\s+([\d.]+)%(?:.*?at\s+(\S+))?(?:.*?ETA\s+(\S+))?/.exec(line)
+          if (m && !e.sender.isDestroyed()) {
+            const raw = Number(m[1]) / 100
+            const pct = opts.quality === 'audio' ? raw : Math.min(0.99, (Math.max(0, step - 1) + raw) / 2)
+            e.sender.send('media:dlProgress', { pct, speed: m[2] ?? '', eta: m[3] ?? '' })
+          }
+          if (/\[Merger\]|\[ExtractAudio\]|\[ModifyChapters\]/.test(line) && !e.sender.isDestroyed()) e.sender.send('media:dlProgress', { pct: 0.99, speed: '', eta: 'juntando…' })
+        }
+        p.stdout.on('data', (d) => {
+          out += d
+          String(d).split(/\r?\n/).forEach(onLine)
+        })
+        p.stderr.on('data', (d) => {
+          err += d
+          String(d).split(/\r?\n/).forEach(onLine)
+        })
+        p.on('close', (code) => {
+          dlProc = null
+          const file = out
+            .split(/\r?\n/)
+            .map((l) => l.trim())
+            .filter((l) => l && existsSync(l))
+            .pop()
+          if (code === 0 && file) resolve({ path: file })
+          else resolve({ error: code === null ? 'download cancelado' : 'yt-dlp: ' + (err.split('\n').filter((l) => /ERROR/.test(l)).pop() ?? err.slice(-300)).trim() })
+        })
+        p.on('error', (er) => {
+          dlProc = null
+          resolve({ error: String(er) })
+        })
+      })
+    }
+  )
+}

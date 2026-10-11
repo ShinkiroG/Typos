@@ -769,3 +769,59 @@
 .mt-folder:hover {
   background: var(--bg-3);
 }
+
+/* baixar do YouTube */
+.mt-yt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 8px 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.mt-yt-install {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.mt-yt-url {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--text);
+  font: 12px var(--font-ui);
+}
+.mt-yt-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.mt-yt-row select {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 4px;
+  font-size: 11px;
+  color: var(--text);
+}
+.mt-yt-t {
+  width: 46px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 5px;
+  font: 11px var(--font-console);
+  color: var(--text);
+}
+.mt-yt-row .btn {
+  margin-left: auto;
+}
+.mt-yt-hint {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+}
