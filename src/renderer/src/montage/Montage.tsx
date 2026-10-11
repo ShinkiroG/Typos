@@ -597,13 +597,13 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     // a próxima tomada continua do parágrafo onde parou
     const at = prompterAt()
     if (at !== null) setPrompterFrom(at)
-    const { wav, duration } = r.stop()
-    r.close()
     recRef.current = null
     recStart.current = null
     engine.pause()
     setPlaying(false)
     setRec(null)
+    const { wav, duration } = await r.stop()
+    r.close()
     if (duration < 0.3) return
     const path = await api.saveRecording(dir, wav)
     if (typeof path !== 'string') return alert(path.error)

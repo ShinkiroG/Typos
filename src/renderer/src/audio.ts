@@ -1,3 +1,5 @@
+import workletUrl from './recorder.worklet.js?url&no-inline'
+
 /**
  * Hardware de áudio: qual microfone grava, por onde o som sai e o processamento do Windows.
  * Fica salvo neste PC (localStorage) e vale pro app inteiro.
@@ -82,11 +84,13 @@ export function peakDb(an: AnalyserNode, buf: Float32Array<ArrayBuffer>) {
 
 /**
  * Grava o microfone em PCM (vira WAV 24 bits no fim). Dá o nível ao vivo pro medidor.
+ * A captura roda num AudioWorklet (thread de áudio): a interface ocupada não faz perder pedaços,
+ * que é o que dava os "pops" na gravação.
  */
 export class Recorder {
   private ctx: AudioContext | null = null
   private stream: MediaStream | null = null
-  private proc: ScriptProcessorNode | null = null
+  private node: AudioWorkletNode | null = null
   private chunks: Float32Array[] = []
   private an: AnalyserNode | null = null
   private buf = new Float32Array(2048)
@@ -95,33 +99,48 @@ export class Recorder {
 
   async open() {
     this.stream = await micStream()
-    this.ctx = new AudioContext({ latencyHint: 'interactive' })
+    // grava na taxa do próprio microfone (sem reamostrar); buffer folgado (não é pra tocar)
+    const rate = this.stream.getAudioTracks()[0]?.getSettings().sampleRate
+    this.ctx = new AudioContext({ latencyHint: 'playback', ...(rate ? { sampleRate: rate } : {}) })
     this.sampleRate = this.ctx.sampleRate
+    await this.ctx.audioWorklet.addModule(workletUrl)
     const src = this.ctx.createMediaStreamSource(this.stream)
     this.an = this.ctx.createAnalyser()
     this.an.fftSize = 2048
     src.connect(this.an)
-    this.proc = this.ctx.createScriptProcessor(4096, 1, 1)
-    this.proc.onaudioprocess = (e) => {
-      if (this.recording) this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))
+    this.node = new AudioWorkletNode(this.ctx, 'typos-recorder', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1, channelCountMode: 'explicit' })
+    this.node.port.onmessage = (e) => {
+      if (e.data instanceof Float32Array) this.chunks.push(e.data)
     }
-    src.connect(this.proc)
-    // o processador só roda ligado em algo; a saída dele é silêncio
-    this.proc.connect(this.ctx.destination)
+    src.connect(this.node)
   }
 
   start() {
     this.chunks = []
     this.recording = true
+    this.node?.port.postMessage('start')
   }
 
   level() {
     return this.an ? peakDb(this.an, this.buf as Float32Array<ArrayBuffer>) : -120
   }
 
-  /** para e devolve o WAV */
-  stop(): { wav: Uint8Array; duration: number } {
+  /** para e devolve o WAV (espera o último pedaço sair da thread de áudio) */
+  async stop(): Promise<{ wav: Uint8Array; duration: number }> {
     this.recording = false
+    const node = this.node
+    if (node)
+      await new Promise<void>((done) => {
+        const t = setTimeout(done, 1000)
+        node.port.onmessage = (e) => {
+          if (e.data instanceof Float32Array) this.chunks.push(e.data)
+          else if (e.data === 'done') {
+            clearTimeout(t)
+            done()
+          }
+        }
+        node.port.postMessage('stop')
+      })
     const n = this.chunks.reduce((s, c) => s + c.length, 0)
     const pcm = new Float32Array(n)
     let o = 0
@@ -135,7 +154,8 @@ export class Recorder {
 
   close() {
     this.recording = false
-    this.proc?.disconnect()
+    this.node?.disconnect()
+    this.node = null
     this.stream?.getTracks().forEach((t) => t.stop())
     this.ctx?.close().catch(() => null)
     this.ctx = null
