@@ -319,6 +319,9 @@ export function initDownloads() {
         join(dest, '%(title).80s [%(id)s]' + (opts.from || opts.to ? ' (trecho)' : '') + '.%(ext)s'),
         '--print',
         'after_move:filepath',
+        // o --print deixa o yt-dlp quieto: religa a saída pra ter o progresso
+        '--no-quiet',
+        '--progress',
         url
       ]
       return new Promise((resolve) => {
@@ -327,7 +330,15 @@ export function initDownloads() {
         let out = ''
         let err = ''
         let step = 0
+        // trecho: o yt-dlp corta com o ffmpeg (sem %): o progresso sai do "time=" sobre a duração do trecho
+        const secs = (t?: string) => (t ? t.split(':').reduce((a, x) => a * 60 + Number(x), 0) : NaN)
+        const span = opts.from || opts.to ? secs(opts.to || '') - secs(opts.from || '0') : NaN
         const onLine = (line: string) => {
+          const tm = /time=(\d+):(\d+):([\d.]+)/.exec(line)
+          if (tm && span > 0 && !e.sender.isDestroyed()) {
+            const done = Number(tm[1]) * 3600 + Number(tm[2]) * 60 + Number(tm[3])
+            e.sender.send('media:dlProgress', { pct: Math.min(0.99, done / span), speed: '', eta: '' })
+          }
           // vídeo e áudio baixam separados: a barra vai de 0–50% e 50–100%
           if (/Destination:/.test(line)) step++
           const m = /\[download\]\s+([\d.]+)%(?:.*?at\s+(\S+))?(?:.*?ETA\s+(\S+))?/.exec(line)
@@ -340,11 +351,12 @@ export function initDownloads() {
         }
         p.stdout.on('data', (d) => {
           out += d
-          String(d).split(/\r?\n/).forEach(onLine)
+          // o ffmpeg reescreve a mesma linha com \r (progresso): separa por \r também
+          String(d).split(/\r\n|\r|\n/).forEach(onLine)
         })
         p.stderr.on('data', (d) => {
           err += d
-          String(d).split(/\r?\n/).forEach(onLine)
+          String(d).split(/\r\n|\r|\n/).forEach(onLine)
         })
         p.on('close', (code) => {
           dlProc = null

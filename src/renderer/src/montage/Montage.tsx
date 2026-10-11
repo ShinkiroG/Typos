@@ -86,6 +86,8 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
   const [ffmpeg, setFfmpeg] = useState<{ path: string; version: string; whisper: boolean } | null | undefined>(undefined)
   const [source, setSource] = useState<MontageMedia | null>(null)
   const [missing, setMissing] = useState<Set<string>>(new Set())
+  /** muda pra reconferir se os arquivos existem (ex.: baixou de novo um que tinha sumido) */
+  const [recheck, setRecheck] = useState(0)
 
   // tamanhos das áreas (arrastando as divisórias), lembrados neste PC
   const [layout, setLayout] = useState(loadLayout)
@@ -232,7 +234,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     if (!ffmpeg) return
     for (const m of data.media) engine.load(m).catch(() => null)
     api.mediaExists(data.media.map((m) => m.path)).then((ok) => setMissing(new Set(data.media.filter((_, i) => !ok[i]).map((m) => m.id))))
-  }, [data.media, ffmpeg, engine])
+  }, [data.media, ffmpeg, engine, recheck])
 
   // ---------- desfazer ----------
   const past = useRef<MontageData[]>([])
@@ -746,6 +748,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     setDlMsg('Baixado: ' + (r.path.split(/[\\/]/).pop() ?? ''))
     setYt((y) => ({ ...y, url: '', from: '', to: '' }))
     await importPaths([r.path], toBin)
+    setRecheck((n) => n + 1)
   }
   const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   useEffect(() => {
