@@ -12,6 +12,9 @@ import { Timestamps, setTimestamps } from '../editor/timestamps'
 import { TimeGutter } from './TimeGutter'
 import { Reference, referenceAt, allReferences, referencesText, type RefRange } from '../editor/reference'
 import { PromptRange, promptAt, type PromptRangeInfo } from '../editor/promptMark'
+import { TextStyle, Color, FontFamily, FontSize } from '@tiptap/extension-text-style'
+import Highlight from '@tiptap/extension-highlight'
+import { FormatBubble } from './FormatBubble'
 import { FilterBar } from './FilterBar'
 import { TrackGutter } from './TrackGutter'
 import { AiLineAssist } from './AiLineAssist'
@@ -361,6 +364,12 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       Timestamps,
       Reference,
       PromptRange,
+      // formatação visual (barrinha em cima da seleção)
+      TextStyle,
+      Color,
+      FontFamily,
+      FontSize,
+      Highlight.configure({ multicolor: true }),
       PlaybackHighlight,
       SpellCheck
     ],
@@ -1569,6 +1578,13 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       )}
 
       {toast && <div className="toast">{toast}</div>}
+      {mode === 'script' && (
+        <FormatBubble
+          editor={editor}
+          onPrompt={(sel) => setPromptEdit({ ...sel, text: '', excerpt: editor!.state.doc.textBetween(sel.from, sel.to, ' ') })}
+          onReference={(sel) => setRefEdit({ ...sel, text: '', excerpt: editor!.state.doc.textBetween(sel.from, sel.to, ' ') })}
+        />
+      )}
       {audioOpen && <AudioSettings onClose={() => setAudioOpen(false)} />}
       {helpOpen && (
         <div className="modal-backdrop" onMouseDown={() => setHelpOpen(null)}>
