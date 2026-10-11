@@ -375,135 +375,262 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     )
   }
 
+  // ---------- checklist: o essencial do vídeo, num olhar ----------
+  type CheckState = 'ok' | 'bad' | 'checking' | 'none'
+  const checklist = useMemo(() => {
+    const binById = new Map(montage.bins.map((b) => [b.id, b]))
+    const roleOf = (binId: string) => {
+      let cur = binById.get(binId)
+      for (let i = 0; cur?.parent && i < 20; i++) cur = binById.get(cur.parent)
+      return cur?.role
+    }
+    const mediaById = new Map(montage.media.map((m) => [m.id, m]))
+    const used = (pred: (m: (typeof montage.media)[number]) => boolean) => montage.clips.map((c) => mediaById.get(c.media)).filter((m): m is NonNullable<typeof m> => !!m && pred(m))
+    const attach: Attachment[] = []
+    walk(doc, (n) => {
+      const a = n.attrs?.attachments as Attachment[] | undefined
+      if (Array.isArray(a)) attach.push(...a)
+    })
+    const uniq = (ps: (string | undefined)[]) => [...new Set(ps.filter(Boolean) as string[])]
+
+    const videoMedia = [...used((m) => m.kind !== 'audio'), ...montage.media.filter((m) => m.kind !== 'audio' && roleOf(m.bin) === 'raw')]
+    const videoAttach = attach.filter((a) => a.kind === 'video' || a.kind === 'image' || !a.kind)
+    const narr = used((m) => roleOf(m.bin) === 'narration')
+    const narrDur = montage.clips.filter((c) => roleOf(mediaById.get(c.media)?.bin ?? '') === 'narration').reduce((s, c) => s + c.out - c.in, 0)
+    const musicMedia = used((m) => m.kind === 'audio' && roleOf(m.bin) !== 'narration' && roleOf(m.bin) !== 'sfx')
+    const musicTrack = timelineAssets.filter((a) => a.path && a.kind === 'music')
+    const sfxMedia = montage.media.filter((m) => roleOf(m.bin) === 'sfx')
+    const sfxLinked = montage.bins.filter((b) => b.linked && roleOf(b.id) === 'sfx')
+    const sfxTrack = timelineAssets.filter((a) => a.path && a.kind !== 'music')
+    const asset = (a: TimelineAsset) => absPath({ id: a.id, name: a.name, path: a.path! })
+
+    return [
+      {
+        id: 'video',
+        label: 'Vídeos',
+        icon: <Film size={18} />,
+        count: uniq(videoMedia.map((m) => m.path)).length + videoAttach.length,
+        detail: `${uniq(videoMedia.map((m) => m.path)).length} na montagem · ${videoAttach.length} anexos`,
+        paths: uniq([...videoMedia.map((m) => m.path), ...videoAttach.map(absPath)]),
+        required: true
+      },
+      {
+        id: 'narration',
+        label: 'Narração',
+        icon: <Mic size={18} />,
+        count: narr.length,
+        detail: narr.length ? `${narr.length} cortes · ${fmtT(narrDur)}` : 'grave ou importe na Montagem',
+        paths: uniq(narr.map((m) => m.path)),
+        required: true
+      },
+      {
+        id: 'music',
+        label: 'Músicas',
+        icon: <Music size={18} />,
+        count: uniq(musicMedia.map((m) => m.path)).length + musicTrack.length,
+        detail: `${uniq(musicMedia.map((m) => m.path)).length} na timeline · ${musicTrack.length} no roteiro`,
+        paths: uniq([...musicMedia.map((m) => m.path), ...musicTrack.map(asset)]),
+        required: false
+      },
+      {
+        id: 'sfx',
+        label: 'Efeitos sonoros',
+        icon: <AudioLines size={18} />,
+        count: sfxMedia.length + sfxLinked.length + sfxTrack.length,
+        detail: `${sfxLinked.length} bibliotecas${sfxLinked.some((b) => b.star) ? ' ⭐' : ''} · ${sfxMedia.length + sfxTrack.length} arquivos`,
+        paths: uniq([...sfxLinked.map((b) => b.linked), ...sfxMedia.map((m) => m.path), ...sfxTrack.map(asset)]),
+        required: false
+      }
+    ]
+  }, [doc, montage, timelineAssets])
+
+  // os caminhos do checklist também passam pela conferência de acesso
+  const extraPaths = checklist.flatMap((c) => c.paths).filter((p) => !allPaths.includes(p))
+  useEffect(() => {
+    if (!active || !ready || !extraPaths.length) return
+    api.renderCheck(extraPaths).then((r) => setChecks((c) => ({ ...c, ...Object.fromEntries(r.map((x) => [x.path, x])) })))
+  }, [active, ready, extraPaths.join('|')])
+
+  const stateOf = (c: (typeof checklist)[number]): CheckState => {
+    if (!c.count) return 'none'
+    if (c.paths.some((p) => !checks[p])) return 'checking'
+    return c.paths.some((p) => !checks[p].ok) ? 'bad' : 'ok'
+  }
+  const STATE_LABEL: Record<CheckState, string> = { ok: 'OK', bad: 'sem acesso', checking: 'conferindo', none: 'nenhum' }
+  const readyCount = checklist.filter((c) => stateOf(c) === 'ok').length
+
+  const [rw, rh] = (format?.aspect ?? '16:9').split(':').map(Number)
+  const lastLine = job?.log.length ? job.log[job.log.length - 1].text : 'Preparando…'
+
   return (
-    <div className="render-studio">
-      <div className="rn-main">
-        <header className="rn-head">
-          <div>
-            <h2>
-              <Clapperboard size={20} /> Render
-            </h2>
-            <p className="muted">Tudo o que vai alimentar o Claude pra montar o vídeo. Desmarque o que não deve ir.</p>
-          </div>
-          <button className="btn small" onClick={runChecks} disabled={checking} title="Confere de novo se cada arquivo e pasta está acessível">
-            {checking ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />} Verificar acessos
-          </button>
-        </header>
-
-        <div className="rn-groups">
-          {groups.map((g) => (
-            <section key={g.id} className={'rn-group' + (off.has(g.id) || g.empty ? ' off' : '')}>
-              <label className="rn-ghead">
-                <input type="checkbox" checked={!off.has(g.id) && !g.empty} disabled={g.empty} onChange={() => toggle(g.id)} />
-                <span className="rn-gicon">{g.icon}</span>
-                <b>{g.label}</b>
-                <span className="rn-gsum">{g.summary}</span>
-                <span className="tb-grow" />
-                {!off.has(g.id) && statusOf(g)}
-              </label>
-              {!!g.items.length && !off.has(g.id) && (
-                <ul className="rn-items">
-                  {g.items.slice(0, 40).map((i, k) => {
-                    const c = i.path ? checks[i.path] : undefined
-                    return (
-                      <li key={k} className={c && !c.ok ? 'bad' : ''} title={i.path}>
-                        {i.star && <Star size={11} className="rn-star" />}
-                        <span className="rn-iname">{i.label}</span>
-                        {i.note && <span className="rn-note">{i.note}</span>}
-                        {c && (c.ok ? (c.files && c.files > 1 ? <span className="rn-note">{c.files >= 2000 ? '2000+' : c.files} arquivos</span> : null) : <span className="rn-err">{c.error}</span>)}
-                      </li>
-                    )
-                  })}
-                  {g.items.length > 40 && <li className="muted">… e mais {g.items.length - 40}</li>}
-                </ul>
-              )}
-            </section>
-          ))}
+    <div className="render-studio v2">
+      <header className="rn-head">
+        <div>
+          <h2>
+            <Clapperboard size={20} /> Render
+          </h2>
+          <p className="muted">Confira o que vai pro Claude e crie o vídeo.</p>
         </div>
-      </div>
+        <button className="btn small" onClick={runChecks} disabled={checking} title="Confere de novo se cada arquivo e pasta está acessível">
+          {checking ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />} Verificar acessos
+        </button>
+      </header>
 
-      <aside className="rn-side">
-        <section className="rn-card">
-          <h3>Qualidade da prévia</h3>
-          <div className="rn-res">
-            {outW}×{outH}
-            <small>{quality.pct === -1 ? 'Full HD' : `${quality.pct}% de ${baseW}×${baseH}`}</small>
-          </div>
-          <input
-            type="range"
-            min={25}
-            max={100}
-            step={5}
-            value={quality.pct === -1 ? 100 : quality.pct}
-            onChange={(e) => setQuality((q) => ({ ...q, pct: Number(e.target.value) }))}
-          />
-          <div className="rn-chips">
-            {[25, 50, 75, 100].map((p) => (
-              <button key={p} className={'rn-chip' + (quality.pct === p ? ' on' : '')} onClick={() => setQuality((q) => ({ ...q, pct: p }))}>
-                {p}%
-              </button>
-            ))}
-            <button className={'rn-chip' + (quality.pct === -1 ? ' on' : '')} onClick={() => setQuality((q) => ({ ...q, pct: -1 }))} title={`${fullHd[0]}×${fullHd[1]}`}>
-              Full HD
-            </button>
-          </div>
-          <label className="rn-fps">
-            Quadros por segundo
-            <select value={quality.fps} onChange={(e) => setQuality((q) => ({ ...q, fps: Number(e.target.value) }))}>
-              {[24, 30, 60].map((f) => (
-                <option key={f} value={f}>
-                  {f} fps
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="muted small">Prévia menor sai bem mais rápido. Use Full HD/100% pra versão final.</p>
-        </section>
-
-        <section className="rn-card rn-go">
-          {bad.length > 0 && !job?.busy && (
-            <p className="rn-warn">
-              <XCircle size={13} /> {bad.length} item(ns) sem acesso: o Claude vai ignorar. Confira a lista ao lado.
-            </p>
-          )}
-          {job?.busy ? (
-            <>
-              <div className="rn-busy">
-                <Loader2 size={16} className="spin" /> Criando o vídeo… {fmtT((now - job.t0) / 1000)}
+      {/* ---------- checklist ---------- */}
+      <section className="rn-checklist">
+        {checklist.map((c, i) => {
+          const st = stateOf(c)
+          return (
+            <div key={c.id} className={'rn-check ' + st + (c.required && st === 'none' ? ' missing' : '')} style={{ animationDelay: `${i * 0.06}s` }}>
+              <span className="rn-check-icon">{c.icon}</span>
+              <div className="rn-check-text">
+                <b>{c.label}</b>
+                <small>{c.detail}</small>
               </div>
-              <button className="btn small" onClick={() => api.renderCancel()}>
+              <span className="rn-check-state">
+                {st === 'ok' ? <CheckCircle2 size={16} /> : st === 'bad' ? <XCircle size={16} /> : st === 'checking' ? <Loader2 size={15} className="spin" /> : null}
+                {c.required && st === 'none' ? 'faltando' : STATE_LABEL[st]}
+              </span>
+            </div>
+          )
+        })}
+        <div className="rn-check-bar" title={`${readyCount} de 4 OK`}>
+          <i style={{ width: `${(readyCount / 4) * 100}%` }} />
+        </div>
+      </section>
+
+      {/* ---------- palco: prévia + controles ---------- */}
+      <section className="rn-stage">
+        <div className="rn-screen-wrap">
+          <div className="rn-screen" style={{ aspectRatio: `${rw} / ${rh}`, width: `min(100%, calc(52vh * ${rw / rh}))` }}>
+            {job && !job.busy && job.path ? (
+              <video src={fileUrl(job.path)} controls />
+            ) : job?.busy ? (
+              <div className="rn-screen-busy">
+                <div className="rn-scan" />
+                <Loader2 size={30} className="spin" />
+                <b>Criando o vídeo… {fmtT((now - job.t0) / 1000)}</b>
+                <small>{lastLine}</small>
+              </div>
+            ) : (
+              <div className="rn-screen-empty">
+                <Clapperboard size={34} />
+                <span>A prévia aparece aqui</span>
+                <small>
+                  {outW}×{outH} · {quality.fps} fps
+                </small>
+              </div>
+            )}
+          </div>
+          {job && !job.busy && job.path && (
+            <div className="rn-chips rn-screen-foot">
+              <button className="btn small" onClick={() => api.showItem(job.path!)}>
+                <FolderOpen size={13} /> Mostrar na pasta
+              </button>
+              <span className="muted small">pronto em {fmtT(job.seconds ?? 0)}</span>
+            </div>
+          )}
+        </div>
+
+        <aside className="rn-side">
+          <section className="rn-card">
+            <h3>Qualidade da prévia</h3>
+            <div className="rn-res">
+              {outW}×{outH}
+              <small>{quality.pct === -1 ? 'Full HD' : `${quality.pct}% de ${baseW}×${baseH}`}</small>
+            </div>
+            <input
+              type="range"
+              min={25}
+              max={100}
+              step={5}
+              value={quality.pct === -1 ? 100 : quality.pct}
+              onChange={(e) => setQuality((q) => ({ ...q, pct: Number(e.target.value) }))}
+            />
+            <div className="rn-chips">
+              {[25, 50, 75, 100].map((p) => (
+                <button key={p} className={'rn-chip' + (quality.pct === p ? ' on' : '')} onClick={() => setQuality((q) => ({ ...q, pct: p }))}>
+                  {p}%
+                </button>
+              ))}
+              <button className={'rn-chip' + (quality.pct === -1 ? ' on' : '')} onClick={() => setQuality((q) => ({ ...q, pct: -1 }))} title={`${fullHd[0]}×${fullHd[1]}`}>
+                Full HD
+              </button>
+            </div>
+            <label className="rn-fps">
+              Quadros por segundo
+              <select value={quality.fps} onChange={(e) => setQuality((q) => ({ ...q, fps: Number(e.target.value) }))}>
+                {[24, 30, 60].map((f) => (
+                  <option key={f} value={f}>
+                    {f} fps
+                  </option>
+                ))}
+              </select>
+            </label>
+          </section>
+
+          <section className="rn-card rn-go">
+            {bad.length > 0 && !job?.busy && (
+              <p className="rn-warn">
+                <XCircle size={13} /> {bad.length} item(ns) sem acesso: o Claude vai ignorar.
+              </p>
+            )}
+            {job?.busy ? (
+              <button className="btn small rn-cancel" onClick={() => api.renderCancel()}>
                 <Square size={12} /> Cancelar
               </button>
-            </>
-          ) : (
-            <button className="rn-create" onClick={create}>
-              <Sparkles size={18} /> Criar Vídeo
-            </button>
-          )}
-          {job && (
-            <div className="rn-log" ref={logRef}>
-              {job.log.map((l, i) => (
-                <div key={i} className={'rn-ev ' + l.kind}>
-                  {l.text}
-                </div>
-              ))}
-              {job.error && <div className="rn-ev error">{job.error}</div>}
-            </div>
-          )}
-          {job && !job.busy && job.path && (
-            <div className="rn-result">
-              <video src={fileUrl(job.path)} controls />
-              <div className="rn-chips">
-                <button className="btn small" onClick={() => api.showItem(job.path!)}>
-                  <FolderOpen size={13} /> Mostrar na pasta
-                </button>
-                <span className="muted small">pronto em {fmtT(job.seconds ?? 0)}</span>
+            ) : (
+              <button className="rn-create" onClick={create}>
+                <Sparkles size={18} /> Criar Vídeo
+              </button>
+            )}
+            {job && (
+              <div className="rn-log" ref={logRef}>
+                {job.log.map((l, i) => (
+                  <div key={i} className={'rn-ev ' + l.kind}>
+                    {l.text}
+                  </div>
+                ))}
+                {job.error && <div className="rn-ev error">{job.error}</div>}
+                {!job.busy && !job.error && job.summary && <div className="rn-ev say">{job.summary}</div>}
               </div>
-            </div>
-          )}
-          {job && !job.busy && !job.error && job.summary && <p className="rn-summary">{job.summary}</p>}
-        </section>
-      </aside>
+            )}
+          </section>
+        </aside>
+      </section>
+
+      {/* ---------- o que vai pro Claude, em grade ---------- */}
+      <h3 className="rn-section-title">O que vai pro Claude</h3>
+      <div className="rn-grid">
+        {groups.map((g) => (
+          <section key={g.id} className={'rn-group' + (off.has(g.id) || g.empty ? ' off' : '')}>
+            <label className="rn-ghead">
+              <input type="checkbox" checked={!off.has(g.id) && !g.empty} disabled={g.empty} onChange={() => toggle(g.id)} />
+              <span className="rn-gicon">{g.icon}</span>
+              <b>{g.label}</b>
+              <span className="tb-grow" />
+              {!off.has(g.id) && statusOf(g)}
+            </label>
+            <span className="rn-gsum">{g.summary}</span>
+            {!!g.items.length && !off.has(g.id) && (
+              <ul className="rn-items">
+                {g.items.slice(0, 60).map((i, k) => {
+                  const c = i.path ? checks[i.path] : undefined
+                  return (
+                    <li key={k} className={c && !c.ok ? 'bad' : ''} title={i.path}>
+                      {i.star && <Star size={11} className="rn-star" />}
+                      <span className="rn-iname">{i.label}</span>
+                      {i.note && <span className="rn-note">{i.note}</span>}
+                      {c && (c.ok ? (c.files && c.files > 1 ? <span className="rn-note">{c.files >= 2000 ? '2000+' : c.files}</span> : null) : <span className="rn-err">{c.error}</span>)}
+                    </li>
+                  )
+                })}
+                {g.items.length > 60 && <li className="muted">… e mais {g.items.length - 60}</li>}
+              </ul>
+            )}
+          </section>
+        ))}
+      </div>
     </div>
   )
 }
