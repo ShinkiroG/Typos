@@ -1,7 +1,7 @@
 {
   "name": "typos",
   "productName": "Typos",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "private": true,
   "description": "Editor de roteiros para YouTube",
   "main": "out/main/index.js",
