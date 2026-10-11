@@ -825,3 +825,44 @@
   color: var(--muted);
   line-height: 1.4;
 }
+
+/* seleção por caixa na timeline */
+.mt-marquee {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 80%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 3px;
+}
+
+/* teleprompter: escolher de onde começa */
+.mt-prompter p,
+.mt-prompter h4 {
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+.mt-prompter p:hover,
+.mt-prompter h4:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.mt-prompter .from {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.mt-prompter-from {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mt-prompter-from select {
+  max-width: 190px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 5px;
+  font-size: 12px;
+  color: var(--text);
+}

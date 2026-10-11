@@ -157,6 +157,35 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
   rehearseRef.current = rehearse
   const scrollAcc = useRef(0)
   const lastFrame = useRef(0)
+  /** de qual bloco do roteiro o teleprompter começa (null = do início) */
+  const [prompterFrom, setPrompterFrom] = useState<number | null>(null)
+  /** rola o teleprompter até o bloco ficar na faixa de leitura */
+  const prompterTo = (index: number | null) => {
+    const pr = prompterRef.current
+    if (!pr) return
+    const el = index === null ? null : pr.querySelector<HTMLElement>(`[data-block="${index}"]`)
+    const top = el ? pr.scrollTop + el.getBoundingClientRect().top - pr.getBoundingClientRect().top - parseFloat(getComputedStyle(pr).paddingTop) : 0
+    pr.scrollTop = Math.max(0, top)
+    scrollAcc.current = pr.scrollTop
+  }
+  /** falas e capítulos que o teleprompter mostra */
+  const prompterBlocks = prompter ? getBlocks().filter((b) => (b.type === 'paragraph' || b.type === 'chapter') && b.text.trim()) : []
+  // ao aparecer (gravar/ensaiar), já começa no ponto escolhido
+  const prompterShown = !source && prompter && (!!rec || rehearse)
+  useEffect(() => {
+    if (prompterShown) requestAnimationFrame(() => prompterTo(prompterFrom))
+  }, [prompterShown])
+  /** o bloco que está na faixa de leitura agora */
+  const prompterAt = (): number | null => {
+    const pr = prompterRef.current
+    if (!pr) return null
+    const line = pr.getBoundingClientRect().top + parseFloat(getComputedStyle(pr).paddingTop) + 8
+    let at: number | null = null
+    pr.querySelectorAll<HTMLElement>('[data-block]').forEach((el) => {
+      if (el.getBoundingClientRect().top <= line) at = Number(el.dataset.block)
+    })
+    return at
+  }
 
   const [wstatus, setWstatus] = useState<WStatus | null>(null)
   const [busy, setBusy] = useState<{ label: string; pct: number | null } | null>(null)
@@ -525,8 +554,6 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     recStart.current = t0
     r.start()
     setRec({ track, start: t0 })
-    if (prompterRef.current) prompterRef.current.scrollTop = 0
-    scrollAcc.current = 0
     setRehearse(false)
     await engine.play(dataRef.current, dur)
     setPlaying(true)
@@ -536,6 +563,9 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     const r = recRef.current
     const cur = rec ?? (recStart.current !== null && armed ? { track: armed, start: recStart.current } : null)
     if (!r || !cur) return
+    // a próxima tomada continua do parágrafo onde parou
+    const at = prompterAt()
+    if (at !== null) setPrompterFrom(at)
     const { wav, duration } = r.stop()
     r.close()
     recRef.current = null
@@ -627,6 +657,11 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
         e.preventDefault()
         e.stopPropagation()
         return redo()
+      }
+      if ((e.ctrlKey || e.metaKey) && k === 'a') {
+        e.preventDefault()
+        e.stopPropagation()
+        return setSelected(dataRef.current.clips.map((c) => c.id))
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return
       const run = (fn: () => void) => {
@@ -1372,9 +1407,26 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
                 // a roda do mouse adianta/volta; a rolagem automática continua dali
                 onWheel={() => requestAnimationFrame(() => (scrollAcc.current = prompterRef.current?.scrollTop ?? scrollAcc.current))}
               >
-                {getBlocks()
-                  .filter((b) => (b.type === 'paragraph' || b.type === 'chapter') && b.text.trim())
-                  .map((b) => (b.type === 'chapter' ? <h4 key={b.index}>{b.text}</h4> : <p key={b.index}>{b.text}</p>))}
+                {prompterBlocks.map((b) => {
+                  const props = {
+                    'data-block': b.index,
+                    className: b.index === prompterFrom ? 'from' : undefined,
+                    title: 'Clique pra continuar daqui',
+                    onClick: () => {
+                      setPrompterFrom(b.index)
+                      prompterTo(b.index)
+                    }
+                  }
+                  return b.type === 'chapter' ? (
+                    <h4 key={b.index} {...props}>
+                      {b.text}
+                    </h4>
+                  ) : (
+                    <p key={b.index} {...props}>
+                      {b.text}
+                    </p>
+                  )
+                })}
               </div>
               <div className="mt-prompter-guide" />
               <div className="mt-prompter-hud">
@@ -1439,14 +1491,28 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
                 disabled={!!rec}
                 title="Rola o teleprompter sem gravar, pra achar a velocidade"
                 onClick={() => {
-                  scrollAcc.current = 0
-                  if (prompterRef.current) prompterRef.current.scrollTop = 0
                   setSource(null)
+                  if (rehearse) {
+                    const at = prompterAt()
+                    if (at !== null) setPrompterFrom(at)
+                  }
                   setRehearse((v) => !v)
                 }}
               >
                 {rehearse ? 'Parar ensaio' : 'Ensaiar'}
               </button>
+              <label className="mt-prompter-from" title="De onde o teleprompter começa (também dá pra clicar num parágrafo dele enquanto rola)">
+                Começar em
+                <select value={prompterFrom ?? ''} onChange={(e) => setPrompterFrom(e.target.value === '' ? null : Number(e.target.value))}>
+                  <option value="">Início</option>
+                  {prompterBlocks.map((b) => (
+                    <option key={b.index} value={b.index}>
+                      {b.type === 'chapter' ? '■ ' : ''}
+                      {b.text.length > 48 ? b.text.slice(0, 48) + '…' : b.text}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </>
           )}
           <button className="icon-btn" title="Áudio: microfone, saída e níveis" onClick={onAudioSettings}>

@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useRef } from 'react'
+import { memo, useLayoutEffect, useRef, useState } from 'react'
 import { Volume2, VolumeX, Plus } from 'lucide-react'
 import { clipDur, clipEndT, formatTime, uid, type MontageClip, type MontageData, type MontageMedia, type MontageTrack } from '../lib'
 import { PEAKS_PER_SEC, type MontageEngine } from './engine'
@@ -93,6 +93,46 @@ export function EditTimeline(p: Props) {
   const { data, pps, scrollRef } = p
   const end = Math.max(30, ...data.clips.map(clipEndT)) + 20
   const width = end * pps
+
+  // ---------- seleção por caixa (arrastar no vazio) ----------
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+  const startMarquee = (e: React.PointerEvent) => {
+    const x0 = e.clientX
+    const y0 = e.clientY
+    const add = e.shiftKey || e.ctrlKey || e.metaKey
+    const base = add ? p.selected : []
+    let moved = false
+    const hits = (x1: number, y1: number) => {
+      const l = Math.min(x0, x1)
+      const r = Math.max(x0, x1)
+      const t = Math.min(y0, y1)
+      const b = Math.max(y0, y1)
+      const ids: string[] = []
+      scrollRef.current?.querySelectorAll<HTMLElement>('.mt-clip[data-clip]').forEach((el) => {
+        const c = el.getBoundingClientRect()
+        if (c.right > l && c.left < r && c.bottom > t && c.top < b) ids.push(el.dataset.clip!)
+      })
+      return ids
+    }
+    const move = (ev: PointerEvent) => {
+      if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return
+      moved = true
+      setBox({ x0, y0, x1: ev.clientX, y1: ev.clientY })
+      p.onSelect([...new Set([...base, ...hits(ev.clientX, ev.clientY)])])
+    }
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      setBox(null)
+      // clique simples no vazio: tira a seleção e leva o cursor pra lá
+      if (!moved) {
+        if (!add) p.onSelect([])
+        p.seek(timeAt(ev.clientX))
+      }
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
 
   // ---------- arrastos ----------
   const drag = useRef<{
@@ -289,8 +329,7 @@ export function EditTimeline(p: Props) {
               data-track={tr.id}
               onPointerDown={(e) => {
                 if (e.button !== 0) return
-                p.onSelect([])
-                p.seek(timeAt(e.clientX))
+                startMarquee(e)
               }}
             >
               {data.clips
@@ -336,6 +375,17 @@ export function EditTimeline(p: Props) {
             </div>
           </div>
         ))}
+        {box && (
+          <div
+            className="mt-marquee"
+            style={{
+              left: Math.min(box.x0, box.x1),
+              top: Math.min(box.y0, box.y1),
+              width: Math.abs(box.x1 - box.x0),
+              height: Math.abs(box.y1 - box.y0)
+            }}
+          />
+        )}
         <div className="mt-add-track">
           <button className="btn small" onClick={() => addTrack('video')}>
             <Plus size={12} /> Vídeo
@@ -377,6 +427,7 @@ const ClipView = memo(function ClipView({
     <div
       className={'mt-clip k-' + kind + (sel ? ' sel' : '') + (blade ? ' blade' : '') + (!m ? ' missing' : '')}
       style={{ left: c.start * pps, width: w }}
+      data-clip={c.id}
       onPointerDown={(e) => onDown(e, c)}
       onContextMenu={(e) => onMenu(e, c)}
       title={`${m?.name ?? 'mídia sumiu'}\n${formatTime(c.start)} → ${formatTime(clipEndT(c))} (${clipDur(c).toFixed(2)}s)`}
