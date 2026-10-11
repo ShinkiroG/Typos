@@ -344,7 +344,8 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
         if (x > sc.clientWidth - 40) sc.scrollLeft += sc.clientWidth * 0.7
       }
       const end = Math.max(0, ...dataRef.current.clips.map(clipEndT))
-      if (engine.playing && t > end + 0.5) {
+      // gravando, a timeline segue andando mesmo depois do último corte (ou com ela vazia)
+      if (engine.playing && !r && t > end + 0.5) {
         engine.pause()
         setPlaying(false)
       }
