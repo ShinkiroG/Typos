@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Play,
   Pause,
@@ -41,7 +41,7 @@ import { MontageEngine } from './engine'
 import { Recorder } from '../audio'
 import { askText } from '../components/AskDialog'
 import { YoutubeDownload } from '../components/YoutubeDownload'
-import { EditTimeline, MEDIA_MIME, PCFILE_MIME, mediaLen, splitClip, type Tool } from './EditTimeline'
+import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, mediaLen, splitClip, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
 
 export const fmtTc = (t: number) => {
@@ -250,6 +250,31 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
   const posRef = useRef(0)
   const playheadRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Ctrl (ou Alt) + roda do mouse: zoom na timeline, mantendo parado o ponto embaixo do mouse
+  const zoomAnchor = useRef<{ t: number; x: number } | null>(null)
+  useEffect(() => {
+    const sc = scrollRef.current
+    if (!sc) return
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.altKey) return
+      e.preventDefault()
+      const x = e.clientX - sc.getBoundingClientRect().left
+      setPps((p) => {
+        zoomAnchor.current = { t: Math.max(0, (x + sc.scrollLeft - HEAD_W) / p), x }
+        return Math.min(800, Math.max(2, p * (e.deltaY < 0 ? 1.2 : 1 / 1.2)))
+      })
+    }
+    sc.addEventListener('wheel', onWheel, { passive: false })
+    return () => sc.removeEventListener('wheel', onWheel)
+  }, [active])
+  useLayoutEffect(() => {
+    const a = zoomAnchor.current
+    const sc = scrollRef.current
+    if (!a || !sc) return
+    sc.scrollLeft = Math.max(0, a.t * pps + HEAD_W - a.x)
+    zoomAnchor.current = null
+  }, [pps])
   const tcRef = useRef<HTMLSpanElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
@@ -347,7 +372,12 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     const tick = () => {
       const t = engine.position()
       posRef.current = t
-      if (playheadRef.current) playheadRef.current.style.transform = `translateX(${t * pps}px)`
+      if (playheadRef.current) {
+        playheadRef.current.style.transform = `translateX(${t * pps}px)`
+        // rolou a timeline: o cursor não passa por cima dos nomes das faixas
+        const behind = t * pps < (scrollRef.current?.scrollLeft ?? 0) - 1
+        playheadRef.current.style.visibility = behind ? 'hidden' : ''
+      }
       if (tcRef.current) tcRef.current.textContent = fmtTc(t)
       if (!source) syncPicture(t)
       const r = recRef.current
@@ -1541,10 +1571,10 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
         >
           <FileCheck2 size={13} /> Atualizar roteiro
         </button>
-        <button className="icon-btn" title="Menos zoom (-)" onClick={() => setPps((p) => Math.max(2, p / 1.4))}>
+        <button className="icon-btn" title="Menos zoom (- ou Ctrl+roda do mouse)" onClick={() => setPps((p) => Math.max(2, p / 1.4))}>
           <ZoomOut size={15} />
         </button>
-        <button className="icon-btn" title="Mais zoom (+)" onClick={() => setPps((p) => Math.min(800, p * 1.4))}>
+        <button className="icon-btn" title="Mais zoom (+ ou Ctrl+roda do mouse)" onClick={() => setPps((p) => Math.min(800, p * 1.4))}>
           <ZoomIn size={15} />
         </button>
       </div>

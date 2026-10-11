@@ -35,7 +35,7 @@ interface Props {
   onDropFile: (path: string, trackKind: 'video' | 'audio', trackId: string | null, start: number) => void
 }
 
-const HEAD_W = 132
+export const HEAD_W = 132
 const SNAP_PX = 8
 const MIN_DUR = 0.04
 
