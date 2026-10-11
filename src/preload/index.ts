@@ -147,6 +147,8 @@ const api = {
   motionPasteImage: (bytes: Uint8Array, name: string): Promise<string> => ipcRenderer.invoke('motion:pasteImage', bytes, name),
   systemFonts: (): Promise<string[]> => ipcRenderer.invoke('sys:fonts'),
   motionDemoFile: (html: string): Promise<string> => ipcRenderer.invoke('motion:demoFile', html),
+  findSfxLibraries: (): Promise<{ libs: { path: string; name: string; program: string; why: string; files: number }[]; hints: number } | { error: string }> =>
+    ipcRenderer.invoke('ai:findSfx'),
   motionTrain: (job: { prompt: string; images: string[] }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
     ipcRenderer.invoke('ai:motionTrain', job),
 

@@ -7,7 +7,7 @@ import { randomUUID, createHash } from 'crypto'
 import { loadSettings, saveSettings } from './settings'
 import { initUpdater, checkManually, installDownloadedNow, installMode } from './updater'
 import { initSpell } from './spell'
-import { initAi, initMotionAi } from './ai'
+import { initAi, initMotionAi, initSfxFinder } from './ai'
 import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, initDownloads } from './media'
 import { initWhisper } from './whisper'
 
@@ -246,6 +246,7 @@ app.on('window-all-closed', () => app.quit())
 initSpell()
 initAi()
 initMotionAi()
+initSfxFinder()
 initMedia()
 initDownloads()
 initWhisper()

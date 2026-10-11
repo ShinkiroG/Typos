@@ -814,3 +814,49 @@ body {
   color: var(--muted);
   white-space: nowrap;
 }
+
+/* Claude procurando bibliotecas de som */
+.mt-sfxfind {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 8px 8px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  background: rgba(34, 211, 238, 0.06);
+}
+.mt-sfxlib {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12px;
+  cursor: pointer;
+}
+.mt-sfxlib span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.mt-sfxlib i {
+  color: #22d3ee;
+  font-style: normal;
+}
+.mt-sfxlib small {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.mt-sfxpath {
+  font-family: var(--font-console);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mt-sfxbtns {
+  display: flex;
+  gap: 6px;
+}

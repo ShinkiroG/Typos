@@ -360,3 +360,102 @@ export function initMotionAi() {
     }
   })
 }
+
+// ---------- Claude procura bibliotecas de som (SFX) no PC ----------
+const AUDIO_RE = /\.(wav|mp3|ogg|flac|aif|aiff|m4a)$/i
+const HINT_RE = /mister ?horse|motion ?bro|sound ?effects?|sfx|sound ?fx|foley|audio ?pack|sons?\b/i
+const SKIP_RE = /^(temp|cache|cep_cache|node_modules|\$recycle\.bin|windows|system32|winsxs)$/i
+
+/** pistas rápidas: pastas com nome de biblioteca de som até 4 níveis nos lugares comuns */
+async function sfxHints(): Promise<string[]> {
+  const env = process.env
+  const roots = [join(env.USERPROFILE ?? '', 'Documents'), join(env.USERPROFILE ?? '', 'Music'), env.APPDATA, env.LOCALAPPDATA, env.ProgramFiles, env['ProgramFiles(x86)'], env.ProgramData, env.CommonProgramFiles].filter(Boolean) as string[]
+  const out: string[] = []
+  const walk = async (dir: string, depth: number) => {
+    if (depth > 4 || out.length > 60) return
+    let ents: import('fs').Dirent[] = []
+    try {
+      ents = await fs.readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of ents) {
+      if (!e.isDirectory() || SKIP_RE.test(e.name)) continue
+      const p = join(dir, e.name)
+      if (HINT_RE.test(e.name)) out.push(p)
+      else await walk(p, depth + 1)
+    }
+  }
+  for (const r of roots) if (existsSync(r)) await walk(r, 0)
+  return [...new Set(out)]
+}
+
+/** quantos áudios tem dentro (para de contar em 5000) */
+async function countAudio(dir: string) {
+  let n = 0
+  const walk = async (d: string, depth: number) => {
+    if (n >= 5000 || depth > 8) return
+    for (const e of await fs.readdir(d, { withFileTypes: true }).catch(() => [] as import('fs').Dirent[])) {
+      if (e.isDirectory()) await walk(join(d, e.name), depth + 1)
+      else if (AUDIO_RE.test(e.name)) n++
+    }
+  }
+  await walk(dir, 0)
+  return n
+}
+
+export function initSfxFinder() {
+  ipcMain.handle('ai:findSfx', async () => {
+    try {
+      const s = (await loadSettings()).ai ?? {}
+      const cc = await findClaudeCode(s)
+      if (!cc) throw new Error('Pra procurar no PC o Typos usa o Claude Code (ele precisa olhar as pastas). Instale e faça login em Configurações → IA.')
+      const hints = await sfxHints()
+      const prompt = [
+        'Você está dentro do Typos (editor de vídeo do usuário) e a tarefa é ACHAR BIBLIOTECAS DE EFEITOS SONOROS instaladas neste PC Windows.',
+        'Principalmente as de programas como Mister Horse (Animation Composer / Premiere Composer, packs de som), Motion Bro e outros packs de SFX que o usuário tenha.',
+        'Só leia e liste pastas (use as ferramentas de busca de arquivos); não mude nada.',
+        'Pistas que o Typos já achou (podem ter falsos positivos; algumas guardam só configuração, não os sons):',
+        ...hints.map((h) => '- ' + h),
+        'Investigue essas pistas e onde mais esses programas costumam guardar os sons (ProgramData, Documents, AppData, a pasta de conteúdo/biblioteca configurada no programa, outros discos).',
+        'Pra cada biblioteca, aponte a pasta que de fato contém os arquivos de áudio (.wav/.mp3/.ogg…), a mais alta que ainda seja só de sons.',
+        'Responda SÓ com JSON entre as tags, assim:',
+        '<libs>[{"path": "C:\\\\caminho\\\\da\\\\pasta", "name": "nome curto", "program": "Mister Horse / Motion Bro / outro", "why": "o que tem lá em poucas palavras"}]</libs>',
+        'Se não achar nenhuma, devolva <libs>[]</libs>.'
+      ].join('\n')
+      const dirs = [...new Set([process.env.USERPROFILE, process.env.ProgramData, process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.CommonProgramFiles, ...hints].filter(Boolean) as string[])]
+      const args = ['-p', '--output-format', 'json', '--allowedTools', 'Glob,Grep,Read', ...dirs.flatMap((d) => ['--add-dir', d])]
+      const r = await run(cc.path, args, { cwd: process.env.USERPROFILE, input: prompt, timeoutMs: 15 * 60000 })
+      let parsed: any = null
+      try {
+        parsed = JSON.parse(r.out)
+      } catch {
+        /* abaixo */
+      }
+      if (!parsed || parsed.is_error || typeof parsed.result !== 'string') throw new Error('Claude Code: ' + ((parsed?.result || r.err || r.out || '').toString().trim().slice(0, 300) || 'falhou sem mensagem'))
+      const m = parsed.result.match(/<libs>([\s\S]*?)<\/libs>/)
+      let list: { path: string; name: string; program: string; why: string }[] = []
+      const raw = (m ? m[1] : parsed.result).trim()
+      try {
+        list = JSON.parse(raw)
+      } catch {
+        try {
+          // caminho do Windows com barra simples (C:\pasta): dobra as barras e tenta de novo
+          list = JSON.parse(raw.replace(/\\(?!["\\/bfnrtu])/g, '\\\\'))
+        } catch {
+          throw new Error('O Claude respondeu fora do formato. Tente de novo.')
+        }
+      }
+      // confere de verdade: a pasta existe e tem áudio?
+      const out = []
+      for (const l of list) {
+        if (!l?.path || !existsSync(l.path)) continue
+        const files = await countAudio(l.path)
+        if (files) out.push({ ...l, files })
+      }
+      return { libs: out, hints: hints.length }
+    } catch (e: any) {
+      return { error: String(e?.message ?? e) }
+    }
+  })
+}
