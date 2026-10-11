@@ -216,8 +216,8 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     const list = dataRef.current.media.filter((m) => inside.has(m.bin) && m.hasAudio)
     if (!list.length) return
     if (!model?.ready) return downloadModel()
-    const hadAuto = dataRef.current.clips.some((c) => c.block !== undefined && list.some((m) => m.id === c.media))
-    if (hadAuto && !confirm('Refazer o corte automático? Os cortes automáticos anteriores dessa narração são substituídos (o que você pôs à mão fica).')) return
+    const onTimeline = dataRef.current.clips.some((c) => list.some((m) => m.id === c.media))
+    if (onTimeline && !confirm('O corte automático substitui, na faixa da narração, essas gravações que já estão na timeline (as tomadas inteiras e cortes automáticos anteriores). Continuar?')) return
     engine.pause()
     setPlaying(false)
     setReport(null)

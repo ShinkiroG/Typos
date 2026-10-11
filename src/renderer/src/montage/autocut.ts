@@ -230,9 +230,11 @@ export function autoCut(blocks: ScriptBlock[], takes: Take[], base: MontageData)
   }
 
   const touched = new Set(takes.map((t) => t.media.id))
-  // cortes automáticos antigos dessas mídias saem; o que foi posto à mão fica
-  const kept = base.clips.filter((c) => !(c.block !== undefined && touched.has(c.media)))
   const trackFor = (m: MontageMedia) => base.tracks.find((t) => t.kind === (m.kind === 'audio' ? 'audio' : 'video'))?.id ?? base.tracks[0].id
+  // o corte substitui essas gravações na faixa da narração: a tomada inteira que a gravação
+  // pôs ali (e os cortes automáticos antigos) saem, senão a voz toca duas vezes por cima
+  const outTracks = new Set(takes.map((t) => trackFor(t.media)))
+  const kept = base.clips.filter((c) => !(touched.has(c.media) && (c.block !== undefined || outTracks.has(c.track))))
   const splice = base.spliceDefault ?? 0.02
 
   const clips: MontageClip[] = []
@@ -248,9 +250,21 @@ export function autoCut(blocks: ScriptBlock[], takes: Take[], base: MontageData)
     const t = takes[st.take]
     // a última palavra começa onde? (pra achar o silêncio depois dela)
     const lastWordStart = T.filter((w) => w.take === st.take && w.word.e === st.e).pop()?.word.s ?? st.s
-    const a = snapStart(t, st.s)
+    let a = snapStart(t, st.s)
     const z = Math.max(a + 0.1, snapEnd(t, lastWordStart, st.e))
     const track = trackFor(t.media)
+    // frases vizinhas da mesma tomada que encostam/sobrepõem no áudio viram um corte só
+    // (senão o mesmo pedaço toca de novo: sílabas repetidas)
+    const prev = clips[clips.length - 1]
+    if (!afterGap && prev && prev.media === t.media.id && prev.track === track && a < prev.out + 0.25 && z > prev.in) {
+      if (z > prev.out) {
+        cursor += z - prev.out
+        prev.out = z
+      }
+      continue
+    }
+    if (prev && prev.media === t.media.id && a < prev.out && a > prev.in) a = prev.out
+    if (z - a < 0.05) continue
     clips.push({
       id: uid(),
       track,
