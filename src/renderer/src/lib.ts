@@ -645,6 +645,8 @@ export interface MontageTrack {
   kind: 'video' | 'audio'
   name: string
   muted?: boolean
+  /** faixa onde o corte automático põe a narração editada (fica logo abaixo da original) */
+  auto?: boolean
 }
 export interface MontageClip {
   id: string

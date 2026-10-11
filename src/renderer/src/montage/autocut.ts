@@ -230,11 +230,23 @@ export function autoCut(blocks: ScriptBlock[], takes: Take[], base: MontageData)
   }
 
   const touched = new Set(takes.map((t) => t.media.id))
-  const trackFor = (m: MontageMedia) => base.tracks.find((t) => t.kind === (m.kind === 'audio' ? 'audio' : 'video'))?.id ?? base.tracks[0].id
-  // o corte substitui essas gravações na faixa da narração: a tomada inteira que a gravação
-  // pôs ali (e os cortes automáticos antigos) saem, senão a voz toca duas vezes por cima
-  const outTracks = new Set(takes.map((t) => trackFor(t.media)))
-  const kept = base.clips.filter((c) => !(touched.has(c.media) && (c.block !== undefined || outTracks.has(c.track))))
+  // a narração editada vai pra uma faixa própria logo abaixo da original; a original fica
+  // (silenciada) pra comparar
+  const srcTrack =
+    base.clips.find((c) => touched.has(c.media) && c.block === undefined && base.tracks.find((t) => t.id === c.track)?.kind === 'audio')?.track ??
+    base.tracks.find((t) => t.kind === 'audio' && !t.auto)?.id
+  let tracks = base.tracks
+  let cutTrack = tracks.find((t) => t.auto)
+  if (!cutTrack) {
+    cutTrack = { id: uid(), kind: 'audio', name: 'Corte automático', auto: true }
+    const at = srcTrack ? tracks.findIndex((t) => t.id === srcTrack) + 1 : tracks.length
+    tracks = [...tracks.slice(0, at), cutTrack, ...tracks.slice(at)]
+  }
+  tracks = tracks.map((t) => (t.id === srcTrack ? { ...t, muted: true } : t.id === cutTrack!.id ? { ...t, muted: false } : t))
+  const trackFor = (m: MontageMedia) =>
+    m.kind === 'audio' ? cutTrack!.id : (base.tracks.find((t) => t.kind === 'video')?.id ?? base.tracks[0].id)
+  // só os cortes automáticos antigos dessas gravações saem; as tomadas originais ficam
+  const kept = base.clips.filter((c) => !(touched.has(c.media) && c.block !== undefined))
   const splice = base.spliceDefault ?? 0.02
 
   const clips: MontageClip[] = []
@@ -280,18 +292,35 @@ export function autoCut(blocks: ScriptBlock[], takes: Take[], base: MontageData)
     afterGap = false
   }
 
-  return { data: { ...base, clips: [...kept, ...clips] }, found, missing, retakes }
+  return { data: { ...base, tracks, clips: [...kept, ...clips] }, found, missing, retakes }
 }
 
 /**
- * Projetos cortados antes da 2.0.6 ficaram com a tomada inteira por baixo dos cortes automáticos
- * (a voz tocava duplicada). Ao abrir, tira a tomada inteira cuja gravação já virou cortes automáticos na mesma faixa.
+ * Projetos cortados antes da 2.0.7 ficaram com o corte automático na mesma faixa das gravações
+ * (a voz tocava duplicada). Ao abrir, o corte vai pra faixa própria logo abaixo e a original
+ * fica silenciada, pra comparar.
  */
-export function repairDoubledNarration(m: MontageData): { data: MontageData; removed: number } {
-  const auto = m.clips.filter((c) => c.block !== undefined)
-  // tomada que já virou cortes automáticos na mesma faixa: a versão inteira é sobra (toca por cima de outras frases)
-  const doubled = (c: MontageClip) => c.block === undefined && auto.some((a) => a.track === c.track && a.media === c.media)
-  const clips = m.clips.filter((c) => !doubled(c))
-  const removed = m.clips.length - clips.length
-  return { data: removed ? { ...m, clips } : m, removed }
+export function separateAutoCut(m: MontageData): { data: MontageData; moved: number } {
+  const mixed = new Set(
+    m.clips
+      .filter((c) => c.block !== undefined && m.clips.some((o) => o.block === undefined && o.track === c.track && o.media === c.media))
+      .map((c) => c.track)
+  )
+  const src = m.tracks.find((t) => mixed.has(t.id) && t.kind === 'audio' && !t.auto)
+  if (!src) return { data: m, moved: 0 }
+  let tracks = m.tracks
+  let cut = tracks.find((t) => t.auto)
+  if (!cut) {
+    cut = { id: uid(), kind: 'audio', name: 'Corte automático', auto: true }
+    const at = tracks.findIndex((t) => t.id === src.id) + 1
+    tracks = [...tracks.slice(0, at), cut, ...tracks.slice(at)]
+  }
+  tracks = tracks.map((t) => (t.id === src.id ? { ...t, muted: true } : t))
+  let moved = 0
+  const clips = m.clips.map((c) => {
+    if (c.track !== src.id || c.block === undefined) return c
+    moved++
+    return { ...c, track: cut!.id }
+  })
+  return { data: { ...m, tracks, clips }, moved }
 }

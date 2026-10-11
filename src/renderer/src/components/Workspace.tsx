@@ -16,7 +16,7 @@ import { TextStyle, Color, FontFamily, FontSize } from '@tiptap/extension-text-s
 import Highlight from '@tiptap/extension-highlight'
 import { FormatBubble } from './FormatBubble'
 import { RenderStudio } from '../render/RenderStudio'
-import { repairDoubledNarration } from '../montage/autocut'
+import { separateAutoCut } from '../montage/autocut'
 import logoUrl from '../assets/logo.png'
 import { FilterBar } from './FilterBar'
 import { TrackGutter } from './TrackGutter'
@@ -151,12 +151,12 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [notes, setNotes] = useState(data.notes ?? '')
   const [chapterLettering, setChapterLettering] = useState(data.chapterLettering ?? true)
   setLetteringDefault(chapterLettering)
-  // projetos cortados antes da 2.0.6: tira a tomada inteira que ficou por baixo do corte automático
+  // projetos cortados antes da 2.0.7: o corte automático vai pra faixa própria, a original fica silenciada
   const repaired = useRef(0)
   const [montage, setMontage] = useState<MontageData>(() => {
     if (!data.montage) return defaultMontage()
-    const r = repairDoubledNarration(data.montage)
-    repaired.current = r.removed
+    const r = separateAutoCut(data.montage)
+    repaired.current = r.moved
     return r.data
   })
   const [montageVisited, setMontageVisited] = useState(false)
@@ -237,7 +237,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     }
   })
   const [toast, setToast] = useState(() =>
-    repaired.current ? `Narração consertada: ${repaired.current} tomada(s) inteira(s) que tocavam por baixo do corte automático saíram da timeline.` : ''
+    repaired.current ? 'O corte automático foi pra faixa "Corte automático", logo abaixo da narração original (que ficou silenciada pra comparar: clique no alto-falante da faixa).' : ''
   )
   const [spell, setSpell] = useState<{ word: string; from: number; to: number; suggestions: string[] | null } | null>(null)
 
