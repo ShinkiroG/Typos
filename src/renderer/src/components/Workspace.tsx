@@ -6,7 +6,7 @@ import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { JSONContent } from '@tiptap/core'
-import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput, Palette } from 'lucide-react'
+import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Send, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput, Palette, Scissors, Copy, ClipboardPaste } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming, convertBracketLines } from '../editor/nodes'
 import { Timestamps, setTimestamps } from '../editor/timestamps'
 import { TimeGutter } from './TimeGutter'
@@ -47,6 +47,9 @@ import {
   type MontageData,
   defaultMontage,
   setAiStyle,
+  setLetteringDefault,
+  letteringOn,
+  letteringAttr,
   inlineMd,
   mdToJson
 } from '../lib'
@@ -140,6 +143,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
 
   const [clips, setClips] = useState<Clip[]>(data.timeline?.clips ?? [])
   const [notes, setNotes] = useState(data.notes ?? '')
+  const [chapterLettering, setChapterLettering] = useState(data.chapterLettering ?? true)
+  setLetteringDefault(chapterLettering)
   const [montage, setMontage] = useState<MontageData>(() => data.montage ?? defaultMontage())
   const [montageVisited, setMontageVisited] = useState(false)
   // áudio da Montagem tocando junto na timeline do roteiro (pelas prévias do ffmpeg)
@@ -234,8 +239,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const editorRef = useRef<Editor | null>(null)
   const libraryRef = useRef(library)
   libraryRef.current = library
-  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode })
-  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode }
+  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering })
+  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering }
 
   // ---------- desfazer/refazer da tela inteira (texto + timeline) ----------
   // O texto usa o histórico do editor; os clipes de áudio guardam cópias. A pilha "ordem"
@@ -685,9 +690,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         { label: 'Desfazer', shortcut: 'Ctrl+Z', onClick: () => historyStep('undo') },
         { label: 'Refazer', shortcut: 'Ctrl+Shift+Z', onClick: () => historyStep('redo') },
         { sep: true },
-        { label: 'Recortar', shortcut: 'Ctrl+X', onClick: () => document.execCommand('cut') },
-        { label: 'Copiar', shortcut: 'Ctrl+C', onClick: () => document.execCommand('copy') },
-        { label: 'Colar', shortcut: 'Ctrl+V', onClick: () => navigator.clipboard.readText().then((t) => editor?.chain().focus().insertContent(t).run()) },
+        { label: 'Recortar', shortcut: 'Ctrl+X', onClick: () => api.editAction('cut') },
+        { label: 'Copiar', shortcut: 'Ctrl+C', onClick: () => api.editAction('copy') },
+        { label: 'Colar', shortcut: 'Ctrl+V', onClick: () => api.editAction('paste') },
         { label: 'Selecionar tudo', shortcut: 'Ctrl+A', onClick: () => editor?.chain().focus().selectAll().run() },
         { sep: true },
         { label: 'Configurações…', shortcut: 'Ctrl+,', onClick: onOpenSettings }
@@ -752,6 +757,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       timeline: { clips, tracks, assets },
       notes,
       montage,
+      chapterLettering: metaRef.current.chapterLettering,
       doc: ed.getJSON(),
       updatedAt: new Date().toISOString()
     }
@@ -791,7 +797,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     setSaveState('dirty')
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => save(), 800)
-  }, [title, formatId, clips, customWpm, tracks, assets, notes, montage, save])
+  }, [title, formatId, clips, customWpm, tracks, assets, notes, montage, chapterLettering, save])
 
   useEffect(() => {
     try {
@@ -1197,7 +1203,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             placeholder="Título do vídeo"
             spellCheck={false}
           />
-          <EditorContent editor={editor} className={'script' + hidden.map((h) => ' hide-' + h).join('')} />
+          <EditorContent editor={editor} className={'script' + hidden.map((h) => ' hide-' + h).join('') + (chapterLettering ? ' lettering-default' : '')} />
         </div>
       </main>
 
@@ -1280,7 +1286,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         )}
       </footer>
 
-      {menu && (menuNode || spell || menu.sel || menu.ref || menu.prompt) && (
+      {menu && (menuNode || spell || menu.sel || menu.ref || menu.prompt || menu.pos >= -1) && (
         <div
           className="ctx-menu"
           style={{ left: menu.x, top: menu.y }}
@@ -1297,6 +1303,18 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             e.stopPropagation()
           }}
         >
+          <div className="ctx-clip">
+            <button disabled={!menu.sel} onClick={() => (api.editAction('cut'), setMenu(null))} title="Recortar (Ctrl+X)">
+              <Scissors size={13} /> Recortar
+            </button>
+            <button disabled={!menu.sel} onClick={() => (api.editAction('copy'), setMenu(null))} title="Copiar (Ctrl+C)">
+              <Copy size={13} /> Copiar
+            </button>
+            <button onClick={() => (api.editAction('paste'), setMenu(null))} title="Colar (Ctrl+V)">
+              <ClipboardPaste size={13} /> Colar
+            </button>
+          </div>
+          <div className="ctx-sep" />
           {(menu.sel || menu.ref || menu.prompt) && (
             <>
               {menu.sel && (
@@ -1445,6 +1463,39 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
                 Adicionar "{spell.word}" ao dicionário
               </button>
               {menuNode && <div className="ctx-sep" />}
+            </>
+          )}
+          {menuNode?.type.name === 'chapter' && (
+            <>
+              <div className="ctx-label">Lettering capitular</div>
+              <button
+                onClick={() => {
+                  // liga/desliga pra todos: os ajustes individuais voltam a seguir o padrão
+                  const next = !chapterLettering
+                  setChapterLettering(next)
+                  setLetteringDefault(next)
+                  const ed = editor!
+                  const tr = ed.state.tr
+                  ed.state.doc.forEach((n, pos) => {
+                    if (n.type.name === 'chapter' && n.attrs.lettering !== null) tr.setNodeMarkup(pos, undefined, { ...n.attrs, lettering: null })
+                  })
+                  ed.view.dispatch(tr)
+                  setMenu(null)
+                }}
+              >
+                <span className="ctx-check">{chapterLettering ? '✓' : ''}</span> Todos os capítulos criam transição de capítulo
+              </button>
+              <button
+                onClick={() => {
+                  const ed = editor!
+                  const on = !letteringOn(menuNode.attrs)
+                  ed.view.dispatch(ed.state.tr.setNodeMarkup(menu.pos, undefined, { ...menuNode.attrs, lettering: letteringAttr(on) }))
+                  setMenu(null)
+                }}
+              >
+                <span className="ctx-check">{letteringOn(menuNode.attrs) ? '✓' : ''}</span> Criar transição de capítulo com "{menuNode.textContent.trim() || 'sem nome'}"
+              </button>
+              <div className="ctx-sep" />
             </>
           )}
           {menuNode && (

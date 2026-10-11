@@ -17,6 +17,7 @@ const api = {
     ipcRenderer.invoke('storage:info', keep),
   clearStorage: (what: 'drafts' | 'cache' | 'recent', keep?: string) => ipcRenderer.invoke('storage:clear', what, keep),
   openPath: (path: string) => ipcRenderer.invoke('shell:open', path),
+  editAction: (what: 'cut' | 'copy' | 'paste' | 'pasteAndMatchStyle') => ipcRenderer.invoke('edit:do', what),
   moveProject: (dir: string, title: string): Promise<{ dir: string } | { error: string } | null> => ipcRenderer.invoke('project:move', dir, title),
   scanAssets: (dir: string): Promise<{ copies: number; unused: number; bytes: number } | { error: string }> => ipcRenderer.invoke('assets:scan', dir),
   cleanAssets: (dir: string): Promise<{ removed: number; bytes: number } | { error: string }> => ipcRenderer.invoke('assets:clean', dir),

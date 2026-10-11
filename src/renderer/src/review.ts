@@ -1,5 +1,5 @@
 import type { JSONContent } from '@tiptap/core'
-import { api, countWords, inlineMd, mdToJson } from './lib'
+import { api, countWords, inlineMd, mdToJson, letteringOn, letteringAttr } from './lib'
 import { blockPrompts, markExcerpt } from './editor/promptMark'
 
 /**
@@ -19,7 +19,7 @@ export function blockToLine(n: JSONContent): string | null {
   const t = textOf(n).replace(/\s*\n\s*/g, ' ').trim()
   switch (n.type) {
     case 'chapter':
-      return `[CAPÍTULO] ${t}`
+      return `[CAPÍTULO${letteringOn(n.attrs) ? ' + LETTERING' : ''}] ${t}`
     case 'prompt':
       return `[PROMPT] ${t}`
     case 'paragraph':
@@ -47,7 +47,7 @@ export function linesToBlocks(text: string): JSONContent[] {
     const line = raw.trim().replace(/^[-*]\s+/, '')
     if (!line || /^```/.test(line)) continue
     let m: RegExpMatchArray | null
-    if ((m = line.match(/^\[CAP[IÍ]TULO\]\s*(.*)$/i))) out.push({ type: 'chapter', content: txt(m[1]) })
+    if ((m = line.match(/^\[CAP[IÍ]TULO(\s*\+\s*LETTERING)?\]\s*(.*)$/i))) out.push({ type: 'chapter', attrs: { lettering: letteringAttr(!!m[1]) }, content: txt(m[2]) })
     else if ((m = line.match(/^\[PROMPT NO TRECHO:\s*"([^"]*)"\]\s*(.*)$/i))) {
       // volta pro trecho da fala anterior; se a fala mudou e o trecho sumiu, vira bloco de prompt
       const last = out[out.length - 1]

@@ -160,6 +160,16 @@ export const Chapter = Node.create({
   group: 'block',
   content: 'inline*',
   defining: true,
+  addAttributes() {
+    return {
+      // lettering capitular (transição de capítulo) no vídeo: null = segue o padrão do roteiro
+      lettering: {
+        default: null,
+        parseHTML: (el) => (el.getAttribute('data-lettering') === 'on' ? true : el.getAttribute('data-lettering') === 'off' ? false : null),
+        renderHTML: (a) => (a.lettering === null || a.lettering === undefined ? {} : { 'data-lettering': a.lettering ? 'on' : 'off' })
+      }
+    }
+  },
 
   parseHTML() {
     return [{ tag: 'h2[data-type="chapter"]' }, { tag: 'h1' }, { tag: 'h2' }]

@@ -2362,3 +2362,38 @@ body.resizing * {
 .ref-excerpt.k-prompt {
   border-left-color: var(--c-prompt);
 }
+
+/* capítulo com lettering capitular (transição de capítulo) */
+.script.lettering-default h2.blk-chapter:not([data-lettering='off'])::after,
+.script h2.blk-chapter[data-lettering='on']::after {
+  content: 'LETTERING';
+  margin-left: 12px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font: 700 10px var(--font-ui);
+  letter-spacing: 0.08em;
+  vertical-align: middle;
+  color: var(--c-chapter);
+  border: 1px solid color-mix(in srgb, var(--c-chapter) 55%, transparent);
+  background: color-mix(in srgb, var(--c-chapter) 12%, transparent);
+  pointer-events: none;
+}
+/* copiar/colar no topo do menu do botão direito */
+.ctx-clip {
+  display: flex;
+  gap: 2px;
+}
+.ctx-menu .ctx-clip button {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 8px;
+}
+.ctx-check {
+  display: inline-block;
+  width: 14px;
+  color: var(--accent);
+  font-weight: 700;
+}

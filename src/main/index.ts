@@ -900,3 +900,7 @@ ipcMain.handle('motion:demoFile', async (_e, html: string) => {
 })
 
 ipcMain.handle('motion:frames', (_e, path: string, focus: number) => framesForFocus(path, focus, join(formatMedia(), 'frames')))
+
+ipcMain.handle('edit:do', (e, what: 'cut' | 'copy' | 'paste' | 'pasteAndMatchStyle') => {
+  if (['cut', 'copy', 'paste', 'pasteAndMatchStyle'].includes(what)) e.sender[what]()
+})

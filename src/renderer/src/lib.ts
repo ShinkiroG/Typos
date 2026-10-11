@@ -9,6 +9,14 @@ declare global {
   }
 }
 
+/** padrão do roteiro: todo capítulo vira lettering capitular (cada um pode mudar) */
+let letteringDefault = true
+export const setLetteringDefault = (v: boolean) => {
+  letteringDefault = v
+}
+export const letteringOn = (attrs?: Record<string, any>) => (attrs?.lettering ?? letteringDefault) as boolean
+export const letteringAttr = (on: boolean) => (on === letteringDefault ? null : on)
+
 /** estilo do formato ativo: vai junto em todo pedido de texto pra IA */
 let aiStyle = ''
 export const setAiStyle = (rules: string) => {
@@ -22,6 +30,7 @@ export const api: typeof window.api = {
       instruction:
         job.instruction +
         '\n\nTrechos entre **asteriscos duplos** estão em negrito no roteiro: é ênfase na fala (o narrador destaca). Mantenha e use **negrito** do mesmo jeito.' +
+        '\n[CAPÍTULO + LETTERING] = esse capítulo abre com um lettering capitular no vídeo (transição de capítulo com o nome dele); [CAPÍTULO] sozinho = sem lettering.' +
         (aiStyle ? `\n\nRegras do estilo deste vídeo (respeite):\n${aiStyle}` : '')
     })
 }
@@ -239,6 +248,8 @@ export interface ProjectData {
   notes?: string
   /** workspace de Montagem: mídia, cortes da narração e timeline de edição */
   montage?: MontageData
+  /** todo capítulo vira lettering capitular (padrão: sim) */
+  chapterLettering?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -446,7 +457,7 @@ export function toMarkdown(data: ProjectData, format: Format | undefined, stats:
     switch (n.type) {
       case 'chapter':
         chapter++
-        out.push('', `## ${chapter}. ${text} ${at}`, '')
+        out.push('', `## ${chapter}. ${text} ${at}${letteringOn(n.attrs) ? ' — lettering capitular' : ''}`, '')
         break
       case 'paragraph':
         if (text) {
