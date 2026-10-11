@@ -20,7 +20,8 @@ import {
   type Timing,
   type Segment,
   type TimelineAsset,
-  type Track
+  type Track,
+  absPath
 } from '../lib'
 import { Boxes, Plus, Link2, X as XIcon } from 'lucide-react'
 import { FILE_MIME } from './FoldersPanel'
@@ -238,6 +239,21 @@ export function Timeline({
           c.assetId === a.id
             ? { ...c, path: f.path, sourceDuration: buffer.duration, duration: Math.min(c.duration, buffer.duration - c.offset) }
             : c
+        )
+      )
+    } catch (e: any) {
+      setError(String(e.message ?? e))
+    }
+  }
+  /** bloco solto (sem asset): escolhe o áudio só dele */
+  const linkClip = async (c: Clip) => {
+    const [f] = await api.pickAudio(dir)
+    if (!f) return
+    try {
+      const { buffer } = await engine.load(f)
+      onClipsChange(
+        clipsRef.current.map((x) =>
+          x.id === c.id ? { ...x, path: f.path, name: f.name ?? x.name, offset: 0, sourceDuration: buffer.duration, duration: Math.min(x.duration, buffer.duration) } : x
         )
       )
     } catch (e: any) {
@@ -1166,6 +1182,36 @@ export function Timeline({
               Renomear
             </button>
           )}
+          {tlMenu.clipId &&
+            (() => {
+              const c = clipsRef.current.find((x) => x.id === tlMenu.clipId)
+              if (!c) return null
+              const a = c.assetId ? assets.find((x) => x.id === c.assetId) : undefined
+              return (
+                <>
+                  <button
+                    onClick={() => {
+                      setTlMenu(null)
+                      if (a) linkAsset(a)
+                      else linkClip(c)
+                    }}
+                    title={a ? `Vale pra todos os blocos de "${a.name}"` : 'Escolher o áudio desse bloco'}
+                  >
+                    {c.path ? 'Trocar arquivo…' : 'Indicar arquivo…'}
+                  </button>
+                  {c.path && (
+                    <button
+                      onClick={() => {
+                        setTlMenu(null)
+                        api.showItem(absPath({ id: '', name: '', path: c.path }))
+                      }}
+                    >
+                      Mostrar arquivo na pasta
+                    </button>
+                  )}
+                </>
+              )
+            })()}
           {tlMenu.seg && TIMED_PAUSES.includes(tlMenu.seg.kind) && (
             <button
               onClick={() => {
