@@ -34,9 +34,10 @@ import {
   Settings,
   ArrowUp,
   ArrowDown,
-  Sparkles
+  Sparkles,
+  Type
 } from 'lucide-react'
-import { api, clipDur, clipEndT, fileUrl, uid, type MontageBin, type MontageClip, type MontageData, type MontageMedia } from '../lib'
+import { api, clipDur, clipEndT, fileUrl, uid, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
 import { Recorder } from '../audio'
 import { askText } from '../components/AskDialog'
@@ -707,6 +708,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
       else if (k === 'v') run(() => setTool('select'))
       else if (k === 'c') run(() => setTool((t) => (t === 'blade' ? 'select' : 'blade')))
       else if (k === 's') run(splitAtPlayhead)
+      else if (k === 'l') run(addLettering)
       else if (k === 'e') run(() => applySplice(false))
       else if (k === 'delete' || k === 'backspace') run(() => remove(e.shiftKey))
       else if (k === 'arrowleft') run(() => (e.shiftKey ? jumpCut(-1) : seek(posRef.current - 1 / 30)))
@@ -807,6 +809,28 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
   }
   // ---------- baixar do YouTube (yt-dlp) pro Material bruto ----------
   const [ytOpen, setYtOpen] = useState(false)
+  // ---------- letterings dos capítulos (marcações na timeline) ----------
+  const letteringDur = data.letteringDur ?? 3
+  const chapters = () => getBlocks().filter((b) => b.type === 'chapter' && b.text.trim())
+  const [markMenu, setMarkMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  useEffect(() => {
+    if (!markMenu) return
+    const close = () => setMarkMenu(null)
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [markMenu])
+  /** marca no cursor o lettering do próximo capítulo que ainda não tem */
+  const addLettering = () => {
+    const chs = chapters()
+    if (!chs.length) return alert('O roteiro não tem capítulos. Crie um capítulo (Ctrl+1) pra marcar o lettering dele.')
+    const cur = dataRef.current
+    const marked = new Set((cur.markers ?? []).map((m) => m.block))
+    const ch = chs.find((c) => !marked.has(c.index)) ?? chs[0]
+    const mk: MontageMarker = { id: uid(), kind: 'lettering', t: posRef.current, dur: cur.letteringDur ?? 3, block: ch.index, label: ch.text.trim() }
+    change({ ...cur, markers: [...(cur.markers ?? []), mk].sort((a, b) => a.t - b.t) })
+  }
+  const patchMarker = (id: string, patch: Partial<MontageMarker>) =>
+    change({ ...dataRef.current, markers: (dataRef.current.markers ?? []).map((m) => (m.id === id ? { ...m, ...patch } : m)) })
   const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   const [areaMenu, setAreaMenu] = useState<{ x: number; y: number } | null>(null)
   // ---------- o Claude procura bibliotecas de som no PC ----------
@@ -1526,6 +1550,21 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           ms
         </label>
         <span className="mt-sep" />
+        <button className="btn small mt-mark-btn" title="Marca no cursor onde entra o lettering do capítulo (L)" onClick={addLettering}>
+          <Type size={13} /> Lettering
+        </button>
+        <label className="mt-splice-len" title="Tempo fixo de cada lettering novo (segundos)">
+          <input
+            type="number"
+            min={0.5}
+            max={30}
+            step={0.5}
+            value={letteringDur}
+            onChange={(e) => change({ ...data, letteringDur: Math.max(0.5, Number(e.target.value) || 3) }, 'lettering-dur')}
+          />
+          s
+        </label>
+        <span className="mt-sep" />
         <button
           className="btn small"
           disabled={!!busy}
@@ -1579,6 +1618,42 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
         </button>
       </div>
 
+      {markMenu &&
+        (() => {
+          const mk = (data.markers ?? []).find((m) => m.id === markMenu.id)
+          if (!mk) return null
+          const act = (fn: () => void) => () => {
+            setMarkMenu(null)
+            fn()
+          }
+          return (
+            <div className="ctx-menu" style={{ left: markMenu.x, top: markMenu.y, maxHeight: window.innerHeight - 16, overflowY: 'auto' }} onMouseDown={(e) => e.stopPropagation()}>
+              <div className="ctx-label">Lettering de qual capítulo?</div>
+              {chapters().map((c) => (
+                <button key={c.index} className={c.index === mk.block ? 'on' : ''} onClick={act(() => patchMarker(mk.id, { block: c.index, label: c.text.trim() }))}>
+                  {c.index === mk.block ? '✓ ' : ''}
+                  {c.text.trim().slice(0, 50)}
+                </button>
+              ))}
+              <div className="ctx-sep" />
+              <button
+                onClick={act(async () => {
+                  const v = await askText('Duração do lettering (segundos):', String(mk.dur))
+                  const n = Number(String(v ?? '').replace(',', '.'))
+                  if (v !== null && n > 0) patchMarker(mk.id, { dur: Math.round(n * 10) / 10 })
+                })}
+              >
+                Duração… ({mk.dur.toFixed(1)} s)
+              </button>
+              <button onClick={act(() => patchMarker(mk.id, { t: posRef.current }))}>Mover pro cursor</button>
+              <button onClick={act(() => seek(mk.t))}>Ir pro começo dele</button>
+              <div className="ctx-sep" />
+              <button className="danger" onClick={act(() => change({ ...dataRef.current, markers: (dataRef.current.markers ?? []).filter((m) => m.id !== mk.id) }))}>
+                Remover marcação
+              </button>
+            </div>
+          )
+        })()}
       {clipMenu &&
         (() => {
           const targets = menuTargets()
@@ -1719,6 +1794,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           wavesVersion={wavesVersion}
           onClipMenu={onClipMenu}
           onDropFile={dropPcFile}
+          onMarkerMenu={(e, mk) => setMarkMenu({ x: e.clientX, y: e.clientY, id: mk.id })}
           armed={armed}
           onArm={(id) => setArmed((a) => (a === id ? null : id))}
           recording={rec}

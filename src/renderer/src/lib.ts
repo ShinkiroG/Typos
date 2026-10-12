@@ -675,6 +675,22 @@ export interface MontageData {
   spliceDefault?: number
   /** alvo da normalização da narração: "peak:-6" (pico em dBFS) ou "lufs:-16" (volume percebido) */
   norm?: string
+  /** marcações na timeline: onde entra o lettering de cada capítulo e quanto tempo fica */
+  markers?: MontageMarker[]
+  /** duração padrão de um lettering novo (s) */
+  letteringDur?: number
+}
+export interface MontageMarker {
+  id: string
+  kind: 'lettering'
+  /** começo na timeline (s) */
+  t: number
+  /** duração fixa (s) */
+  dur: number
+  /** bloco do capítulo no roteiro */
+  block: number
+  /** título do capítulo (pra mostrar e mandar pro Claude) */
+  label: string
 }
 
 export const clipDur = (c: MontageClip) => c.out - c.in

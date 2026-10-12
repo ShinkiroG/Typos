@@ -317,6 +317,13 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
       )
     } else if (on('narration')) out.push('## Narração cortada', ...g('narration').items.map(line), '')
     if (!on('edit')) out.push('A timeline de edição está vazia: monte a ordem pelo roteiro, usando a narração e o material disponível.', '')
+    const marks = (montage.markers ?? []).filter((m) => m.kind === 'lettering').sort((a, b) => a.t - b.t)
+    if (marks.length)
+      out.push(
+        '## Letterings dos capítulos (tempos FIXOS marcados pelo autor: siga exatamente)',
+        ...marks.map((m) => `- "${m.label}": entra em ${r2(m.t)} s e fica ${r2(m.dur)} s (até ${r2(m.t + m.dur)} s) na timeline`),
+        ''
+      )
     if (on('raw')) out.push('## Material bruto (B-roll: escolha o que combina com cada prompt; pastas ⭐ são as preferidas)', ...g('raw').items.map(line), '')
     if (on('sfx')) out.push('## Áudios e SFX (bibliotecas ⭐ são as referências essenciais de som: use com mais frequência)', ...g('sfx').items.map(line), '')
     if (on('track')) out.push('## Trilha marcada no roteiro', ...g('track').items.map(line), '')

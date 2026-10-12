@@ -1,6 +1,6 @@
 import { memo, useLayoutEffect, useRef, useState } from 'react'
 import { Volume2, VolumeX, Plus } from 'lucide-react'
-import { clipDur, clipEndT, formatTime, uid, type MontageClip, type MontageData, type MontageMedia, type MontageTrack } from '../lib'
+import { clipDur, clipEndT, formatTime, uid, type MontageClip, type MontageData, type MontageMarker, type MontageMedia, type MontageTrack } from '../lib'
 import { PEAKS_PER_SEC, type MontageEngine } from './engine'
 
 export const MEDIA_MIME = 'application/x-typos-media'
@@ -33,6 +33,8 @@ interface Props {
   onClipMenu: (e: React.MouseEvent, c: MontageClip) => void
   /** soltou um arquivo do PC: o Montage importa e põe o corte */
   onDropFile: (path: string, trackKind: 'video' | 'audio', trackId: string | null, start: number) => void
+  /** botão direito numa marcação de lettering */
+  onMarkerMenu: (e: React.MouseEvent, m: MontageMarker) => void
 }
 
 export const HEAD_W = 132
@@ -319,6 +321,62 @@ export function EditTimeline(p: Props) {
             </span>
           ))}
         </div>
+        {/* ---------- letterings dos capítulos: onde entram e quanto tempo ficam ---------- */}
+        {!!data.markers?.length && (
+          <div className="mt-track mt-marks">
+            <div className="mt-head">
+              <span>Lettering</span>
+            </div>
+            <div
+              className="mt-lane"
+              onPointerDown={(e) => {
+                if (e.button === 0) p.seek(timeAt(e.clientX))
+              }}
+            >
+              {data.markers.map((mk) => (
+                <div
+                  key={mk.id}
+                  className="mt-mark"
+                  data-marker={mk.id}
+                  style={{ left: mk.t * pps, width: Math.max(6, mk.dur * pps) }}
+                  title={`Lettering · ${mk.label}\n${formatTime(mk.t)} → ${formatTime(mk.t + mk.dur)} (${mk.dur.toFixed(1)} s)\nArraste pra mover; puxe a borda direita pra mudar o tempo; botão direito: opções`}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    p.onMarkerMenu(e, mk)
+                  }}
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return
+                    e.stopPropagation()
+                    const resize = (e.target as HTMLElement).classList.contains('mt-mark-r')
+                    const x0 = e.clientX
+                    const orig = data
+                    const gesture = 'mark-' + mk.id + '-' + Date.now()
+                    const el = e.currentTarget
+                    el.setPointerCapture(e.pointerId)
+                    const move = (ev: PointerEvent) => {
+                      const dt = (ev.clientX - x0) / pps
+                      const markers = (orig.markers ?? []).map((x) =>
+                        x.id !== mk.id ? x : resize ? { ...x, dur: Math.max(0.5, Math.round((mk.dur + dt) * 10) / 10) } : { ...x, t: Math.max(0, mk.t + dt) }
+                      )
+                      p.change({ ...orig, markers }, gesture)
+                    }
+                    const up = () => {
+                      el.removeEventListener('pointermove', move)
+                      el.removeEventListener('pointerup', up)
+                    }
+                    el.addEventListener('pointermove', move)
+                    el.addEventListener('pointerup', up)
+                  }}
+                >
+                  <span className="mt-mark-name">
+                    {mk.label} · {mk.dur.toFixed(1)} s
+                  </span>
+                  <i className="mt-mark-r" />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {data.tracks.map((tr) => (
           <div key={tr.id} className={'mt-track k-' + tr.kind + (tr.muted ? ' muted' : '')}>
             <div className="mt-head">
