@@ -34,15 +34,18 @@ import {
   Settings,
   ArrowUp,
   ArrowDown,
-  Sparkles
+  Sparkles,
+  SquareDashed
 } from 'lucide-react'
-import { api, clipDur, clipEndT, fileUrl, uid, type MontageBin, type MontageClip, type MontageData, type MontageMedia } from '../lib'
+import { api, clipDur, clipEndT, fileUrl, uid, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
 import { Recorder } from '../audio'
 import { askText } from '../components/AskDialog'
 import { YoutubeDownload } from '../components/YoutubeDownload'
 import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, mediaLen, splitClip, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
+import { blockLabel, generatePreview, memoryFromBlock, newBlock } from './blocks'
+import { BlockInspector, BlockWindow, type BlockBusy } from './BlockPanel'
 
 export const fmtTc = (t: number) => {
   const s = Math.max(0, t)
@@ -70,6 +73,9 @@ interface Props {
   wpm: number
   /** abre a configuração de entrada/saída de áudio */
   onAudioSettings: () => void
+  /** formato do projeto (estilo e memória de motion dos blocos de instrução) */
+  format?: Format
+  onFormatChange?: (f: Format) => void
 }
 
 const LAYOUT_KEY = 'typos.montageLayout'
@@ -83,7 +89,7 @@ const loadLayout = () => {
 
 type WStatus = Awaited<ReturnType<typeof api.whisperStatus>>
 
-export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript, dir, wpm, onAudioSettings }: Props) {
+export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript, dir, wpm, onAudioSettings, format, onFormatChange }: Props) {
   const engine = useMemo(() => new MontageEngine(), [])
   const [wavesVersion, setWavesVersion] = useState(0)
   const [selected, setSelected] = useState<string[]>([])
@@ -670,6 +676,97 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     if (n !== undefined) seek(n)
   }
 
+  // ---------- blocos de instrução ----------
+  const [blockSel, setBlockSel] = useState<string | null>(null)
+  const [blockOpen, setBlockOpen] = useState<string | null>(null)
+  const [blockBusy, setBlockBusy] = useState<BlockBusy | null>(null)
+  const [blockMenu, setBlockMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  useEffect(() => {
+    if (!blockMenu) return
+    const close = () => setBlockMenu(null)
+    window.addEventListener('mousedown', close)
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('blur', close)
+    }
+  }, [blockMenu])
+
+  const selectClips = (ids: string[]) => {
+    setSelected(ids)
+    setBlockSel(null)
+  }
+  const selectBlock = (id: string | null) => {
+    setBlockSel(id)
+    if (id) setSelected([])
+  }
+  const blocks = data.blocks ?? []
+  const curBlock = blocks.find((b) => b.id === blockSel) ?? null
+  const openBlock = blocks.find((b) => b.id === blockOpen) ?? null
+  const patchBlock = (id: string, p: Partial<InstructionBlock>, gesture?: string) => {
+    const d = dataRef.current
+    change({ ...d, blocks: (d.blocks ?? []).map((b) => (b.id === id ? { ...b, ...p } : b)) }, gesture)
+  }
+  /** bloco novo: no tempo dos cortes selecionados, ou 5 s a partir do playhead, na faixa de vídeo de cima */
+  const addBlock = () => {
+    const d = dataRef.current
+    const tr = d.tracks.find((t) => t.kind === 'video')
+    if (!tr) return
+    const picked = d.clips.filter((c) => selected.includes(c.id))
+    const s = picked.length ? Math.min(...picked.map((c) => c.start)) : posRef.current
+    const e = picked.length ? Math.max(...picked.map(clipEndT)) : s + 5
+    const b = newBlock(tr.id, s, e)
+    change({ ...d, blocks: [...(d.blocks ?? []), b] })
+    selectBlock(b.id)
+  }
+  const removeBlock = (id: string) => {
+    const d = dataRef.current
+    change({ ...d, blocks: (d.blocks ?? []).filter((b) => b.id !== id) })
+    if (blockSel === id) setBlockSel(null)
+    if (blockOpen === id) setBlockOpen(null)
+  }
+  useEffect(() => {
+    api.onMotionPreviewProgress((p) => setBlockBusy((b) => (b && b.id === p.block ? { ...b, label: p.stage === 'vídeo' ? 'Montando o vídeo…' : 'Gravando a prévia (12 fps)…', pct: p.pct } : b)))
+  }, [])
+  const makePreview = async (id: string) => {
+    const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
+    if (!b || blockBusy) return
+    setBlockBusy({ id, label: 'Preparando…', pct: null })
+    try {
+      const preview = await generatePreview({
+        block: b,
+        data: dataRef.current,
+        engine,
+        dur,
+        script: getBlocks(),
+        lang,
+        format,
+        dir,
+        onStage: (label, pct) => setBlockBusy({ id, label, pct })
+      })
+      patchBlock(id, { preview, approved: false })
+    } catch (e) {
+      const msg = (e as Error).message
+      if (msg !== 'Cancelado.') alert('Não deu pra fazer a prévia: ' + msg)
+    } finally {
+      setBlockBusy(null)
+    }
+  }
+  /** aprova a prévia (o render reaproveita) e guarda o motion na memória do formato */
+  const approveBlock = async (id: string) => {
+    const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
+    if (!b?.preview) return
+    if (b.approved) return patchBlock(id, { approved: false })
+    patchBlock(id, { approved: true })
+    if (!format || !onFormatChange) return
+    const html = await fetch(fileUrl(b.preview.html))
+      .then((r) => r.text())
+      .catch(() => '')
+    const item = await memoryFromBlock(b, html)
+    const motion = format.motion ?? { refs: [] }
+    onFormatChange({ ...format, motion: { ...motion, memory: [...(motion.memory ?? []), item] } })
+  }
+
   // ---------- atalhos (só com a Montagem na frente) ----------
   useEffect(() => {
     if (!active) return
@@ -708,6 +805,8 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
       else if (k === 'c') run(() => setTool((t) => (t === 'blade' ? 'select' : 'blade')))
       else if (k === 's') run(splitAtPlayhead)
       else if (k === 'e') run(() => applySplice(false))
+      else if (k === 'b') run(addBlock)
+      else if ((k === 'delete' || k === 'backspace') && blockSel) run(() => removeBlock(blockSel))
       else if (k === 'delete' || k === 'backspace') run(() => remove(e.shiftKey))
       else if (k === 'arrowleft') run(() => (e.shiftKey ? jumpCut(-1) : seek(posRef.current - 1 / 30)))
       else if (k === 'arrowright') run(() => (e.shiftKey ? jumpCut(1) : seek(posRef.current + 1 / 30)))
@@ -1473,13 +1572,26 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
 
       {/* ---------- inspetor ---------- */}
       <section className="mt-inspector">
-        {!one ? (
+        {curBlock ? (
+          <BlockInspector
+            b={curBlock}
+            dir={dir}
+            patch={(p, g) => patchBlock(curBlock.id, p, g)}
+            busy={blockBusy}
+            onGenerate={() => makePreview(curBlock.id)}
+            onCancel={() => api.motionPreviewCancel()}
+            onApprove={() => approveBlock(curBlock.id)}
+            onOpen={() => setBlockOpen(curBlock.id)}
+            onRemove={() => removeBlock(curBlock.id)}
+          />
+        ) : !one ? (
           <div className="mt-empty small">
             {sel.length > 1 ? `${sel.length} cortes selecionados. Delete apaga, Shift+Delete apaga e fecha o buraco, E aplica a Emenda.` : 'Clique num corte da timeline pra ver os detalhes.'}
             <div className="mt-keys">
               <b>Atalhos</b>
               <span>Espaço tocar · V seleção · C lâmina · S dividir no playhead · R gravar</span>
               <span>E Emenda · Delete apagar · Shift+Delete apagar e juntar</span>
+              <span>B bloco de instrução (duplo clique abre)</span>
               <span>←/→ quadro · Shift+←/→ corte · +/- zoom · Ctrl+Z desfazer</span>
             </div>
           </div>
@@ -1552,6 +1664,14 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
             <Loader2 size={12} className="spin" /> {busy.label}
           </span>
         )}
+        <span className="mt-sep" />
+        <button
+          className="btn small"
+          title="Bloco de instrução (B): um trecho da faixa de vídeo com instruções de motion pro Claude. Entra no playhead (ou no tempo dos cortes selecionados)"
+          onClick={addBlock}
+        >
+          <SquareDashed size={13} /> Bloco de instrução
+        </button>
         <span className="mt-sep" />
         <button className="icon-btn" title="Desfazer (Ctrl+Z)" onClick={undo}>
           <Undo2 size={15} />
@@ -1701,6 +1821,61 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           )
         })()}
 
+      {blockMenu &&
+        (() => {
+          const b = blocks.find((x) => x.id === blockMenu.id)
+          if (!b) return null
+          const act = (fn: () => void) => () => {
+            setBlockMenu(null)
+            fn()
+          }
+          return (
+            <div
+              className="ctx-menu"
+              style={{ left: blockMenu.x, top: blockMenu.y }}
+              ref={(el) => {
+                if (!el) return
+                const r = el.getBoundingClientRect()
+                if (r.bottom > window.innerHeight - 8) el.style.top = `${Math.max(8, window.innerHeight - r.height - 8)}px`
+                if (r.right > window.innerWidth - 8) el.style.left = `${Math.max(8, window.innerWidth - r.width - 8)}px`
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="ctx-label">{blockLabel(b)}</div>
+              <button onClick={act(() => setBlockOpen(b.id))}>Abrir bloco (duplo clique)</button>
+              <button disabled={!!blockBusy} onClick={act(() => makePreview(b.id))}>
+                {b.preview ? 'Refazer prévia' : 'Gerar prévia'}
+              </button>
+              <button onClick={act(() => patchBlock(b.id, { dynamic: !b.dynamic }))}>{b.dynamic ? 'Passar pra instruções escritas' : 'Passar pra dinâmico (pela fala)'}</button>
+              <div className="ctx-sep" />
+              <button
+                onClick={act(() => {
+                  const copy: InstructionBlock = { ...b, id: newBlock(b.track, 0, 1).id, start: b.end, end: b.end + (b.end - b.start), preview: undefined, approved: false }
+                  change({ ...dataRef.current, blocks: [...(dataRef.current.blocks ?? []), copy] })
+                  selectBlock(copy.id)
+                })}
+              >
+                Duplicar logo depois
+              </button>
+              <button className="danger" onClick={act(() => removeBlock(b.id))}>
+                Excluir <kbd>Delete</kbd>
+              </button>
+            </div>
+          )
+        })()}
+      {openBlock && (
+        <BlockWindow
+          b={openBlock}
+          dir={dir}
+          patch={(p, g) => patchBlock(openBlock.id, p, g)}
+          busy={blockBusy}
+          onGenerate={() => makePreview(openBlock.id)}
+          onCancel={() => api.motionPreviewCancel()}
+          onApprove={() => approveBlock(openBlock.id)}
+          onClose={() => setBlockOpen(null)}
+        />
+      )}
+
       {/* ---------- timeline de edição ---------- */}
       <section className="mt-timeline">
         <EditTimeline
@@ -1709,7 +1884,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           engine={engine}
           media={media}
           selected={selected}
-          onSelect={setSelected}
+          onSelect={selectClips}
           tool={tool}
           pps={pps}
           posRef={posRef}
@@ -1723,6 +1898,11 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           onArm={(id) => setArmed((a) => (a === id ? null : id))}
           recording={rec}
           recClipRef={recClipRef}
+          blockSel={blockSel}
+          onBlockSel={selectBlock}
+          onBlockOpen={setBlockOpen}
+          onBlockMenu={(e, id) => setBlockMenu({ x: e.clientX, y: e.clientY, id })}
+          blockBusy={blockBusy?.id ?? null}
         />
       </section>
     </div>

@@ -20,11 +20,14 @@ import {
   Clipboard,
   Sparkles,
   ExternalLink,
-  FolderOpen
+  FolderOpen,
+  BookmarkPlus,
+  Brain
 } from 'lucide-react'
-import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type FontCase, DEFAULT_FONT_CASES } from '../lib'
+import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type MotionMemoryItem, type FontCase, DEFAULT_FONT_CASES } from '../lib'
 import { FontPicker } from './FontPicker'
 import { YoutubeDownload } from '../components/YoutubeDownload'
+import { askText } from '../components/AskDialog'
 
 const CAMERA = [
   'estática',
@@ -213,6 +216,15 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
       const { [editId]: _, ...rest } = d
       return rest
     })
+
+  // ---------- memória de motion (salva na hora, sem mexer no rascunho do resto) ----------
+  const memory = m.memory ?? []
+  const setMemory = (list: MotionMemoryItem[]) => {
+    if (saved) onChange(formats.map((x) => (x.id === editId ? { ...x, motion: { ...(x.motion ?? emptyMotion(x)), memory: list } } : x)))
+    if (drafts[editId] || !saved) patchM({ memory: list })
+  }
+  const remember = (item: Omit<MotionMemoryItem, 'id' | 'at'>) => setMemory([...memory, { ...item, id: uid(), at: new Date().toISOString() }])
+  const demoInMemory = !!f.motion?.learned && memory.some((x) => x.source === 'estilo' && x.html === f.motion!.learned!.demoHtml.slice(0, 12000))
 
   // ---------- fontes por situação ----------
   const cases = m.fontCases ?? DEFAULT_FONT_CASES()
@@ -776,6 +788,21 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
               <button className="icon-btn" title="Rodar de novo" onClick={() => setReplay((n) => n + 1)}>
                 <RotateCcw size={14} />
               </button>
+              <button
+                className="icon-btn"
+                disabled={demoInMemory}
+                title={demoInMemory ? 'Esta demo já está na memória de motion' : 'Gostei: guardar esta demo na memória de motion (as prévias dos blocos e o render seguem ela)'}
+                onClick={() =>
+                  remember({
+                    source: 'estilo',
+                    title: `Demo do Estilo ${f.name}`,
+                    text: 'Demo do treino de estilo aprovada pelo autor: composições, ritmo e transições que funcionaram.',
+                    html: f.motion!.learned!.demoHtml.slice(0, 12000)
+                  })
+                }
+              >
+                {demoInMemory ? <Check size={14} /> : <BookmarkPlus size={14} />}
+              </button>
             </span>
           )}
         </div>
@@ -806,6 +833,44 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
             <div className="st-guide-text">{f.motion.learned.guide}</div>
           </div>
         )}
+
+        <div className="st-guide st-memory">
+          <div className="st-guide-head">
+            <span>
+              <Brain size={13} /> Memória de motion · {memory.length}
+            </span>
+            <button
+              className="icon-btn"
+              title="Escrever uma nota (ex.: “gráficos sempre montam da esquerda pra direita”)"
+              onClick={async () => {
+                const t = await askText('Nota pra memória de motion:')
+                if (t?.trim()) remember({ source: 'nota', title: t.trim().slice(0, 50), text: t.trim() })
+              }}
+            >
+              <Plus size={13} />
+            </button>
+          </div>
+          {!memory.length && (
+            <div className="st-memory-empty">
+              O que você aprovar fica aqui: a demo do Estilo (botão <BookmarkPlus size={11} />), prévias de blocos de instrução aprovadas na Montagem e notas suas. As prévias e o render seguem essa memória.
+            </div>
+          )}
+          {[...memory].reverse().map((x) => (
+            <div key={x.id} className="st-memory-item">
+              <div>
+                <b>{x.title}</b>
+                <small>
+                  {x.source === 'estilo' ? 'demo do Estilo' : x.source === 'bloco' ? 'bloco aprovado' : 'nota'} · {new Date(x.at).toLocaleDateString('pt-BR')}
+                  {x.html ? ' · com animação' : ''}
+                </small>
+                <p>{x.text}</p>
+              </div>
+              <button className="icon-btn" title="Esquecer" onClick={() => setMemory(memory.filter((y) => y.id !== x.id))}>
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
       </aside>
     </div>
   )

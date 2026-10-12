@@ -155,6 +155,23 @@ const api = {
     ipcRenderer.removeAllListeners('render:progress')
     ipcRenderer.on('render:progress', (_e, ev) => cb(ev))
   },
+  // blocos de instrução: prévia do motion (HTML → MP4 leve)
+  motionPreview: (job: {
+    dir: string
+    block: string
+    html: string
+    seconds: number
+    width: number
+    height: number
+    fps: number
+    wav?: Uint8Array
+    files: { src: string; name: string }[]
+  }): Promise<{ video: string; html: string } | { error: string }> => ipcRenderer.invoke('motion:preview', job),
+  motionPreviewCancel: () => ipcRenderer.invoke('motion:previewCancel'),
+  onMotionPreviewProgress: (cb: (p: { block: string; stage: string; pct: number }) => void) => {
+    ipcRenderer.removeAllListeners('motion:previewProgress')
+    ipcRenderer.on('motion:previewProgress', (_e, p) => cb(p))
+  },
   findSfxLibraries: (): Promise<{ libs: { path: string; name: string; program: string; why: string; files: number }[]; hints: number } | { error: string }> =>
     ipcRenderer.invoke('ai:findSfx'),
   motionTrain: (job: { prompt: string; images: string[] }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>

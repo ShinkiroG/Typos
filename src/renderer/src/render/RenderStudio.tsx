@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { api, absPath, fileUrl, RESOLUTIONS, type Attachment, type Format, type MontageData, type MontageBin, type TimelineAsset } from '../lib'
 import './render.css'
+import { blocksBriefSection } from '../montage/blocks'
 
 /**
  * Workspace Render: mostra tudo que vai alimentar o Claude, confere se ele consegue acessar
@@ -305,6 +306,8 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
       )
     } else if (on('narration')) out.push('## Narração cortada', ...g('narration').items.map(line), '')
     if (!on('edit')) out.push('A timeline de edição está vazia: monte a ordem pelo roteiro, usando a narração e o material disponível.', '')
+    // blocos de instrução + direção de motion + memória de motion (o que o autor aprovou)
+    out.push(...blocksBriefSection(montage.blocks, off.has('style') ? undefined : format?.motion?.memory, montage.tracks))
     if (on('raw')) out.push('## Material bruto (B-roll: escolha o que combina com cada prompt; pastas ⭐ são as preferidas)', ...g('raw').items.map(line), '')
     if (on('sfx')) out.push('## Áudios e SFX (bibliotecas ⭐ são as referências essenciais de som: use com mais frequência)', ...g('sfx').items.map(line), '')
     if (on('track')) out.push('## Trilha marcada no roteiro', ...g('track').items.map(line), '')
@@ -326,7 +329,8 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     }
     out.push(
       '## Como fazer',
-      '- É uma PRÉVIA: priorize ter o vídeo inteiro montado e sincronizado com a narração; capriche nos letterings e textos na tela (legendas .ass com as fontes instaladas) e nos cortes de B-roll.',
+      '- É uma PRÉVIA: priorize ter o vídeo inteiro montado na ordem da narração; capriche nos letterings, nos motions e nos cortes de B-roll. Sincronize com a fala só os momentos-chave (números, nomes, viradas), não cada frase.',
+      '- Onde há bloco de instrução, ele manda naquele trecho (instruções e anexos dele, não o roteiro).',
       '- Onde o prompt pede algo que não existe nos arquivos, use um cartão simples (fundo do estilo + texto do prompt) pra marcar o lugar.',
       '- Áudio: narração na frente, música por baixo (uns -18 dB), SFX nos pontos de impacto. Sem clipping.'
     )

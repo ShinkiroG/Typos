@@ -1177,6 +1177,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             dir={dir}
             wpm={wpm}
             onAudioSettings={() => setAudioOpen(true)}
+            format={format}
+            onFormatChange={(f) => onFormatsChange(formats.map((x) => (x.id === f.id ? f : x)))}
             lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
             getBlocks={() => {
               const out: { index: number; type: string; text: string; seconds?: number }[] = []
