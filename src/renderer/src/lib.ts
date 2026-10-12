@@ -208,6 +208,8 @@ export interface MotionStyle {
   camera?: string[]
   transitions?: string[]
   pace?: 'calmo' | 'médio' | 'frenético'
+  /** memória de motion: exemplos aprovados que as prévias e o render seguem */
+  memory?: MotionMemoryItem[]
   /** o que a IA aprendeu: guia do estilo + demo animada */
   learned?: {
     at: string
@@ -647,7 +649,11 @@ export interface MontageTrack {
   muted?: boolean
   /** faixa onde o corte automático põe a narração editada (fica logo abaixo da original) */
   auto?: boolean
+  /** altura da faixa na timeline (px); sem valor = padrão do tipo */
+  height?: number
 }
+/** curva do fade: ponto de controle (bezier quadrática) no quadrado 0..1; [0.5, 0.5] = linear */
+export type FadeCurve = [number, number]
 export interface MontageClip {
   id: string
   track: string
@@ -661,7 +667,10 @@ export interface MontageClip {
   gainDb?: number
   fadeIn?: number
   fadeOut?: number
-  /** Emenda: crossfade curto com o clipe imediatamente antes, na mesma faixa (s) */
+  /** formato dos fades (sem valor = linear) */
+  fadeInCurve?: FadeCurve
+  fadeOutCurve?: FadeCurve
+  /** crossfade com o clipe imediatamente antes, na mesma faixa (s); o nome antigo era Emenda */
   splice?: number
   /** bloco do roteiro (índice no documento) que esse trecho fala */
   block?: number
@@ -671,7 +680,7 @@ export interface MontageData {
   media: MontageMedia[]
   tracks: MontageTrack[]
   clips: MontageClip[]
-  /** duração padrão da Emenda (s) */
+  /** duração padrão do crossfade (s) */
   spliceDefault?: number
   /** alvo da normalização da narração: "peak:-6" (pico em dBFS) ou "lufs:-16" (volume percebido) */
   norm?: string
@@ -679,6 +688,8 @@ export interface MontageData {
   markers?: MontageMarker[]
   /** duração padrão de um lettering novo (s) */
   letteringDur?: number
+  /** blocos de instrução de motion (como um sólido do Premiere, nas faixas de vídeo) */
+  blocks?: InstructionBlock[]
 }
 export interface MontageMarker {
   id: string
@@ -691,6 +702,81 @@ export interface MontageMarker {
   block: number
   /** título do capítulo (pra mostrar e mandar pro Claude) */
   label: string
+}
+
+/** anexo de um bloco: entra no vídeo (insert, anotado com setas etc.) ou é só referência pra recriar em motion */
+export interface BlockAttachment extends Attachment {
+  use: 'insert' | 'ref'
+  /** o que fazer com ele (opcional) */
+  note?: string
+}
+
+export interface BlockPreview {
+  /** vídeo da prévia (12 fps, baixa resolução) e o HTML que gerou ela (caminhos absolutos) */
+  video: string
+  html: string
+  at: string
+  provider: string
+  /** o que foi ouvido no trecho (Whisper) */
+  transcript: string
+  /** impressão digital do bloco quando a prévia foi feita (muda = prévia desatualizada) */
+  key: string
+}
+
+/** Bloco de instrução: um pedaço de tempo da faixa de vídeo com instruções de motion pro Claude. */
+export interface InstructionBlock {
+  id: string
+  /** faixa de vídeo */
+  track: string
+  start: number
+  end: number
+  name?: string
+  /** dinâmico: o Claude deduz o motion pela fala do trecho (o texto vira só dica) */
+  dynamic?: boolean
+  /** como o autor imagina o motion */
+  text: string
+  attachments: BlockAttachment[]
+  preview?: BlockPreview
+  /** o autor aprovou a prévia (o render reaproveita a ideia) */
+  approved?: boolean
+}
+
+/** memória de motion: o que o autor aprovou (demo do Estilo, prévias de blocos, notas) */
+export interface MotionMemoryItem {
+  id: string
+  at: string
+  source: 'estilo' | 'bloco' | 'nota'
+  title: string
+  /** o que deu certo, em palavras */
+  text: string
+  /** código da animação aprovada (resumido), pra servir de exemplo */
+  html?: string
+}
+
+/** anexo de um bloco de instrução: imagem/vídeo pra INSERIR no vídeo ou só REFERÊNCIA pro motion */
+export interface InstructionAttachment {
+  /** caminho absoluto (o leitor do render já resolve o relativo à pasta do projeto) */
+  path: string
+  name: string
+  use: 'insert' | 'ref'
+  note?: string
+}
+/** bloco de instrução normalizado pro render (plan.ts): o render segue o texto dele (e nada do roteiro) nesse trecho */
+export interface RenderBlock {
+  id: string
+  /** faixa de vídeo onde o bloco está */
+  track: string
+  /** início e fim na timeline (s) */
+  start: number
+  end: number
+  /** como o autor imagina o motion */
+  text: string
+  /** motion dinâmico: o Claude deduz da fala do trecho */
+  dynamic?: boolean
+  attachments?: InstructionAttachment[]
+  /** prévia aprovada: o HTML da animação pode ser reaproveitado no render */
+  approved?: boolean
+  preview?: { html?: string; video?: string }
 }
 
 export const clipDur = (c: MontageClip) => c.out - c.in

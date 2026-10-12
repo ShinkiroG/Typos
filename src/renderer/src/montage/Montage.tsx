@@ -35,15 +35,22 @@ import {
   ArrowUp,
   ArrowDown,
   Sparkles,
+  SquareDashed,
+  AudioWaveform,
+  FoldVertical,
+  UnfoldVertical,
   Type
 } from 'lucide-react'
-import { api, clipDur, clipEndT, fileUrl, uid, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
+import { api, clipDur, clipEndT, fileUrl, uid, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
+import { SILENCE_DEFAULT, silenceCut, type SilenceOpts } from './silence'
 import { Recorder } from '../audio'
 import { askText } from '../components/AskDialog'
 import { YoutubeDownload } from '../components/YoutubeDownload'
-import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, mediaLen, splitClip, type Tool } from './EditTimeline'
+import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H, mediaLen, splitClip, trackHeight, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
+import { blockLabel, generatePreview, memoryFromBlock, newBlock } from './blocks'
+import { BlockInspector, BlockWindow, type BlockBusy } from './BlockPanel'
 
 export const fmtTc = (t: number) => {
   const s = Math.max(0, t)
@@ -64,13 +71,16 @@ interface Props {
   /** blocos do roteiro, na ordem (pro corte automático achar cada frase) */
   getBlocks: () => ScriptBlock[]
   /** grava os tempos da narração nos blocos do roteiro; devolve quantas falas mudaram */
-  onSyncScript: (d: MontageData) => number
+  onSyncScript: (d: MontageData) => Promise<number>
   /** pasta do projeto (as gravações vão pra assets/gravacoes) */
   dir: string
   /** velocidade de fala (rolagem do teleprompter) */
   wpm: number
   /** abre a configuração de entrada/saída de áudio */
   onAudioSettings: () => void
+  /** formato do projeto (estilo e memória de motion dos blocos de instrução) */
+  format?: Format
+  onFormatChange?: (f: Format) => void
 }
 
 const LAYOUT_KEY = 'typos.montageLayout'
@@ -84,7 +94,7 @@ const loadLayout = () => {
 
 type WStatus = Awaited<ReturnType<typeof api.whisperStatus>>
 
-export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript, dir, wpm, onAudioSettings }: Props) {
+export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript, dir, wpm, onAudioSettings, format, onFormatChange }: Props) {
   const engine = useMemo(() => new MontageEngine(), [])
   const [wavesVersion, setWavesVersion] = useState(0)
   const [selected, setSelected] = useState<string[]>([])
@@ -252,19 +262,31 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
   const playheadRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Ctrl (ou Alt) + roda do mouse: zoom na timeline, mantendo parado o ponto embaixo do mouse
+  // zoom (botões, +/- e Ctrl/Alt + roda do mouse) sempre focado na agulha: ela fica parada na tela
+  // (se estiver fora da tela, vem pro meio)
   const zoomAnchor = useRef<{ t: number; x: number } | null>(null)
+  const zoomBy = (f: number) => {
+    const sc = scrollRef.current
+    setPps((p) => {
+      const n = Math.min(800, Math.max(2, p * f))
+      if (sc) {
+        const t = posRef.current
+        let x = HEAD_W + t * p - sc.scrollLeft
+        if (x < HEAD_W || x > sc.clientWidth) x = HEAD_W + (sc.clientWidth - HEAD_W) / 2
+        zoomAnchor.current = { t, x }
+      }
+      return n
+    })
+  }
+  const zoomRef = useRef(zoomBy)
+  zoomRef.current = zoomBy
   useEffect(() => {
     const sc = scrollRef.current
     if (!sc) return
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.altKey) return
       e.preventDefault()
-      const x = e.clientX - sc.getBoundingClientRect().left
-      setPps((p) => {
-        zoomAnchor.current = { t: Math.max(0, (x + sc.scrollLeft - HEAD_W) / p), x }
-        return Math.min(800, Math.max(2, p * (e.deltaY < 0 ? 1.2 : 1 / 1.2)))
-      })
+      zoomRef.current(e.deltaY < 0 ? 1.2 : 1 / 1.2)
     }
     sc.addEventListener('wheel', onWheel, { passive: false })
     return () => sc.removeEventListener('wheel', onWheel)
@@ -465,21 +487,33 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
 
   // ---------- botão direito num corte ----------
   const [clipMenu, setClipMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  /** botão direito na junção de dois cortes (id = corte da direita): opções do crossfade */
+  const [joinMenu, setJoinMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   useEffect(() => {
-    if (!clipMenu) return
-    const close = () => setClipMenu(null)
+    if (!clipMenu && !joinMenu) return
+    const close = () => {
+      setClipMenu(null)
+      setJoinMenu(null)
+    }
     window.addEventListener('mousedown', close)
     window.addEventListener('blur', close)
     return () => {
       window.removeEventListener('mousedown', close)
       window.removeEventListener('blur', close)
     }
-  }, [clipMenu])
+  }, [clipMenu, joinMenu])
+  const onJoinMenu = (e: React.MouseEvent, id: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setClipMenu(null)
+    setJoinMenu({ x: e.clientX, y: e.clientY, id })
+  }
 
   const onClipMenu = (e: React.MouseEvent, c: MontageClip) => {
     e.preventDefault()
     e.stopPropagation()
     if (!selected.includes(c.id)) setSelected([c.id])
+    setJoinMenu(null)
     setClipMenu({ x: e.clientX, y: e.clientY, id: c.id })
   }
 
@@ -653,7 +687,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     change({ ...data, clips })
   }
 
-  /** Emenda: crossfade curtinho no corte, pra não estalar */
+  /** crossfade curtinho no corte, pra não estalar */
   const spliceLen = data.spliceDefault ?? 0.02
   const applySplice = (all: boolean) => {
     const targets = all ? data.clips : sel
@@ -664,11 +698,209 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     change({ ...data, clips: data.clips.map((c) => (ids.has(c.id) ? { ...c, splice: allOn && !all ? undefined : spliceLen } : c)) })
   }
 
+  // ---------- corte por silêncio (rápido, sem transcrever) ----------
+  const [silOpts, setSilOptsState] = useState<SilenceOpts>(() => {
+    try {
+      return { ...SILENCE_DEFAULT, ...JSON.parse(localStorage.getItem('typos.silence') ?? '{}') }
+    } catch {
+      return SILENCE_DEFAULT
+    }
+  })
+  const setSilOpts = (o: Partial<SilenceOpts>) =>
+    setSilOptsState((cur) => {
+      const n = { ...cur, ...o }
+      try {
+        localStorage.setItem('typos.silence', JSON.stringify(n))
+      } catch {
+        /* sem storage */
+      }
+      return n
+    })
+  const [silOpen, setSilOpen] = useState(false)
+
+  /**
+   * Tira os silêncios. Com cortes selecionados: só neles. Sem seleção: a narração inteira
+   * (os cortes dela na timeline ou, se ainda não tem nenhum, os arquivos da pasta Narração).
+   * Narração vai pra faixa "Corte automático" (a original fica silenciada pra comparar);
+   * o que já está nela (ou é vídeo) é cortado no lugar, puxando o resto da faixa.
+   */
+  const cutSilence = async () => {
+    const d = dataRef.current
+    const isAuto = (id: string) => !!d.tracks.find((t) => t.id === id)?.auto
+    const narrBins = new Set(d.bins.filter((b) => b.role === 'narration').flatMap((b) => [...subtree(b.id)]))
+    const hasAudio = (c: MontageClip) => !!mediaRef.current.get(c.media)?.hasAudio
+    let sources = d.clips.filter((c) => selected.includes(c.id) && hasAudio(c))
+    if (!sources.length) {
+      sources = d.clips.filter((c) => hasAudio(c) && !isAuto(c.track) && narrBins.has(mediaRef.current.get(c.media)?.bin ?? ''))
+      if (!sources.length) {
+        let t = 0
+        sources = d.media
+          .filter((m) => narrBins.has(m.bin) && m.hasAudio)
+          .map((m) => {
+            const c: MontageClip = { id: uid(), track: '', media: m.id, start: t, in: 0, out: m.duration }
+            t += m.duration
+            return c
+          })
+      }
+    }
+    if (!sources.length) return setNormMsg('Nada pra cortar: selecione cortes com áudio ou ponha a narração na pasta Narração.')
+    engine.pause()
+    setPlaying(false)
+    setBusy({ label: 'Lendo as ondas…', pct: null })
+    try {
+      for (const id of new Set(sources.map((c) => c.media))) {
+        const m = mediaRef.current.get(id)
+        if (m) await engine.load(m).catch(() => null)
+      }
+    } finally {
+      setBusy(null)
+    }
+    const peaksOf = (id: string) => engine.get(id)?.peaks
+    if (!sources.some((c) => peaksOf(c.media))) return setNormMsg('As ondas ainda não carregaram (o ffmpeg está instalado?).')
+    const cur = dataRef.current
+    const inPlace = sources.every((c) => c.track && (isAuto(c.track) || mediaRef.current.get(c.media)?.kind === 'video'))
+    let tracks = cur.tracks
+    let clips: MontageClip[]
+    let removed = 0
+    if (inPlace) {
+      // corta no lugar, faixa por faixa, e puxa o que vem depois
+      const ids = new Set(sources.map((c) => c.id))
+      clips = cur.clips.filter((c) => !ids.has(c.id))
+      for (const track of new Set(sources.map((c) => c.track))) {
+        const src = sources.filter((c) => c.track === track)
+        const r = silenceCut(cur, src, track, peaksOf, silOpts)
+        removed += r.removed
+        const last = Math.max(...src.map(clipEndT))
+        const newEnd = r.clips.length ? clipEndT(r.clips[r.clips.length - 1]) : Math.min(...src.map((c) => c.start))
+        const shift = newEnd - last
+        clips = clips.map((c) => (c.track === track && c.start >= last - 0.001 ? { ...c, start: c.start + shift } : c))
+        clips.push(...r.clips)
+      }
+    } else {
+      let dest = tracks.find((t) => t.auto)
+      if (dest && cur.clips.some((c) => c.track === dest!.id) && !confirm('Substituir o que está na faixa "Corte automático" pelo corte por silêncio? As gravações originais ficam como estão.')) return
+      if (!dest) {
+        dest = { id: uid(), kind: 'audio', name: 'Corte automático', auto: true }
+        const srcTrack = sources.find((c) => c.track)?.track
+        const at = srcTrack ? tracks.findIndex((t) => t.id === srcTrack) + 1 : tracks.length
+        tracks = [...tracks.slice(0, at), dest, ...tracks.slice(at)]
+      }
+      const srcTracks = new Set(sources.map((c) => c.track).filter(Boolean))
+      tracks = tracks.map((t) => (srcTracks.has(t.id) ? { ...t, muted: true } : t.id === dest!.id ? { ...t, muted: false } : t))
+      const r = silenceCut(cur, sources, dest.id, peaksOf, silOpts)
+      removed = r.removed
+      clips = [...cur.clips.filter((c) => c.track !== dest!.id), ...r.clips]
+    }
+    change({ ...cur, tracks, clips })
+    setSelected([])
+    setNormMsg(`Corte por silêncio: ${removed.toFixed(1)}s de silêncio fora · Ctrl+Z desfaz`)
+  }
+
+  /** altura de todas as faixas de áudio (pra enxergar melhor os picos) */
+  const resizeAudio = (f: number) => {
+    const d = dataRef.current
+    change(
+      { ...d, tracks: d.tracks.map((t) => (t.kind === 'audio' ? { ...t, height: Math.round(Math.max(TRACK_MIN_H, Math.min(TRACK_MAX_H, trackHeight(t) * f))) } : t)) },
+      'audio-h'
+    )
+  }
+
   const jumpCut = (dir: 1 | -1) => {
     const t = posRef.current
     const edges = [...new Set(data.clips.flatMap((c) => [c.start, clipEndT(c)]))].sort((a, b) => a - b)
     const n = dir > 0 ? edges.find((e) => e > t + 0.01) : [...edges].reverse().find((e) => e < t - 0.01)
     if (n !== undefined) seek(n)
+  }
+
+  // ---------- blocos de instrução ----------
+  const [blockSel, setBlockSel] = useState<string | null>(null)
+  const [blockOpen, setBlockOpen] = useState<string | null>(null)
+  const [blockBusy, setBlockBusy] = useState<BlockBusy | null>(null)
+  const [blockMenu, setBlockMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  useEffect(() => {
+    if (!blockMenu) return
+    const close = () => setBlockMenu(null)
+    window.addEventListener('mousedown', close)
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('blur', close)
+    }
+  }, [blockMenu])
+
+  const selectClips = (ids: string[]) => {
+    setSelected(ids)
+    setBlockSel(null)
+  }
+  const selectBlock = (id: string | null) => {
+    setBlockSel(id)
+    if (id) setSelected([])
+  }
+  const blocks = data.blocks ?? []
+  const curBlock = blocks.find((b) => b.id === blockSel) ?? null
+  const openBlock = blocks.find((b) => b.id === blockOpen) ?? null
+  const patchBlock = (id: string, p: Partial<InstructionBlock>, gesture?: string) => {
+    const d = dataRef.current
+    change({ ...d, blocks: (d.blocks ?? []).map((b) => (b.id === id ? { ...b, ...p } : b)) }, gesture)
+  }
+  /** bloco novo: no tempo dos cortes selecionados, ou 5 s a partir do playhead, na faixa de vídeo de cima */
+  const addBlock = () => {
+    const d = dataRef.current
+    const tr = d.tracks.find((t) => t.kind === 'video')
+    if (!tr) return
+    const picked = d.clips.filter((c) => selected.includes(c.id))
+    const s = picked.length ? Math.min(...picked.map((c) => c.start)) : posRef.current
+    const e = picked.length ? Math.max(...picked.map(clipEndT)) : s + 5
+    const b = newBlock(tr.id, s, e)
+    change({ ...d, blocks: [...(d.blocks ?? []), b] })
+    selectBlock(b.id)
+  }
+  const removeBlock = (id: string) => {
+    const d = dataRef.current
+    change({ ...d, blocks: (d.blocks ?? []).filter((b) => b.id !== id) })
+    if (blockSel === id) setBlockSel(null)
+    if (blockOpen === id) setBlockOpen(null)
+  }
+  useEffect(() => {
+    api.onMotionPreviewProgress((p) => setBlockBusy((b) => (b && b.id === p.block ? { ...b, label: p.stage === 'vídeo' ? 'Montando o vídeo…' : 'Gravando a prévia (12 fps)…', pct: p.pct } : b)))
+  }, [])
+  const makePreview = async (id: string) => {
+    const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
+    if (!b || blockBusy) return
+    setBlockBusy({ id, label: 'Preparando…', pct: null })
+    try {
+      const preview = await generatePreview({
+        block: b,
+        data: dataRef.current,
+        engine,
+        dur,
+        script: getBlocks(),
+        lang,
+        format,
+        dir,
+        onStage: (label, pct) => setBlockBusy({ id, label, pct })
+      })
+      patchBlock(id, { preview, approved: false })
+    } catch (e) {
+      const msg = (e as Error).message
+      if (msg !== 'Cancelado.') alert('Não deu pra fazer a prévia: ' + msg)
+    } finally {
+      setBlockBusy(null)
+    }
+  }
+  /** aprova a prévia (o render reaproveita) e guarda o motion na memória do formato */
+  const approveBlock = async (id: string) => {
+    const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
+    if (!b?.preview) return
+    if (b.approved) return patchBlock(id, { approved: false })
+    patchBlock(id, { approved: true })
+    if (!format || !onFormatChange) return
+    const html = await fetch(fileUrl(b.preview.html))
+      .then((r) => r.text())
+      .catch(() => '')
+    const item = await memoryFromBlock(b, html)
+    const motion = format.motion ?? { refs: [] }
+    onFormatChange({ ...format, motion: { ...motion, memory: [...(motion.memory ?? []), item] } })
   }
 
   // ---------- atalhos (só com a Montagem na frente) ----------
@@ -710,12 +942,14 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
       else if (k === 's') run(splitAtPlayhead)
       else if (k === 'l') run(addLettering)
       else if (k === 'e') run(() => applySplice(false))
+      else if (k === 'b') run(addBlock)
+      else if ((k === 'delete' || k === 'backspace') && blockSel) run(() => removeBlock(blockSel))
       else if (k === 'delete' || k === 'backspace') run(() => remove(e.shiftKey))
       else if (k === 'arrowleft') run(() => (e.shiftKey ? jumpCut(-1) : seek(posRef.current - 1 / 30)))
       else if (k === 'arrowright') run(() => (e.shiftKey ? jumpCut(1) : seek(posRef.current + 1 / 30)))
       else if (k === 'home') run(() => seek(0))
-      else if (k === '+' || k === '=') run(() => setPps((p) => Math.min(800, p * 1.4)))
-      else if (k === '-') run(() => setPps((p) => Math.max(2, p / 1.4)))
+      else if (k === '+' || k === '=') run(() => zoomBy(1.4))
+      else if (k === '-') run(() => zoomBy(1 / 1.4))
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
@@ -1497,13 +1731,27 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
 
       {/* ---------- inspetor ---------- */}
       <section className="mt-inspector">
-        {!one ? (
+        {curBlock ? (
+          <BlockInspector
+            b={curBlock}
+            dir={dir}
+            patch={(p, g) => patchBlock(curBlock.id, p, g)}
+            busy={blockBusy}
+            onGenerate={() => makePreview(curBlock.id)}
+            onCancel={() => api.motionPreviewCancel()}
+            onApprove={() => approveBlock(curBlock.id)}
+            onOpen={() => setBlockOpen(curBlock.id)}
+            onRemove={() => removeBlock(curBlock.id)}
+          />
+        ) : !one ? (
           <div className="mt-empty small">
-            {sel.length > 1 ? `${sel.length} cortes selecionados. Delete apaga, Shift+Delete apaga e fecha o buraco, E aplica a Emenda.` : 'Clique num corte da timeline pra ver os detalhes.'}
+            {sel.length > 1 ? `${sel.length} cortes selecionados. Delete apaga, Shift+Delete apaga e fecha o buraco, E aplica o crossfade.` : 'Clique num corte da timeline pra ver os detalhes.'}
             <div className="mt-keys">
               <b>Atalhos</b>
               <span>Espaço tocar · V seleção · C lâmina · S dividir no playhead · R gravar</span>
-              <span>E Emenda · Delete apagar · Shift+Delete apagar e juntar</span>
+              <span>E crossfade · Delete apagar · Shift+Delete apagar e juntar</span>
+              <span>Botão direito na junção: crossfade · arraste a borda de baixo do nome da faixa: altura</span>
+              <span>B bloco de instrução (duplo clique abre)</span>
               <span>←/→ quadro · Shift+←/→ corte · +/- zoom · Ctrl+Z desfazer</span>
             </div>
           </div>
@@ -1532,13 +1780,13 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           <Scissors size={13} /> Dividir
         </button>
         <span className="mt-sep" />
-        <button className="btn small emenda" title="Emenda (E): crossfade curto no corte selecionado, pra suavizar e evitar estalo" onClick={() => applySplice(false)} disabled={!sel.some((c) => prevOf(c))}>
-          <Combine size={13} /> Emenda
+        <button className="btn small emenda" title="Crossfade (E): no corte selecionado, pra suavizar e evitar estalo" onClick={() => applySplice(false)} disabled={!sel.some((c) => prevOf(c))}>
+          <Combine size={13} /> Crossfade
         </button>
-        <button className="btn small" title="Aplica a Emenda em todos os cortes colados da timeline" onClick={() => applySplice(true)}>
-          Emenda em todos os cortes
+        <button className="btn small" title="Aplica o crossfade em todos os cortes colados da timeline" onClick={() => applySplice(true)}>
+          Crossfade em todos os cortes
         </button>
-        <label className="mt-splice-len" title="Duração da Emenda">
+        <label className="mt-splice-len" title="Duração do crossfade">
           <input
             type="number"
             min={0.1}
@@ -1564,6 +1812,38 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           />
           s
         </label>
+        <div className="mt-sil">
+          <button
+            className="btn small"
+            disabled={!!busy}
+            title="Corte por silêncio (rápido, sem transcrever): tira as pausas. Com cortes selecionados, só neles; sem seleção, a narração toda"
+            onClick={cutSilence}
+          >
+            <AudioWaveform size={13} /> Cortar silêncios
+          </button>
+          <button className={'icon-btn' + (silOpen ? ' on' : '')} title="Ajustes do corte por silêncio" onClick={() => setSilOpen((o) => !o)}>
+            <Settings2 size={13} />
+          </button>
+          {silOpen && (
+            <div className="mt-sil-pop" onMouseDown={(e) => e.stopPropagation()}>
+              <label>
+                Silêncio abaixo de <b>{silOpts.threshold} dB</b>
+                <input type="range" min={-60} max={-20} step={1} value={silOpts.threshold} onChange={(e) => setSilOpts({ threshold: Number(e.target.value) })} />
+              </label>
+              <label>
+                Pausa mínima pra cortar <b>{Math.round(silOpts.minSilence * 1000)} ms</b>
+                <input type="range" min={100} max={2000} step={50} value={silOpts.minSilence * 1000} onChange={(e) => setSilOpts({ minSilence: Number(e.target.value) / 1000 })} />
+              </label>
+              <label>
+                Folga antes/depois da fala <b>{Math.round(silOpts.pad * 1000)} ms</b>
+                <input type="range" min={0} max={500} step={10} value={silOpts.pad * 1000} onChange={(e) => setSilOpts({ pad: Number(e.target.value) / 1000 })} />
+              </label>
+              <button className="btn small" onClick={() => setSilOpts(SILENCE_DEFAULT)}>
+                Padrão
+              </button>
+            </div>
+          )}
+        </div>
         <span className="mt-sep" />
         <button
           className="btn small"
@@ -1592,6 +1872,14 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           </span>
         )}
         <span className="mt-sep" />
+        <button
+          className="btn small"
+          title="Bloco de instrução (B): um trecho da faixa de vídeo com instruções de motion pro Claude. Entra no playhead (ou no tempo dos cortes selecionados)"
+          onClick={addBlock}
+        >
+          <SquareDashed size={13} /> Bloco de instrução
+        </button>
+        <span className="mt-sep" />
         <button className="icon-btn" title="Desfazer (Ctrl+Z)" onClick={undo}>
           <Undo2 size={15} />
         </button>
@@ -1601,19 +1889,22 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
         <span className="mt-grow" />
         <button
           className="btn small primary"
-          disabled={!data.clips.some((c) => c.block !== undefined)}
-          title="Grava o tempo real de cada fala (e das pausas) no roteiro. A timeline do roteiro passa a tocar esta narração."
-          onClick={() => {
-            const n = onSyncScript(dataRef.current)
-            if (!n) alert('Nenhum corte está ligado a uma fala do roteiro. Use o Corte automático primeiro.')
-          }}
+          disabled={!data.clips.length}
+          title="Troca o texto escrito das falas pelo que foi falado na narração (improvisos entram, o que não foi dito sai). Só o texto."
+          onClick={() => onSyncScript(dataRef.current)}
         >
           <FileCheck2 size={13} /> Atualizar roteiro
         </button>
-        <button className="icon-btn" title="Menos zoom (- ou Ctrl+roda do mouse)" onClick={() => setPps((p) => Math.max(2, p / 1.4))}>
+        <button className="icon-btn" title="Faixas de áudio mais baixas" onClick={() => resizeAudio(1 / 1.3)}>
+          <FoldVertical size={15} />
+        </button>
+        <button className="icon-btn" title="Faixas de áudio mais altas (pra ver os picos)" onClick={() => resizeAudio(1.3)}>
+          <UnfoldVertical size={15} />
+        </button>
+        <button className="icon-btn" title="Menos zoom (- ou Ctrl+roda do mouse), focado na agulha" onClick={() => zoomBy(1 / 1.4)}>
           <ZoomOut size={15} />
         </button>
-        <button className="icon-btn" title="Mais zoom (+ ou Ctrl+roda do mouse)" onClick={() => setPps((p) => Math.min(800, p * 1.4))}>
+        <button className="icon-btn" title="Mais zoom (+ ou Ctrl+roda do mouse), focado na agulha" onClick={() => zoomBy(1.4)}>
           <ZoomIn size={15} />
         </button>
       </div>
@@ -1737,7 +2028,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
               )}
               {one && prevOf(one) && (
                 <button onClick={act(() => patchClip(one.id, { splice: one.splice ? undefined : spliceLen }))}>
-                  {one.splice ? 'Tirar a Emenda' : 'Emenda com o corte anterior'} <kbd>E</kbd>
+                  {one.splice ? 'Tirar o crossfade com o anterior' : 'Crossfade com o corte anterior'} <kbd>E</kbd>
                 </button>
               )}
               {one && sameKind.length > 0 && (
@@ -1776,6 +2067,100 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           )
         })()}
 
+      {blockMenu &&
+        (() => {
+          const b = blocks.find((x) => x.id === blockMenu.id)
+          if (!b) return null
+          const act = (fn: () => void) => () => {
+            setBlockMenu(null)
+            fn()
+          }
+          return (
+            <div
+              className="ctx-menu"
+              style={{ left: blockMenu.x, top: blockMenu.y }}
+              ref={(el) => {
+                if (!el) return
+                const r = el.getBoundingClientRect()
+                if (r.bottom > window.innerHeight - 8) el.style.top = `${Math.max(8, window.innerHeight - r.height - 8)}px`
+                if (r.right > window.innerWidth - 8) el.style.left = `${Math.max(8, window.innerWidth - r.width - 8)}px`
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="ctx-label">{blockLabel(b)}</div>
+              <button onClick={act(() => setBlockOpen(b.id))}>Abrir bloco (duplo clique)</button>
+              <button disabled={!!blockBusy} onClick={act(() => makePreview(b.id))}>
+                {b.preview ? 'Refazer prévia' : 'Gerar prévia'}
+              </button>
+              <button onClick={act(() => patchBlock(b.id, { dynamic: !b.dynamic }))}>{b.dynamic ? 'Passar pra instruções escritas' : 'Passar pra dinâmico (pela fala)'}</button>
+              <div className="ctx-sep" />
+              <button
+                onClick={act(() => {
+                  const copy: InstructionBlock = { ...b, id: newBlock(b.track, 0, 1).id, start: b.end, end: b.end + (b.end - b.start), preview: undefined, approved: false }
+                  change({ ...dataRef.current, blocks: [...(dataRef.current.blocks ?? []), copy] })
+                  selectBlock(copy.id)
+                })}
+              >
+                Duplicar logo depois
+              </button>
+              <button className="danger" onClick={act(() => removeBlock(b.id))}>
+                Excluir <kbd>Delete</kbd>
+              </button>
+            </div>
+          )
+        })()}
+      {joinMenu &&
+        (() => {
+          const right = data.clips.find((c) => c.id === joinMenu.id)
+          const left = right && prevOf(right)
+          if (!right || !left) return null
+          const act = (fn: () => void) => () => {
+            setJoinMenu(null)
+            fn()
+          }
+          const cur = right.splice
+          return (
+            <div
+              className="ctx-menu"
+              style={{ left: joinMenu.x, top: joinMenu.y }}
+              ref={(el) => {
+                if (!el) return
+                const r = el.getBoundingClientRect()
+                if (r.bottom > window.innerHeight - 8) el.style.top = `${Math.max(8, window.innerHeight - r.height - 8)}px`
+                if (r.right > window.innerWidth - 8) el.style.left = `${Math.max(8, window.innerWidth - r.width - 8)}px`
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="ctx-label">Crossfade{cur ? ` · agora ${Math.round(cur * 1000)} ms` : ''}</div>
+              <button onClick={act(() => patchClip(right.id, { splice: cur ? undefined : spliceLen }))}>
+                {cur ? 'Tirar o crossfade' : `Adicionar crossfade (${Math.round(spliceLen * 1000)} ms)`} <kbd>E</kbd>
+              </button>
+              <div className="ctx-sep" />
+              <div className="ctx-label">Duração</div>
+              {[0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1].map((v) => (
+                <button key={v} className={cur && Math.abs(cur - v) < 0.0005 ? 'on' : ''} onClick={act(() => patchClip(right.id, { splice: v }))}>
+                  {v < 1 ? `${Math.round(v * 1000)} ms` : `${v} s`}
+                  {cur && Math.abs(cur - v) < 0.0005 ? ' ✓' : ''}
+                </button>
+              ))}
+              <div className="ctx-sep" />
+              <button onClick={act(() => applySplice(true))}>Crossfade em todos os cortes colados</button>
+            </div>
+          )
+        })()}
+      {openBlock && (
+        <BlockWindow
+          b={openBlock}
+          dir={dir}
+          patch={(p, g) => patchBlock(openBlock.id, p, g)}
+          busy={blockBusy}
+          onGenerate={() => makePreview(openBlock.id)}
+          onCancel={() => api.motionPreviewCancel()}
+          onApprove={() => approveBlock(openBlock.id)}
+          onClose={() => setBlockOpen(null)}
+        />
+      )}
+
       {/* ---------- timeline de edição ---------- */}
       <section className="mt-timeline">
         <EditTimeline
@@ -1784,7 +2169,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           engine={engine}
           media={media}
           selected={selected}
-          onSelect={setSelected}
+          onSelect={selectClips}
           tool={tool}
           pps={pps}
           posRef={posRef}
@@ -1793,12 +2178,18 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           scrollRef={scrollRef}
           wavesVersion={wavesVersion}
           onClipMenu={onClipMenu}
+          onJoinMenu={onJoinMenu}
           onDropFile={dropPcFile}
           onMarkerMenu={(e, mk) => setMarkMenu({ x: e.clientX, y: e.clientY, id: mk.id })}
           armed={armed}
           onArm={(id) => setArmed((a) => (a === id ? null : id))}
           recording={rec}
           recClipRef={recClipRef}
+          blockSel={blockSel}
+          onBlockSel={selectBlock}
+          onBlockOpen={setBlockOpen}
+          onBlockMenu={(e, id) => setBlockMenu({ x: e.clientX, y: e.clientY, id })}
+          blockBusy={blockBusy?.id ?? null}
         />
       </section>
     </div>
@@ -1859,9 +2250,9 @@ function ClipInspector({
           <input type="number" min={0} step={10} value={Math.round((c.fadeOut ?? 0) * 1000)} onChange={(e) => patch({ fadeOut: Math.max(0, Number(e.target.value) / 1000) }, g + 'fo')} />
         </label>
       </div>
-      <label className={'toggle-row mt-insp-row' + (hasPrev ? '' : ' disabled')} title={hasPrev ? '' : 'A Emenda vale quando este corte está colado no anterior'}>
+      <label className={'toggle-row mt-insp-row' + (hasPrev ? '' : ' disabled')} title={hasPrev ? '' : 'O crossfade vale quando este corte está colado no anterior'}>
         <input type="checkbox" disabled={!hasPrev} checked={!!c.splice} onChange={(e) => patch({ splice: e.target.checked ? spliceLen : undefined })} />
-        Emenda com o corte anterior
+        Crossfade com o corte anterior
         {c.splice ? (
           <input
             type="number"

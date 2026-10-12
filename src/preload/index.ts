@@ -148,12 +148,46 @@ const api = {
   systemFonts: (): Promise<string[]> => ipcRenderer.invoke('sys:fonts'),
   motionDemoFile: (html: string): Promise<string> => ipcRenderer.invoke('motion:demoFile', html),
   renderCheck: (paths: string[]): Promise<{ path: string; ok: boolean; files?: number; size?: number; error?: string }[]> => ipcRenderer.invoke('render:check', paths),
-  renderStart: (job: { dir: string; brief: string; readDirs: string[]; styleGuide?: string }): Promise<{ path?: string; summary: string; seconds: number } | { error: string }> =>
-    ipcRenderer.invoke('render:start', job),
+  renderStart: (job: {
+    dir: string
+    brief: string
+    readDirs: string[]
+    styleGuide?: string
+    script: string
+    narration: { path: string; in: number; out: number; start: number }[]
+    lang: string
+    steps: { id: string; label: string; file: string; weight: number; expect?: number; key: string; from?: number; to?: number }[]
+    fresh?: boolean
+  }): Promise<{ path?: string; summary: string; seconds: number } | { error: string }> => ipcRenderer.invoke('render:start', job),
+  renderStatus: (dir: string): Promise<{ status: 'rodando' | 'interrompido' | 'pronto'; reason?: string; done: number; total: number; pct: number; updated: number } | null> =>
+    ipcRenderer.invoke('render:status', dir),
+  onRenderState: (
+    cb: (p: { phase: 'transcrevendo' | 'claude'; pct: number; eta: number | null; steps: { id: string; label: string; done: boolean }[]; resumed: number }) => void
+  ) => {
+    ipcRenderer.removeAllListeners('render:state')
+    ipcRenderer.on('render:state', (_e, p) => cb(p))
+  },
   renderCancel: () => ipcRenderer.invoke('render:cancel'),
   onRenderProgress: (cb: (ev: { kind: 'tool' | 'say' | 'info'; text: string }) => void) => {
     ipcRenderer.removeAllListeners('render:progress')
     ipcRenderer.on('render:progress', (_e, ev) => cb(ev))
+  },
+  // blocos de instrução: prévia do motion (HTML → MP4 leve)
+  motionPreview: (job: {
+    dir: string
+    block: string
+    html: string
+    seconds: number
+    width: number
+    height: number
+    fps: number
+    wav?: Uint8Array
+    files: { src: string; name: string }[]
+  }): Promise<{ video: string; html: string } | { error: string }> => ipcRenderer.invoke('motion:preview', job),
+  motionPreviewCancel: () => ipcRenderer.invoke('motion:previewCancel'),
+  onMotionPreviewProgress: (cb: (p: { block: string; stage: string; pct: number }) => void) => {
+    ipcRenderer.removeAllListeners('motion:previewProgress')
+    ipcRenderer.on('motion:previewProgress', (_e, p) => cb(p))
   },
   findSfxLibraries: (): Promise<{ libs: { path: string; name: string; program: string; why: string; files: number }[]; hints: number } | { error: string }> =>
     ipcRenderer.invoke('ai:findSfx'),
