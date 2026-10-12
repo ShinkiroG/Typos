@@ -92,7 +92,7 @@ export function initWhisper() {
 }
 
 /** Palavras com tempo (s) de um arquivo de narração. Fica em cache por arquivo+modelo+idioma. */
-async function transcribe(sender: WebContents, path: string, lang: string): Promise<{ words: Word[] } | { error: string }> {
+export async function transcribe(sender: WebContents | null, path: string, lang: string, onPct?: (pct: number) => void): Promise<{ words: Word[] } | { error: string }> {
   const ff = await findFfmpeg()
   if (!ff) return { error: 'ffmpeg não encontrado' }
   const s = await loadSettings()
@@ -129,7 +129,10 @@ async function transcribe(sender: WebContents, path: string, lang: string): Prom
       if (v) seg = { vs: Number(v[1]) / 1000, ve: Number(v[2]) / 1000 }
       const at = /run transcription at (\d+) ms/.exec(line)
       if (at) runs.push({ at: Number(at[1]) / 1000, ...seg })
-      if (at && total && !sender.isDestroyed()) sender.send('whisper:progress', { stage: 'transcribe', path, pct: Math.min(0.99, Number(at[1]) / 1000 / total) })
+      if (!at || !total) return
+      const pct = Math.min(0.99, Number(at[1]) / 1000 / total)
+      onPct?.(pct)
+      if (sender && !sender.isDestroyed()) sender.send('whisper:progress', { stage: 'transcribe', path, pct })
     }
   })
   if (r.code !== 0) return { error: 'O Whisper falhou: ' + r.err.split('\n').slice(-4).join(' ').slice(0, 300) }

@@ -682,6 +682,34 @@ export interface MontageData {
   spliceDefault?: number
   /** alvo da normalização da narração: "peak:-6" (pico em dBFS) ou "lufs:-16" (volume percebido) */
   norm?: string
+  /** blocos de instrução de motion (como um sólido do Premiere numa faixa de vídeo) */
+  blocks?: InstructionBlock[]
+}
+
+/** anexo de um bloco de instrução: imagem/vídeo pra INSERIR no vídeo ou só REFERÊNCIA pro motion */
+export interface InstructionAttachment {
+  /** caminho absoluto (o leitor do render já resolve o relativo à pasta do projeto) */
+  path: string
+  name: string
+  use: 'insert' | 'ref'
+  note?: string
+}
+/** bloco de instrução na timeline: o render segue o texto dele (e nada do roteiro) nesse trecho */
+export interface InstructionBlock {
+  id: string
+  /** faixa de vídeo onde o bloco está */
+  track: string
+  /** início e fim na timeline (s) */
+  start: number
+  end: number
+  /** como o autor imagina o motion */
+  text: string
+  /** motion dinâmico: o Claude deduz da fala do trecho */
+  dynamic?: boolean
+  attachments?: InstructionAttachment[]
+  /** prévia aprovada: o HTML da animação pode ser reaproveitado no render */
+  approved?: boolean
+  preview?: { html?: string; video?: string }
 }
 
 export const clipDur = (c: MontageClip) => c.out - c.in
