@@ -1156,7 +1156,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             title={title}
             format={format}
             montage={montage}
-            timelineAssets={assets}
+            lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
             getDoc={() => editorRef.current?.getJSON()}
             save={save}
           />
