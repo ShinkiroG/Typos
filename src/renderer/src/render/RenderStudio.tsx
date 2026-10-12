@@ -50,11 +50,14 @@ interface Group {
 }
 
 const QUALITY_KEY = 'typos.renderQuality'
-const loadQuality = (): { pct: number; fps: number } => {
+/** short: só 30 s de vídeo (a partir de `from`, "m:ss") pra conferir rápido */
+type Quality = { pct: number; fps: number; short: boolean; from: string }
+const loadQuality = (): Quality => {
+  const def: Quality = { pct: 50, fps: 30, short: false, from: '0:00' }
   try {
-    return { pct: 50, fps: 30, ...JSON.parse(localStorage.getItem(QUALITY_KEY) || '{}') }
+    return { ...def, ...JSON.parse(localStorage.getItem(QUALITY_KEY) || '{}') }
   } catch {
-    return { pct: 50, fps: 30 }
+    return def
   }
 }
 
@@ -102,6 +105,10 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     const k = 1080 / Math.min(baseW, baseH)
     return [even(baseW * k), even(baseH * k)]
   })()
+  const fromSec = (() => {
+    const m = quality.from.trim().match(/^(?:(\d+):)?(\d+(?:[.,]\d+)?)$/)
+    return m ? Number(m[1] ?? 0) * 60 + Number(m[2].replace(',', '.')) : 0
+  })()
   const [outW, outH] = quality.pct === -1 ? fullHd : [even((baseW * quality.pct) / 100), even((baseH * quality.pct) / 100)]
 
   // ---------- inventário: o que vai pro Claude ----------
@@ -129,7 +136,9 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     })
 
     const STATUS: Record<string, string> = { ref: 'referência', aprovado: 'aprovado', recortar: 'RECORTAR', regerar: 'REGERAR' }
-    const narrClips = montage.clips.filter((c) => roleOfBin(mediaById.get(c.media)?.bin ?? '') === 'narration')
+    // faixa silenciada (ex.: gravação original ao lado do corte automático) não entra no vídeo
+    const mutedTr = new Set(montage.tracks.filter((t) => t.muted).map((t) => t.id))
+    const narrClips = montage.clips.filter((c) => !mutedTr.has(c.track) && roleOfBin(mediaById.get(c.media)?.bin ?? '') === 'narration')
     const narrDur = narrClips.reduce((s, c) => s + c.out - c.in, 0)
     const editEnd = montage.clips.reduce((s, c) => Math.max(s, c.start + c.out - c.in), 0)
     const inRole = (role: string) => montage.media.filter((m) => roleOfBin(m.bin) === role)
@@ -256,7 +265,10 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     const out: string[] = [`# Pedido de vídeo: ${title}`, '', `- Pasta do projeto: ${dir}`]
     if (format) out.push(`- Formato: ${format.name} (${format.aspect})`)
     out.push(
-      `- Saída: ${dir}\\render\\previa-${outW}x${outH}.mp4`,
+      `- Saída: ${dir}\\render\\previa-${outW}x${outH}${quality.short ? `-30s-${fmtT(fromSec).replace(':', 'm')}` : ''}.mp4`,
+      ...(quality.short
+        ? [`- DURAÇÃO: só 30 segundos, de ${fmtT(fromSec)} a ${fmtT(fromSec + 30)} da timeline/roteiro. Monte e renderize APENAS esse trecho (é uma prévia rápida pra conferir o estilo); não processe o resto.`]
+        : []),
       `- Resolução da prévia: ${outW}×${outH} (${quality.pct === -1 ? 'Full HD' : quality.pct + '% do formato'}), ${quality.fps} fps, H.264 (crf 23, preset veryfast) + AAC 192k`,
       '- Todo caminho abaixo é absoluto. Arquivos que o Typos não conseguiu acessar estão marcados com (SEM ACESSO): ignore-os.',
       ''
@@ -326,7 +338,9 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     }
     out.push(
       '## Como fazer',
-      '- É uma PRÉVIA: priorize ter o vídeo inteiro montado e sincronizado com a narração; capriche nos letterings e textos na tela (legendas .ass com as fontes instaladas) e nos cortes de B-roll.',
+      quality.short
+        ? `- É uma PRÉVIA DE 30 s (${fmtT(fromSec)}–${fmtT(fromSec + 30)}): só esse trecho, bem acabado, sincronizado com a narração; capriche nos letterings e textos na tela (legendas .ass com as fontes instaladas) e nos cortes de B-roll.`
+        : '- É uma PRÉVIA: priorize ter o vídeo inteiro montado e sincronizado com a narração; capriche nos letterings e textos na tela (legendas .ass com as fontes instaladas) e nos cortes de B-roll.',
       '- Onde o prompt pede algo que não existe nos arquivos, use um cartão simples (fundo do estilo + texto do prompt) pra marcar o lugar.',
       '- Áudio: narração na frente, música por baixo (uns -18 dB), SFX nos pontos de impacto. Sem clipping.'
     )
@@ -385,7 +399,9 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
       return cur?.role
     }
     const mediaById = new Map(montage.media.map((m) => [m.id, m]))
-    const used = (pred: (m: (typeof montage.media)[number]) => boolean) => montage.clips.map((c) => mediaById.get(c.media)).filter((m): m is NonNullable<typeof m> => !!m && pred(m))
+    const mutedTr = new Set(montage.tracks.filter((t) => t.muted).map((t) => t.id))
+    const live = montage.clips.filter((c) => !mutedTr.has(c.track))
+    const used = (pred: (m: (typeof montage.media)[number]) => boolean) => live.map((c) => mediaById.get(c.media)).filter((m): m is NonNullable<typeof m> => !!m && pred(m))
     const attach: Attachment[] = []
     walk(doc, (n) => {
       const a = n.attrs?.attachments as Attachment[] | undefined
@@ -396,7 +412,7 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     const videoMedia = [...used((m) => m.kind !== 'audio'), ...montage.media.filter((m) => m.kind !== 'audio' && roleOf(m.bin) === 'raw')]
     const videoAttach = attach.filter((a) => a.kind === 'video' || a.kind === 'image' || !a.kind)
     const narr = used((m) => roleOf(m.bin) === 'narration')
-    const narrDur = montage.clips.filter((c) => roleOf(mediaById.get(c.media)?.bin ?? '') === 'narration').reduce((s, c) => s + c.out - c.in, 0)
+    const narrDur = live.filter((c) => roleOf(mediaById.get(c.media)?.bin ?? '') === 'narration').reduce((s, c) => s + c.out - c.in, 0)
     const musicMedia = used((m) => m.kind === 'audio' && roleOf(m.bin) !== 'narration' && roleOf(m.bin) !== 'sfx')
     const musicTrack = timelineAssets.filter((a) => a.path && a.kind === 'music')
     const sfxMedia = montage.media.filter((m) => roleOf(m.bin) === 'sfx')
@@ -517,7 +533,7 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
                 <Clapperboard size={34} />
                 <span>A prévia aparece aqui</span>
                 <small>
-                  {outW}×{outH} · {quality.fps} fps
+                  {outW}×{outH} · {quality.fps} fps{quality.short ? ` · 30 s a partir de ${fmtT(fromSec)}` : ''}
                 </small>
               </div>
             )}
@@ -557,6 +573,29 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
                 Full HD
               </button>
             </div>
+            <div className="rn-fps">
+              Duração
+              <div className="rn-chips">
+                <button className={'rn-chip' + (!quality.short ? ' on' : '')} onClick={() => setQuality((q) => ({ ...q, short: false }))}>
+                  Vídeo inteiro
+                </button>
+                <button className={'rn-chip' + (quality.short ? ' on' : '')} onClick={() => setQuality((q) => ({ ...q, short: true }))} title="Só 30 segundos: bem mais rápido pra conferir o estilo">
+                  30 s
+                </button>
+              </div>
+            </div>
+            {quality.short && (
+              <label className="rn-fps">
+                A partir de
+                <input
+                  className="rn-from"
+                  value={quality.from}
+                  placeholder="0:00"
+                  onChange={(e) => setQuality((q) => ({ ...q, from: e.target.value }))}
+                  title={`De ${fmtT(fromSec)} a ${fmtT(fromSec + 30)}`}
+                />
+              </label>
+            )}
             <label className="rn-fps">
               Quadros por segundo
               <select value={quality.fps} onChange={(e) => setQuality((q) => ({ ...q, fps: Number(e.target.value) }))}>

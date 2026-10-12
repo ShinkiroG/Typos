@@ -509,3 +509,13 @@
     grid-template-columns: 1fr;
   }
 }
+.rn-from {
+  width: 70px;
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font: 12px var(--font-console);
+  text-align: center;
+}
