@@ -386,7 +386,7 @@
 .mt-head {
   position: sticky;
   left: 0;
-  z-index: 3;
+  z-index: 6; /* acima de cortes, X da Emenda e cursor que rolam por baixo */
   width: 132px;
   flex: none;
   display: flex;

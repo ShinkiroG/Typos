@@ -36,6 +36,16 @@ interface Props {
 }
 
 export const HEAD_W = 132
+
+/** régua: com marcas a cada fração de segundo, mostra os décimos (senão repete "0:04, 0:04") */
+const tickLabel = (t: number, step: number) => {
+  if (step >= 1) return formatTime(t)
+  const m = Math.floor(t / 60)
+  const sec = t - m * 60
+  const dec = step >= 0.1 && Math.abs(step * 10 - Math.round(step * 10)) < 1e-9 ? 1 : 2
+  return `${m}:${sec.toFixed(dec).padStart(dec + 3, '0')}`
+}
+
 const SNAP_PX = 8
 const MIN_DUR = 0.04
 
@@ -305,7 +315,7 @@ export function EditTimeline(p: Props) {
           <div className="mt-corner" />
           {ticks.map((t) => (
             <span key={t} className="mt-tick" style={{ left: HEAD_W + t * pps }}>
-              {formatTime(t)}
+              {tickLabel(t, step)}
             </span>
           ))}
         </div>
