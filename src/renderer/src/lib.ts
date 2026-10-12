@@ -647,7 +647,11 @@ export interface MontageTrack {
   muted?: boolean
   /** faixa onde o corte automático põe a narração editada (fica logo abaixo da original) */
   auto?: boolean
+  /** altura da faixa na timeline (px); sem valor = padrão do tipo */
+  height?: number
 }
+/** curva do fade: ponto de controle (bezier quadrática) no quadrado 0..1; [0.5, 0.5] = linear */
+export type FadeCurve = [number, number]
 export interface MontageClip {
   id: string
   track: string
@@ -661,7 +665,10 @@ export interface MontageClip {
   gainDb?: number
   fadeIn?: number
   fadeOut?: number
-  /** Emenda: crossfade curto com o clipe imediatamente antes, na mesma faixa (s) */
+  /** formato dos fades (sem valor = linear) */
+  fadeInCurve?: FadeCurve
+  fadeOutCurve?: FadeCurve
+  /** crossfade com o clipe imediatamente antes, na mesma faixa (s); o nome antigo era Emenda */
   splice?: number
   /** bloco do roteiro (índice no documento) que esse trecho fala */
   block?: number
@@ -671,7 +678,7 @@ export interface MontageData {
   media: MontageMedia[]
   tracks: MontageTrack[]
   clips: MontageClip[]
-  /** duração padrão da Emenda (s) */
+  /** duração padrão do crossfade (s) */
   spliceDefault?: number
   /** alvo da normalização da narração: "peak:-6" (pico em dBFS) ou "lufs:-16" (volume percebido) */
   norm?: string

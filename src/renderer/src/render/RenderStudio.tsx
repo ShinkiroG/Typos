@@ -269,12 +269,14 @@ export function RenderStudio({ active, dir, title, format, montage, getDoc, save
             ganhoDb: c.gainDb || undefined,
             fadeIn: c.fadeIn || undefined,
             fadeOut: c.fadeOut || undefined,
-            emenda: c.splice || undefined
+            curvaFadeIn: c.fadeInCurve,
+            curvaFadeOut: c.fadeOutCurve,
+            crossfade: c.splice || undefined
           }))
       }))
       out.push(
         '## Timeline de edição (a montagem do autor: siga à risca)',
-        '`inicio` = segundo na timeline; `de`/`ate` = trecho do arquivo; `emenda` = crossfade curto com o clipe anterior.',
+        '`inicio` = segundo na timeline; `de`/`ate` = trecho do arquivo; `crossfade` = crossfade (s) com o clipe anterior, centrado no corte; `curvaFadeIn`/`curvaFadeOut` = ponto de controle [x, y] (0..1) de uma bezier quadrática do volume no fade (sem valor = linear).',
         montage.norm ? `Normalização da narração: ${montage.norm} (peak = pico em dBFS, lufs = volume percebido).` : '',
         '```json',
         JSON.stringify(tl, null, 1),
