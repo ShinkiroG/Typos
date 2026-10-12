@@ -649,7 +649,11 @@ export interface MontageTrack {
   muted?: boolean
   /** faixa onde o corte automático põe a narração editada (fica logo abaixo da original) */
   auto?: boolean
+  /** altura da faixa na timeline (px); sem valor = padrão do tipo */
+  height?: number
 }
+/** curva do fade: ponto de controle (bezier quadrática) no quadrado 0..1; [0.5, 0.5] = linear */
+export type FadeCurve = [number, number]
 export interface MontageClip {
   id: string
   track: string
@@ -663,7 +667,10 @@ export interface MontageClip {
   gainDb?: number
   fadeIn?: number
   fadeOut?: number
-  /** Emenda: crossfade curto com o clipe imediatamente antes, na mesma faixa (s) */
+  /** formato dos fades (sem valor = linear) */
+  fadeInCurve?: FadeCurve
+  fadeOutCurve?: FadeCurve
+  /** crossfade com o clipe imediatamente antes, na mesma faixa (s); o nome antigo era Emenda */
   splice?: number
   /** bloco do roteiro (índice no documento) que esse trecho fala */
   block?: number
@@ -673,7 +680,7 @@ export interface MontageData {
   media: MontageMedia[]
   tracks: MontageTrack[]
   clips: MontageClip[]
-  /** duração padrão da Emenda (s) */
+  /** duração padrão do crossfade (s) */
   spliceDefault?: number
   /** alvo da normalização da narração: "peak:-6" (pico em dBFS) ou "lufs:-16" (volume percebido) */
   norm?: string
@@ -728,6 +735,32 @@ export interface MotionMemoryItem {
   text: string
   /** código da animação aprovada (resumido), pra servir de exemplo */
   html?: string
+}
+
+/** anexo de um bloco de instrução: imagem/vídeo pra INSERIR no vídeo ou só REFERÊNCIA pro motion */
+export interface InstructionAttachment {
+  /** caminho absoluto (o leitor do render já resolve o relativo à pasta do projeto) */
+  path: string
+  name: string
+  use: 'insert' | 'ref'
+  note?: string
+}
+/** bloco de instrução normalizado pro render (plan.ts): o render segue o texto dele (e nada do roteiro) nesse trecho */
+export interface RenderBlock {
+  id: string
+  /** faixa de vídeo onde o bloco está */
+  track: string
+  /** início e fim na timeline (s) */
+  start: number
+  end: number
+  /** como o autor imagina o motion */
+  text: string
+  /** motion dinâmico: o Claude deduz da fala do trecho */
+  dynamic?: boolean
+  attachments?: InstructionAttachment[]
+  /** prévia aprovada: o HTML da animação pode ser reaproveitado no render */
+  approved?: boolean
+  preview?: { html?: string; video?: string }
 }
 
 export const clipDur = (c: MontageClip) => c.out - c.in

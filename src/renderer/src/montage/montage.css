@@ -379,9 +379,59 @@
   display: flex;
   height: 58px;
   border-bottom: 1px solid var(--line);
+  flex: none;
 }
-.mt-track.k-video {
-  height: 64px;
+/* metade de cima = vídeo, metade de baixo = áudio, com a divisória no meio (tipo Premiere) */
+.mt-section {
+  display: flex;
+  flex-direction: column;
+}
+.mt-section.k-video {
+  justify-content: flex-end;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+}
+.mt-section.k-audio {
+  background: color-mix(in srgb, var(--c-prompt) 5%, var(--bg));
+}
+.mt-section.k-video .mt-track {
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+.mt-section.k-video .mt-head {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.mt-section.k-audio .mt-head {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--c-prompt) 70%, transparent);
+}
+.mt-section.k-video .mt-add-track {
+  margin-top: 0;
+  margin-bottom: auto;
+}
+.mt-divider {
+  flex: none;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--accent) 55%, var(--bg-2)) 0 50%,
+    color-mix(in srgb, var(--c-prompt) 55%, var(--bg-2)) 50% 100%
+  );
+}
+/* alça pra mudar a altura da faixa */
+.mt-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 7px;
+  cursor: ns-resize;
+  z-index: 1;
+}
+.mt-resize.bottom {
+  bottom: -4px;
+}
+.mt-resize.top {
+  top: -4px;
+}
+.mt-resize:hover {
+  background: color-mix(in srgb, var(--text) 25%, transparent);
 }
 .mt-head {
   position: sticky;
@@ -404,6 +454,8 @@
 .mt-lane {
   position: relative;
   flex: 1;
+  /* o que está dentro da faixa (cortes, crossfades) nunca passa por cima dos nomes das faixas */
+  isolation: isolate;
 }
 .mt-clip {
   position: absolute;
@@ -480,26 +532,72 @@
 .mt-fade polygon {
   fill: rgba(0, 0, 0, 0.5);
 }
-.mt-fade line {
+.mt-fade polyline {
+  fill: none;
   stroke: #fff;
   stroke-width: 1.5;
   opacity: 0.85;
 }
-/* X da Emenda (crossfade) em cima da junção */
+/* alça da curva do fade (ponto de controle da bezier) */
+.mt-curve {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 2px solid #fff;
+  cursor: move;
+  opacity: 0;
+  z-index: 3;
+}
+.mt-clip:hover .mt-curve,
+.mt-clip.sel .mt-curve {
+  opacity: 1;
+}
+/* X do crossfade em cima da junção (largura = duração real) */
 .mt-xfade {
   position: absolute;
   top: 4px;
   bottom: 4px;
-  height: calc(100% - 8px);
   z-index: 3;
-  pointer-events: auto;
   overflow: visible;
   background: color-mix(in srgb, var(--c-prompt) 22%, transparent);
   border-radius: 3px;
 }
+.mt-xfade svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
 .mt-xfade line {
   stroke: var(--c-prompt);
   stroke-width: 2;
+}
+/* crossfade curto demais pro zoom atual: só um risco na junção */
+.mt-xfade.thin {
+  min-width: 2px;
+  margin-left: -1px;
+  background: var(--c-prompt);
+  opacity: 0.8;
+}
+.mt-xfade.sel {
+  box-shadow: 0 0 0 1px #fff;
+}
+.mt-xf-h {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+.mt-xf-h.l {
+  left: -4px;
+}
+.mt-xf-h.r {
+  right: -4px;
 }
 .mt-knob {
   position: absolute;
@@ -537,6 +635,7 @@
 .mt-add-track {
   position: sticky;
   left: 0;
+  flex: none;
   display: flex;
   gap: 6px;
   padding: 8px 10px;
@@ -1183,4 +1282,42 @@
   gap: 16px;
   overflow: auto;
   min-height: 0;
+
+/* corte por silêncio */
+.mt-sil {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.mt-sil-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  box-shadow: 0 10px 30px #0008;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mt-sil-pop label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mt-sil-pop b {
+  color: var(--text);
+}
+.mt-sil-pop .btn {
+  align-self: flex-start;
+}
+.ctx-menu button.on {
+  color: var(--c-prompt);
 }

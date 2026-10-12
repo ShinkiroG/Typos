@@ -27,6 +27,8 @@ import { docToLines, requestDraft } from '../review'
 import { InsertPanel } from './InsertPanel'
 import { FoldersPanel, FILE_MIME } from './FoldersPanel'
 import { PlaybackHighlight } from '../editor/highlight'
+import { sliceToMarkup, markupToSlice } from '../editor/markup'
+import { syncSpokenText } from '../editor/syncSpoken'
 import { SpellCheck, misspelledAt, setSpellLanguage, spellSuggestions, acceptWord } from '../editor/spell'
 import { Timeline } from './Timeline'
 import {
@@ -396,6 +398,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     editorProps: {
       // o corretor nativo fica desligado; quem sublinha é o plugin (editor/spell.ts)
       attributes: { spellcheck: 'false' },
+      // copiar leva a marcação junto no texto puro (Bloco de Notas, Claude…); colar esse texto reconstrói o roteiro
+      clipboardTextSerializer: (slice) => sliceToMarkup(slice),
+      clipboardTextParser: (text, _ctx, _plain, view) => markupToSlice(view.state.schema, text),
       handleDrop: (view, event) => {
         const dt = event.dataTransfer
         if (!dt) return false
@@ -435,7 +440,10 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           })()
           return true
         }
-        setTimeout(() => convertBracketLines(editorRef.current), 0)
+        // HTML de outro programa (navegador, Word…) com "[instrução]" numa linha vira prompt;
+        // o texto puro já chega convertido (markupToSlice) e o que veio do próprio Typos já tem os blocos
+        const html = event.clipboardData?.getData('text/html')
+        if (html && !html.includes('data-pm-slice')) setTimeout(() => convertBracketLines(editorRef.current), 0)
         return false
       }
     }
@@ -633,44 +641,65 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   }
 
   /**
-   * Montagem → roteiro: cada Fala ganha o tempo real dos cortes dela e as pausas entre as falas
-   * ganham o espaço que ficou na timeline. Dá pra desfazer no roteiro (Ctrl+Z).
+   * "Atualizar roteiro" (na Montagem): o texto escrito das falas vira o que foi falado na narração
+   * (improvisos entram, o que não foi dito sai). Só o texto: tempos, blocos e o resto ficam como estão.
+   * Dá pra desfazer no roteiro (Ctrl+Z).
    */
-  const syncFromMontage = (m: MontageData) => {
+  const syncFromMontage = async (m: MontageData) => {
     const ed = editorRef.current
     if (!ed) return 0
-    const muted = new Set(m.tracks.filter((t) => t.muted).map((t) => t.id))
-    const span = new Map<number, { s: number; e: number }>()
-    for (const c of m.clips) {
-      if (c.block === undefined || muted.has(c.track)) continue
-      const e = c.start + c.out - c.in
-      const cur = span.get(c.block)
-      span.set(c.block, cur ? { s: Math.min(cur.s, c.start), e: Math.max(cur.e, e) } : { s: c.start, e })
+    const binById = new Map(m.bins.map((b) => [b.id, b]))
+    const roleOf = (id: string) => {
+      let cur = binById.get(id)
+      for (let i = 0; cur?.parent && i < 20; i++) cur = binById.get(cur.parent)
+      return cur?.role
     }
-    const nodes: { node: PMNode; pos: number; i: number }[] = []
-    ed.state.doc.forEach((node, pos, i) => nodes.push({ node, pos, i }))
-    const withTime = nodes.filter((n) => n.node.type.name === 'paragraph' && span.has(n.i))
-    if (!withTime.length) return 0
-    const tr = ed.state.tr
-    const r3 = (x: number) => Math.round(x * 1000) / 1000
-    withTime.forEach((cur, k) => {
-      const a = span.get(cur.i)!
-      let dur = a.e - a.s
-      const next = withTime[k + 1]
-      if (next) {
-        const gap = span.get(next.i)!.s - a.e
-        const pauses = nodes.filter((n) => n.i > cur.i && n.i < next.i && (n.node.type.name === 'sonora' || n.node.type.name === 'soundUp'))
-        if (pauses.length && gap > 0) {
-          // o espaço vai pras pausas que já existem, na proporção de antes
-          const old = pauses.reduce((s, p) => s + (Number(p.node.attrs.seconds) || 1), 0)
-          for (const p of pauses) tr.setNodeMarkup(p.pos, undefined, { ...p.node.attrs, seconds: r3((gap * (Number(p.node.attrs.seconds) || 1)) / old) })
-        } else if (gap > 0) dur += gap
+    const media = new Map(m.media.map((x) => [x.id, x]))
+    const muted = new Set(m.tracks.filter((t) => t.muted).map((t) => t.id))
+    const audio = new Set(m.tracks.filter((t) => t.kind === 'audio').map((t) => t.id))
+    // a narração que toca no vídeo: cortes nas faixas de áudio ligadas, da pasta Narração (ou do corte automático)
+    const clips = m.clips
+      .filter((c) => audio.has(c.track) && !muted.has(c.track) && (c.block !== undefined || roleOf(media.get(c.media)?.bin ?? '') === 'narration'))
+      .sort((a, b) => a.start - b.start)
+    if (!clips.length) {
+      alert('Não há narração na Montagem pra comparar com o roteiro.')
+      return 0
+    }
+    const lang = (formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]
+    const words = new Map<string, { s: number; e: number; w: string }[]>()
+    setToast('Atualizando roteiro: lendo o que foi falado…')
+    for (const c of clips) {
+      const path = media.get(c.media)?.path
+      if (!path || words.has(path)) continue
+      const r = await api.transcribe(path, lang)
+      if ('error' in r) {
+        setToast('')
+        alert(r.error)
+        return 0
       }
-      tr.setNodeMarkup(cur.pos, undefined, { ...cur.node.attrs, seconds: r3(dur) })
-    })
-    ed.view.dispatch(tr)
-    setToast(`Roteiro sincronizado: ${withTime.length} falas com o tempo da narração.`)
-    return withTime.length
+      words.set(path, r.words)
+    }
+    const spoken: string[] = []
+    for (const c of clips) {
+      for (const w of words.get(media.get(c.media)?.path ?? '') ?? []) {
+        const mid = (w.s + w.e) / 2
+        if (mid >= c.in && mid < c.out) spoken.push(w.w)
+      }
+    }
+    const tr = ed.state.tr
+    const r = syncSpokenText(ed.state.doc, spoken, tr)
+    if ('error' in r) {
+      setToast('')
+      alert(r.error)
+      return 0
+    }
+    if (tr.docChanged) ed.view.dispatch(tr)
+    setToast(
+      tr.docChanged
+        ? `Roteiro atualizado com o que foi falado: ${r.changed} falas mudaram (${r.inserted} palavras entraram, ${r.removed} saíram). Ctrl+Z desfaz.`
+        : 'O roteiro já está igual ao que foi falado.'
+    )
+    return r.changed || 1
   }
 
   const goMode = (m: 'script' | 'montage' | 'style' | 'render') => {
@@ -1156,7 +1185,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             title={title}
             format={format}
             montage={montage}
-            timelineAssets={assets}
+            lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
             getDoc={() => editorRef.current?.getJSON()}
             save={save}
           />
@@ -1639,7 +1668,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
                   <span>R</span><span>gravar na faixa armada</span>
                   <span>V / C</span><span>seleção / lâmina</span>
                   <span>S</span><span>dividir no playhead</span>
-                  <span>E</span><span>Emenda no corte</span>
+                  <span>E</span><span>Crossfade no corte</span>
                   <span>Delete / Shift+Delete</span><span>apagar / apagar e juntar</span>
                   <span>← → / Shift+← →</span><span>quadro a quadro / de corte em corte</span>
                   <span>+ / -</span><span>zoom</span>

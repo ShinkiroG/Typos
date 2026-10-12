@@ -1,7 +1,7 @@
-import { memo, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Volume2, VolumeX, Plus } from 'lucide-react'
 import { clipDur, clipEndT, formatTime, uid, type MontageClip, type MontageData, type MontageMedia, type MontageTrack } from '../lib'
-import { PEAKS_PER_SEC, type MontageEngine } from './engine'
+import { PEAKS_PER_SEC, butted, fadeInGain, fadeOutGain, xfadeHalf, type MontageEngine } from './engine'
 import { BlockLayer } from './BlockLayer'
 
 export const MEDIA_MIME = 'application/x-typos-media'
@@ -32,6 +32,8 @@ interface Props {
   recClipRef: React.RefObject<HTMLDivElement | null>
   /** botão direito num corte */
   onClipMenu: (e: React.MouseEvent, c: MontageClip) => void
+  /** botão direito numa junção de dois cortes (id do corte da direita) */
+  onJoinMenu: (e: React.MouseEvent, rightId: string) => void
   /** soltou um arquivo do PC: o Montage importa e põe o corte */
   onDropFile: (path: string, trackKind: 'video' | 'audio', trackId: string | null, start: number) => void
   /** blocos de instrução (nas faixas de vídeo) */
@@ -46,6 +48,13 @@ interface Props {
 export const HEAD_W = 132
 const SNAP_PX = 8
 const MIN_DUR = 0.04
+const RULER_H = 24
+/** altura padrão das faixas (px) e limites do redimensionar */
+export const trackHeight = (t: MontageTrack) => t.height ?? (t.kind === 'video' ? 64 : 58)
+export const TRACK_MIN_H = 30
+export const TRACK_MAX_H = 260
+/** clicar com o botão direito até esta distância (px) da borda colada abre o menu da junção */
+const JOIN_HIT_PX = 10
 
 /** duração "infinita" de imagem parada */
 export const mediaLen = (m?: MontageMedia) => (!m ? 0 : m.kind === 'image' ? 3600 : m.duration)
@@ -87,8 +96,8 @@ export function splitClip(c: MontageClip, t: number): [MontageClip, MontageClip]
   if (t <= c.start + MIN_DUR || t >= clipEndT(c) - MIN_DUR) return null
   const cut = c.in + (t - c.start)
   return [
-    { ...c, out: cut, fadeOut: 0 },
-    { ...c, id: uid(), start: t, in: cut, fadeIn: 0, splice: undefined }
+    { ...c, out: cut, fadeOut: 0, fadeOutCurve: undefined },
+    { ...c, id: uid(), start: t, in: cut, fadeIn: 0, fadeInCurve: undefined, splice: undefined }
   ]
 }
 
@@ -99,8 +108,19 @@ function rulerStep(pps: number) {
 
 export function EditTimeline(p: Props) {
   const { data, pps, scrollRef } = p
-  const end = Math.max(30, ...data.clips.map(clipEndT), ...(data.blocks ?? []).map((b) => b.end)) + 20
+  // tamanho da área visível: a timeline sempre preenche a largura toda (sem "fim" no meio da tela)
+  // e as metades de vídeo e áudio dividem a altura
+  const [view, setView] = useState({ w: 0, h: 0 })
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setView({ w: el.clientWidth, h: el.clientHeight }))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [scrollRef])
+  const end = Math.max(30, Math.max(0, ...data.clips.map(clipEndT), ...(data.blocks ?? []).map((b) => b.end)) + 20, (view.w - HEAD_W) / pps)
   const width = end * pps
+  const mediaDur = (id: string) => mediaLen(p.media.get(id))
 
   // ---------- seleção por caixa (arrastar no vazio) ----------
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
@@ -144,8 +164,10 @@ export function EditTimeline(p: Props) {
 
   // ---------- arrastos ----------
   const drag = useRef<{
-    kind: 'move' | 'trim-l' | 'trim-r' | 'fade-in' | 'fade-out' | 'scrub'
+    kind: 'move' | 'trim-l' | 'trim-r' | 'fade-in' | 'fade-out' | 'curve-in' | 'curve-out' | 'xf-l' | 'xf-r' | 'scrub'
     x0: number
+    /** retângulo do clipe no começo do arrasto (curva do fade) */
+    rect?: DOMRect
     orig: MontageData
     ids: string[]
     gesture: string
@@ -186,7 +208,7 @@ export function EditTimeline(p: Props) {
     if (e.button !== 0) return
     e.stopPropagation()
     const role = (e.target as HTMLElement).dataset.role
-    if (p.tool === 'blade' && !role?.startsWith('fade')) {
+    if (p.tool === 'blade' && !role?.startsWith('fade') && !role?.startsWith('curve')) {
       let t = timeAt(e.clientX)
       if (Math.abs(t - p.posRef.current) * pps < SNAP_PX) t = p.posRef.current
       const parts = splitClip(c, t)
@@ -197,9 +219,38 @@ export function EditTimeline(p: Props) {
     if (e.shiftKey || e.ctrlKey) ids = ids.includes(c.id) ? ids.filter((i) => i !== c.id) : [...ids, c.id]
     else if (!ids.includes(c.id)) ids = [c.id]
     p.onSelect(ids)
-    const kind = (role || 'move') as 'move' | 'trim-l' | 'trim-r' | 'fade-in' | 'fade-out'
-    drag.current = { kind, x0: e.clientX, orig: data, ids: kind === 'move' ? ids : [c.id], gesture: uid(), main: c.id }
+    const kind = (role || 'move') as 'move' | 'trim-l' | 'trim-r' | 'fade-in' | 'fade-out' | 'curve-in' | 'curve-out'
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    drag.current = { kind, x0: e.clientX, orig: data, ids: kind === 'move' ? ids : [c.id], gesture: uid(), main: c.id, rect }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }
+
+  /** duplo clique na alça da curva: o fade volta a ser linear */
+  const onClipDouble = (e: React.MouseEvent, c: MontageClip) => {
+    const role = (e.target as HTMLElement).dataset.role
+    if (role !== 'curve-in' && role !== 'curve-out') return
+    e.stopPropagation()
+    p.change({ ...data, clips: data.clips.map((x) => (x.id === c.id ? { ...x, [role === 'curve-in' ? 'fadeInCurve' : 'fadeOutCurve']: undefined } : x)) })
+  }
+
+  /** arrastar a borda do X: muda a duração do crossfade (o corte fica no meio) */
+  const onXfadeDown = (e: React.PointerEvent, c: MontageClip) => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    const role = (e.target as HTMLElement).dataset.role
+    if (role !== 'xf-l' && role !== 'xf-r') return
+    drag.current = { kind: role, x0: e.clientX, orig: data, ids: [c.id], gesture: uid(), main: c.id }
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }
+
+  /** botão direito perto da borda colada de um corte = menu da junção (crossfade) */
+  const onClipContext = (e: React.MouseEvent, c: MontageClip) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const same = data.clips.filter((x) => x.track === c.track && x.id !== c.id)
+    if (e.clientX - r.left <= JOIN_HIT_PX && same.some((x) => butted(x, c))) return p.onJoinMenu(e, c.id)
+    const next = same.find((x) => butted(c, x))
+    if (r.right - e.clientX <= JOIN_HIT_PX && next) return p.onJoinMenu(e, next.id)
+    p.onClipMenu(e, c)
   }
 
   const onMove = (e: React.PointerEvent) => {
@@ -231,6 +282,21 @@ export function EditTimeline(p: Props) {
       const en = snap(o.start + (nout - o.in), [o.id])
       nout = Math.max(o.in + MIN_DUR, Math.min(mediaLen(m), en - o.start + o.in))
       clips = clips.map((c) => (c.id === o.id ? { ...c, out: nout } : c))
+    } else if (d.kind === 'curve-in' || d.kind === 'curve-out') {
+      // ponto de controle da curva, livre dentro da área do fade (tipo pen tool)
+      const r = d.rect!
+      const fin = d.kind === 'curve-in'
+      const len = (fin ? o.fadeIn : o.fadeOut) ?? 0
+      if (!len) return
+      const left = fin ? r.left : r.right - len * pps
+      const cx = Math.max(0, Math.min(1, (e.clientX - left) / (len * pps)))
+      const cy = Math.max(0, Math.min(1, 1 - (e.clientY - r.top) / r.height))
+      const key = fin ? 'fadeInCurve' : 'fadeOutCurve'
+      clips = clips.map((c) => (c.id === o.id ? { ...c, [key]: [Math.round(cx * 100) / 100, Math.round(cy * 100) / 100] } : c))
+    } else if (d.kind === 'xf-l' || d.kind === 'xf-r') {
+      const base = o.splice ?? 0
+      const v = Math.max(0.002, Math.min(10, base + 2 * (d.kind === 'xf-r' ? dt : -dt)))
+      clips = clips.map((c) => (c.id === o.id ? { ...c, splice: Math.round(v * 1000) / 1000 } : c))
     } else {
       const key = d.kind === 'fade-in' ? 'fadeIn' : 'fadeOut'
       const base = o[key] ?? 0
@@ -280,7 +346,32 @@ export function EditTimeline(p: Props) {
   const ticks: number[] = []
   for (let t = 0; t <= end; t += step) ticks.push(t)
 
-  const setTrack = (id: string, patch: Partial<MontageTrack>) => p.change({ ...data, tracks: data.tracks.map((t) => (t.id === id ? { ...t, ...patch } : t)) })
+  const setTrack = (id: string, patch: Partial<MontageTrack>, gesture?: string) =>
+    p.change({ ...data, tracks: data.tracks.map((t) => (t.id === id ? { ...t, ...patch } : t)) }, gesture)
+
+  /** arrastar a borda de baixo do nome da faixa: muda a altura dela */
+  const startResize = (e: React.PointerEvent, tr: MontageTrack) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const el = e.currentTarget as HTMLElement
+    el.setPointerCapture(e.pointerId)
+    const y0 = e.clientY
+    const h0 = trackHeight(tr)
+    const gesture = uid()
+    // faixas de vídeo crescem pra cima (ficam em cima da divisória), as de áudio pra baixo
+    const sign = tr.kind === 'video' ? -1 : 1
+    const base = data
+    const move = (ev: PointerEvent) => {
+      const h = Math.round(Math.max(TRACK_MIN_H, Math.min(TRACK_MAX_H, h0 + sign * (ev.clientY - y0))))
+      p.change({ ...base, tracks: base.tracks.map((t) => (t.id === tr.id ? { ...t, height: h } : t)) }, gesture)
+    }
+    const up = () => {
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+    }
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+  }
   const addTrack = (kind: 'video' | 'audio') => {
     const n = data.tracks.filter((t) => t.kind === kind).length + 1
     const id = (kind === 'video' ? 'V' : 'A') + n + '-' + uid().slice(0, 4)
@@ -288,6 +379,7 @@ export function EditTimeline(p: Props) {
     // vídeo novo entra em cima dos outros vídeos; áudio novo no fim
     p.change({ ...data, tracks: kind === 'video' ? [t, ...data.tracks] : [...data.tracks, t] })
   }
+  const DIVIDER_H = 6
 
   return (
     <div
@@ -318,85 +410,121 @@ export function EditTimeline(p: Props) {
             </span>
           ))}
         </div>
-        {data.tracks.map((tr) => (
-          <div key={tr.id} className={'mt-track k-' + tr.kind + (tr.muted ? ' muted' : '')}>
-            <div className="mt-head">
-              <span>{tr.name}</span>
-              {tr.kind === 'audio' && (
-                <button
-                  className={'mt-arm' + (p.armed === tr.id ? ' on' : '')}
-                  title={p.armed === tr.id ? 'Faixa armada: a gravação (R) entra aqui' : 'Armar esta faixa pra gravar o microfone'}
-                  onClick={() => p.onArm(tr.id)}
-                />
-              )}
-              <button className="icon-btn" title={tr.muted ? 'Ligar faixa' : 'Silenciar/esconder faixa'} onClick={() => setTrack(tr.id, { muted: !tr.muted })}>
-                {tr.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
-              </button>
-            </div>
-            <div
-              className="mt-lane"
-              data-track={tr.id}
-              onPointerDown={(e) => {
-                if (e.button !== 0) return
-                startMarquee(e)
-              }}
-            >
-              {data.clips
-                .filter((c) => c.track === tr.id)
-                .map((c) => (
-                  <ClipView
-                    key={c.id}
-                    c={c}
-                    m={p.media.get(c.media)}
-                    pps={pps}
-                    sel={p.selected.includes(c.id)}
-                    blade={p.tool === 'blade'}
-                    engine={p.engine}
-                    wavesVersion={p.wavesVersion}
-                    onDown={onClipDown}
-                    onMenu={p.onClipMenu}
-                  />
-                ))}
-              {data.clips
-                // só onde os cortes estão colados (com vão entre eles a Emenda não age, então não aparece)
-                .filter((c) => c.track === tr.id && c.splice && data.clips.some((x) => x.id !== c.id && x.track === tr.id && Math.abs(clipEndT(x) - c.start) < 0.002))
-                .map((c) => {
-                  const w = Math.max(14, c.splice! * pps)
-                  return (
-                    <svg
-                      key={'x' + c.id}
-                      className="mt-xfade"
-                      style={{ left: c.start * pps - w / 2, width: w }}
-                      viewBox="0 0 100 100"
-                      preserveAspectRatio="none"
-                    >
-                      <title>{`Emenda: crossfade de ${Math.round(c.splice! * 1000)} ms`}</title>
-                      <line x1="0" y1="10" x2="100" y2="90" vectorEffect="non-scaling-stroke" />
-                      <line x1="0" y1="90" x2="100" y2="10" vectorEffect="non-scaling-stroke" />
-                    </svg>
-                  )
-                })}
-              {tr.kind === 'video' && (
-                <BlockLayer
-                  data={data}
-                  track={tr.id}
-                  pps={pps}
-                  selected={p.blockSel}
-                  onSelect={p.onBlockSel}
-                  onOpen={p.onBlockOpen}
-                  onMenu={p.onBlockMenu}
-                  change={p.change}
-                  snap={snap}
-                  trackAt={trackAt}
-                  busy={p.blockBusy}
-                />
-              )}
-              {p.recording?.track === tr.id && (
-                <div className="mt-clip rec" ref={p.recClipRef} style={{ left: p.recording.start * pps, width: 2 }}>
-                  <span className="mt-clip-name">● gravando…</span>
+        {(['video', 'audio'] as const).map((kind) => (
+          <div
+            key={kind}
+            className={'mt-section k-' + kind}
+            // cada metade ocupa pelo menos metade da altura; o vídeo encosta na divisória por cima
+            style={{ minHeight: Math.max(0, (view.h - RULER_H - DIVIDER_H) / 2) }}
+          >
+            {kind === 'audio' && <div className="mt-divider" style={{ height: DIVIDER_H }} />}
+            {kind === 'video' && <AddTrack kind="video" onAdd={addTrack} />}
+            {data.tracks
+              .filter((tr) => tr.kind === kind)
+              .map((tr) => (
+                <div key={tr.id} className={'mt-track k-' + tr.kind + (tr.muted ? ' muted' : '')} style={{ height: trackHeight(tr) }}>
+                  <div className="mt-head">
+                    <span>{tr.name}</span>
+                    {tr.kind === 'audio' && (
+                      <button
+                        className={'mt-arm' + (p.armed === tr.id ? ' on' : '')}
+                        title={p.armed === tr.id ? 'Faixa armada: a gravação (R) entra aqui' : 'Armar esta faixa pra gravar o microfone'}
+                        onClick={() => p.onArm(tr.id)}
+                      />
+                    )}
+                    <button className="icon-btn" title={tr.muted ? 'Ligar faixa' : 'Silenciar/esconder faixa'} onClick={() => setTrack(tr.id, { muted: !tr.muted })}>
+                      {tr.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                    </button>
+                    <div
+                      className={'mt-resize ' + (tr.kind === 'video' ? 'top' : 'bottom')}
+                      title="Arraste pra mudar a altura da faixa (duplo clique volta ao padrão)"
+                      onPointerDown={(e) => startResize(e, tr)}
+                      onDoubleClick={() => setTrack(tr.id, { height: undefined })}
+                    />
+                  </div>
+                  <div
+                    className="mt-lane"
+                    data-track={tr.id}
+                    onPointerDown={(e) => {
+                      if (e.button !== 0) return
+                      startMarquee(e)
+                    }}
+                  >
+                    {data.clips
+                      .filter((c) => c.track === tr.id)
+                      .map((c) => (
+                        <ClipView
+                          key={c.id}
+                          c={c}
+                          m={p.media.get(c.media)}
+                          pps={pps}
+                          height={trackHeight(tr) - 8}
+                          sel={p.selected.includes(c.id)}
+                          blade={p.tool === 'blade'}
+                          engine={p.engine}
+                          wavesVersion={p.wavesVersion}
+                          onDown={onClipDown}
+                          onDouble={onClipDouble}
+                          onMenu={onClipContext}
+                        />
+                      ))}
+                    {data.clips
+                      .filter((c) => c.track === tr.id && c.splice)
+                      .map((c) => {
+                        // só onde os cortes estão colados (com vão entre eles o crossfade não age, então não aparece)
+                        const prev = data.clips.find((x) => x.id !== c.id && x.track === tr.id && butted(x, c))
+                        if (!prev) return null
+                        const half = xfadeHalf(prev, c, mediaDur)
+                        const w = 2 * half * pps
+                        const short = half * 2 < c.splice! - 0.001
+                        return (
+                          <div
+                            key={'x' + c.id}
+                            className={'mt-xfade' + (w < 10 ? ' thin' : '') + (p.selected.includes(c.id) ? ' sel' : '')}
+                            style={{ left: c.start * pps - w / 2, width: w }}
+                            title={
+                              `Crossfade de ${Math.round(half * 2000)} ms` +
+                              (short ? ` (pedido ${Math.round(c.splice! * 1000)} ms: não sobra arquivo pra mais)` : '') +
+                              '\nArraste as bordas pra mudar · botão direito: opções'
+                            }
+                            onPointerDown={(e) => onXfadeDown(e, c)}
+                            onContextMenu={(e) => p.onJoinMenu(e, c.id)}
+                          >
+                            {w >= 10 && (
+                              <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                                <line x1="0" y1="10" x2="100" y2="90" vectorEffect="non-scaling-stroke" />
+                                <line x1="0" y1="90" x2="100" y2="10" vectorEffect="non-scaling-stroke" />
+                              </svg>
+                            )}
+                            <div className="mt-xf-h l" data-role="xf-l" />
+                            <div className="mt-xf-h r" data-role="xf-r" />
+                          </div>
+                        )
+                      })}
+                    {tr.kind === 'video' && (
+                      <BlockLayer
+                        data={data}
+                        track={tr.id}
+                        pps={pps}
+                        selected={p.blockSel}
+                        onSelect={p.onBlockSel}
+                        onOpen={p.onBlockOpen}
+                        onMenu={p.onBlockMenu}
+                        change={p.change}
+                        snap={snap}
+                        trackAt={trackAt}
+                        busy={p.blockBusy}
+                      />
+                    )}
+                    {p.recording?.track === tr.id && (
+                      <div className="mt-clip rec" ref={p.recClipRef} style={{ left: p.recording.start * pps, width: 2 }}>
+                        <span className="mt-clip-name">● gravando…</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
+              ))}
+            {kind === 'audio' && <AddTrack kind="audio" onAdd={addTrack} />}
           </div>
         ))}
         {box && (
@@ -410,39 +538,57 @@ export function EditTimeline(p: Props) {
             }}
           />
         )}
-        <div className="mt-add-track">
-          <button className="btn small" onClick={() => addTrack('video')}>
-            <Plus size={12} /> Vídeo
-          </button>
-          <button className="btn small" onClick={() => addTrack('audio')}>
-            <Plus size={12} /> Áudio
-          </button>
-        </div>
         <div className="mt-playhead" ref={p.playheadRef} style={{ left: HEAD_W }} />
       </div>
     </div>
   )
 }
 
+function AddTrack({ kind, onAdd }: { kind: 'video' | 'audio'; onAdd: (k: 'video' | 'audio') => void }) {
+  return (
+    <div className="mt-add-track">
+      <button className="btn small" onClick={() => onAdd(kind)}>
+        <Plus size={12} /> {kind === 'video' ? 'Vídeo' : 'Áudio'}
+      </button>
+    </div>
+  )
+}
+
+/** caminho do fade (no quadrado 0..100 do svg, y pra baixo) seguindo a curva */
+function fadePath(fin: boolean, curve: MontageClip['fadeInCurve']) {
+  const n = 24
+  const pts: string[] = []
+  for (let i = 0; i <= n; i++) {
+    const x = i / n
+    const g = fin ? fadeInGain(curve, x) : fadeOutGain(curve, x)
+    pts.push(`${(x * 100).toFixed(2)},${((1 - g) * 100).toFixed(2)}`)
+  }
+  return pts
+}
+
 const ClipView = memo(function ClipView({
   c,
   m,
   pps,
+  height,
   sel,
   blade,
   engine,
   wavesVersion,
   onDown,
+  onDouble,
   onMenu
 }: {
   c: MontageClip
   m?: MontageMedia
   pps: number
+  height: number
   sel: boolean
   blade: boolean
   engine: MontageEngine
   wavesVersion: number
   onDown: (e: React.PointerEvent, c: MontageClip) => void
+  onDouble: (e: React.MouseEvent, c: MontageClip) => void
   onMenu: (e: React.MouseEvent, c: MontageClip) => void
 }) {
   const w = Math.max(2, clipDur(c) * pps)
@@ -453,22 +599,39 @@ const ClipView = memo(function ClipView({
       style={{ left: c.start * pps, width: w }}
       data-clip={c.id}
       onPointerDown={(e) => onDown(e, c)}
+      onDoubleClick={(e) => onDouble(e, c)}
       onContextMenu={(e) => onMenu(e, c)}
       title={`${m?.name ?? 'mídia sumiu'}\n${formatTime(c.start)} → ${formatTime(clipEndT(c))} (${clipDur(c).toFixed(2)}s)`}
     >
-      {m?.hasAudio && <Wave c={c} engine={engine} width={w} version={wavesVersion} />}
+      {m?.hasAudio && <Wave c={c} engine={engine} width={w} height={height} version={wavesVersion} />}
       <span className="mt-clip-name">{m?.name ?? '?'}</span>
       {!!c.fadeIn && (
         <svg className="mt-fade in" style={{ width: c.fadeIn * pps }} viewBox="0 0 100 100" preserveAspectRatio="none">
-          <polygon points="0,0 100,0 0,100" />
-          <line x1="0" y1="100" x2="100" y2="0" vectorEffect="non-scaling-stroke" />
+          <polygon points={['0,0', ...fadePath(true, c.fadeInCurve)].join(' ')} />
+          <polyline points={fadePath(true, c.fadeInCurve).join(' ')} vectorEffect="non-scaling-stroke" />
         </svg>
       )}
       {!!c.fadeOut && (
         <svg className="mt-fade out" style={{ width: c.fadeOut * pps }} viewBox="0 0 100 100" preserveAspectRatio="none">
-          <polygon points="0,0 100,0 100,100" />
-          <line x1="0" y1="0" x2="100" y2="100" vectorEffect="non-scaling-stroke" />
+          <polygon points={[...fadePath(false, c.fadeOutCurve), '100,0'].join(' ')} />
+          <polyline points={fadePath(false, c.fadeOutCurve).join(' ')} vectorEffect="non-scaling-stroke" />
         </svg>
+      )}
+      {!!c.fadeIn && c.fadeIn * pps >= 12 && (
+        <div
+          className="mt-curve"
+          data-role="curve-in"
+          style={{ left: (c.fadeInCurve?.[0] ?? 0.5) * c.fadeIn * pps, top: `${(1 - (c.fadeInCurve?.[1] ?? 0.5)) * 100}%` }}
+          title="Curva do fade: arraste (duplo clique volta a linear)"
+        />
+      )}
+      {!!c.fadeOut && c.fadeOut * pps >= 12 && (
+        <div
+          className="mt-curve"
+          data-role="curve-out"
+          style={{ left: w - c.fadeOut * pps + (c.fadeOutCurve?.[0] ?? 0.5) * c.fadeOut * pps, top: `${(1 - (c.fadeOutCurve?.[1] ?? 0.5)) * 100}%` }}
+          title="Curva do fade: arraste (duplo clique volta a linear)"
+        />
       )}
       <div className="mt-knob in" data-role="fade-in" style={{ left: (c.fadeIn ?? 0) * pps }} title="Fade de entrada" />
       <div className="mt-knob out" data-role="fade-out" style={{ right: (c.fadeOut ?? 0) * pps }} title="Fade de saída" />
@@ -479,14 +642,15 @@ const ClipView = memo(function ClipView({
 })
 
 /** forma de onda do trecho in→out (canvas limitado; o CSS estica se o clipe for enorme) */
-function Wave({ c, engine, width, version }: { c: MontageClip; engine: MontageEngine; width: number; version: number }) {
+function Wave({ c, engine, width, height, version }: { c: MontageClip; engine: MontageEngine; width: number; height: number; version: number }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useLayoutEffect(() => {
     const cv = ref.current
     const loaded = engine.get(c.media)
     if (!cv || !loaded) return
     const W = Math.min(4000, Math.ceil(width))
-    const H = 40
+    // desenha na altura real (faixa alta = onda mais detalhada, sem esticar borrado)
+    const H = Math.max(8, Math.round(height - 16))
     cv.width = W
     cv.height = H
     const g = cv.getContext('2d')!
@@ -502,6 +666,6 @@ function Wave({ c, engine, width, version }: { c: MontageClip; engine: MontageEn
       const h = Math.max(1, v * H)
       g.fillRect(x, (H - h) / 2, 1, h)
     }
-  }, [c.in, c.out, c.media, width, version, engine])
+  }, [c.in, c.out, c.media, width, height, version, engine])
   return <canvas className="mt-wave" ref={ref} />
 }

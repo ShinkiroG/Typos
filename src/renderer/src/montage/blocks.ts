@@ -11,7 +11,7 @@ import {
   type MontageData,
   type MotionMemoryItem
 } from '../lib'
-import { spans, type MontageEngine } from './engine'
+import { envAt, envPoints, spans, type MontageEngine } from './engine'
 import type { ScriptBlock } from './autocut'
 
 /**
@@ -129,14 +129,9 @@ export async function rangeWav(engine: MontageEngine, data: MontageData, dur: (i
     src.buffer = loaded.buffer
     const g = ctx.createGain()
     const d = s.t1 - s.t0
-    const env = (rel: number) => {
-      let v = 1
-      if (s.fin > 0 && rel < s.fin) v = Math.min(v, rel / s.fin)
-      if (s.fout > 0 && rel > d - s.fout) v = Math.min(v, (d - rel) / s.fout)
-      return Math.max(0, v) * s.gain
-    }
-    g.gain.setValueAtTime(env(rel0), when)
-    for (const p of [s.fin, d - s.fout, d]) if (p > rel0 && p <= d) g.gain.linearRampToValueAtTime(env(p), when + (p - rel0))
+    // mesmo envelope da Montagem (crossfades e curvas dos fades)
+    g.gain.setValueAtTime(s.gain * envAt(s, rel0), when)
+    for (const p of envPoints(s)) if (p > rel0 && p <= d) g.gain.linearRampToValueAtTime(s.gain * envAt(s, p), when + (p - rel0))
     src.connect(g).connect(ctx.destination)
     src.start(when, Math.max(0, from), playLen)
     any = true
