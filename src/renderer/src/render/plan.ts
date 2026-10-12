@@ -153,7 +153,7 @@ export function planSteps(montage: MontageData, o: { outW: number; outH: number;
   const kindOf = new Map(montage.tracks.map((t) => [t.id, t]))
   const blocks = instructionBlocks(montage)
   const video = o.outW + 'x' + o.outH + '@' + o.fps
-  const clipKey = (c: MontageData['clips'][number]) => [c.track, media.get(c.media)?.path, r2(c.start), r2(c.in), r2(c.out), c.gainDb, c.fadeIn, c.fadeOut, c.splice]
+  const clipKey = (c: MontageData['clips'][number]) => [c.track, media.get(c.media)?.path, r2(c.start), r2(c.in), r2(c.out), c.gainDb, c.fadeIn, c.fadeOut, c.fadeInCurve, c.fadeOutCurve, c.splice]
   const steps: RenderStep[] = segments(montage).map(([from, to], i) => {
     const clips = montage.clips.filter((c) => kindOf.get(c.track)?.kind === 'video' && !kindOf.get(c.track)?.muted && c.start < to && c.start + c.out - c.in > from)
     const bl = blocks.filter((b) => b.start < to && b.end > from)

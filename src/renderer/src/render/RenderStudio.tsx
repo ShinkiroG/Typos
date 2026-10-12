@@ -7,7 +7,6 @@ import {
   Loader2,
   RefreshCw,
   FileText,
-  Image as ImageIcon,
   Mic,
   Film,
   AudioLines,
@@ -74,13 +73,6 @@ type Progress = { phase: 'transcrevendo' | 'claude'; pct: number; eta: number | 
 type Resume = Awaited<ReturnType<typeof api.renderStatus>>
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
 const r2 = (n: number) => Math.round(n * 100) / 100
-
-/** todos os nós de um JSON do TipTap */
-function walk(n: JSONContent | undefined, f: (n: JSONContent) => void) {
-  if (!n) return
-  f(n)
-  n.content?.forEach((c) => walk(c, f))
-}
 
 export function RenderStudio({ active, dir, title, format, montage, lang, getDoc, save }: Props) {
   const [quality, setQuality] = useState(loadQuality)
@@ -376,12 +368,14 @@ export function RenderStudio({ active, dir, title, format, montage, lang, getDoc
             ganhoDb: c.gainDb || undefined,
             fadeIn: c.fadeIn || undefined,
             fadeOut: c.fadeOut || undefined,
+            curvaFadeIn: c.fadeInCurve,
+            curvaFadeOut: c.fadeOutCurve,
             crossfade: c.splice || undefined
           }))
       }))
       out.push(
         '## Timeline de edição (a montagem do autor: siga à risca)',
-        '`inicio` = segundo na timeline; `de`/`ate` = trecho do arquivo; `crossfade` = crossfade com o clipe anterior na mesma faixa (s). Faixa muda não entra no vídeo.',
+        '`inicio` = segundo na timeline; `de`/`ate` = trecho do arquivo; `crossfade` = crossfade (s) com o clipe anterior na mesma faixa, centrado no corte; `curvaFadeIn`/`curvaFadeOut` = ponto de controle [x, y] (0..1) de uma bezier quadrática do volume no fade (sem valor = linear). Faixa muda não entra no vídeo.',
         montage.norm ? `Normalização da narração: ${montage.norm} (peak = pico em dBFS, lufs = volume percebido).` : '',
         '```json',
         JSON.stringify(tl, null, 1),
