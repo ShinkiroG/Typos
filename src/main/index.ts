@@ -9,6 +9,7 @@ import { initUpdater, checkManually, installDownloadedNow, installMode } from '.
 import { initSpell } from './spell'
 import { initAi, initMotionAi, initSfxFinder } from './ai'
 import { initRender } from './render'
+import { initMotionPreview } from './motionPreview'
 import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, initDownloads } from './media'
 import { initWhisper } from './whisper'
 
@@ -250,6 +251,7 @@ initAi()
 initMotionAi()
 initSfxFinder()
 initRender()
+initMotionPreview()
 initMedia()
 initDownloads()
 initWhisper()

@@ -1,5 +1,5 @@
 import type { JSONContent } from '@tiptap/core'
-import { absPath, type InstructionBlock, type MontageData, type MontageBin } from '../lib'
+import { absPath, type RenderBlock, type MontageData, type MontageBin } from '../lib'
 
 /**
  * Plano do render: a timeline vira uma lista de etapas com arquivo de saída conhecido
@@ -43,7 +43,7 @@ export function roleResolver(montage: MontageData) {
 }
 
 /** blocos de instrução da timeline, lidos com tolerância (end ou duration) */
-export function instructionBlocks(montage: MontageData): InstructionBlock[] {
+export function instructionBlocks(montage: MontageData): RenderBlock[] {
   const raw = ((montage as any).blocks ?? []) as any[]
   if (!Array.isArray(raw)) return []
   return raw
@@ -68,7 +68,7 @@ export function instructionBlocks(montage: MontageData): InstructionBlock[] {
           })),
         approved: !!b?.approved,
         preview: b?.preview?.html || b?.preview?.video ? { html: b.preview.html, video: b.preview.video } : undefined
-      } as InstructionBlock
+      } as RenderBlock
     })
     .filter((b) => b.end > b.start)
     .sort((a, b) => a.start - b.start)

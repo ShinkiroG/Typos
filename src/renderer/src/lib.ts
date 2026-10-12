@@ -208,6 +208,8 @@ export interface MotionStyle {
   camera?: string[]
   transitions?: string[]
   pace?: 'calmo' | 'médio' | 'frenético'
+  /** memória de motion: exemplos aprovados que as prévias e o render seguem */
+  memory?: MotionMemoryItem[]
   /** o que a IA aprendeu: guia do estilo + demo animada */
   learned?: {
     at: string
@@ -682,8 +684,57 @@ export interface MontageData {
   spliceDefault?: number
   /** alvo da normalização da narração: "peak:-6" (pico em dBFS) ou "lufs:-16" (volume percebido) */
   norm?: string
-  /** blocos de instrução de motion (como um sólido do Premiere numa faixa de vídeo) */
+  /** blocos de instrução de motion (como um sólido do Premiere, nas faixas de vídeo) */
   blocks?: InstructionBlock[]
+}
+
+/** anexo de um bloco: entra no vídeo (insert, anotado com setas etc.) ou é só referência pra recriar em motion */
+export interface BlockAttachment extends Attachment {
+  use: 'insert' | 'ref'
+  /** o que fazer com ele (opcional) */
+  note?: string
+}
+
+export interface BlockPreview {
+  /** vídeo da prévia (12 fps, baixa resolução) e o HTML que gerou ela (caminhos absolutos) */
+  video: string
+  html: string
+  at: string
+  provider: string
+  /** o que foi ouvido no trecho (Whisper) */
+  transcript: string
+  /** impressão digital do bloco quando a prévia foi feita (muda = prévia desatualizada) */
+  key: string
+}
+
+/** Bloco de instrução: um pedaço de tempo da faixa de vídeo com instruções de motion pro Claude. */
+export interface InstructionBlock {
+  id: string
+  /** faixa de vídeo */
+  track: string
+  start: number
+  end: number
+  name?: string
+  /** dinâmico: o Claude deduz o motion pela fala do trecho (o texto vira só dica) */
+  dynamic?: boolean
+  /** como o autor imagina o motion */
+  text: string
+  attachments: BlockAttachment[]
+  preview?: BlockPreview
+  /** o autor aprovou a prévia (o render reaproveita a ideia) */
+  approved?: boolean
+}
+
+/** memória de motion: o que o autor aprovou (demo do Estilo, prévias de blocos, notas) */
+export interface MotionMemoryItem {
+  id: string
+  at: string
+  source: 'estilo' | 'bloco' | 'nota'
+  title: string
+  /** o que deu certo, em palavras */
+  text: string
+  /** código da animação aprovada (resumido), pra servir de exemplo */
+  html?: string
 }
 
 /** anexo de um bloco de instrução: imagem/vídeo pra INSERIR no vídeo ou só REFERÊNCIA pro motion */
@@ -694,8 +745,8 @@ export interface InstructionAttachment {
   use: 'insert' | 'ref'
   note?: string
 }
-/** bloco de instrução na timeline: o render segue o texto dele (e nada do roteiro) nesse trecho */
-export interface InstructionBlock {
+/** bloco de instrução normalizado pro render (plan.ts): o render segue o texto dele (e nada do roteiro) nesse trecho */
+export interface RenderBlock {
   id: string
   /** faixa de vídeo onde o bloco está */
   track: string

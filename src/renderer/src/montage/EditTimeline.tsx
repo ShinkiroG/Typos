@@ -2,6 +2,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Volume2, VolumeX, Plus } from 'lucide-react'
 import { clipDur, clipEndT, formatTime, uid, type MontageClip, type MontageData, type MontageMedia, type MontageTrack } from '../lib'
 import { PEAKS_PER_SEC, butted, fadeInGain, fadeOutGain, xfadeHalf, type MontageEngine } from './engine'
+import { BlockLayer } from './BlockLayer'
 
 export const MEDIA_MIME = 'application/x-typos-media'
 /** arquivo de uma pasta do PC vinculada (entra no projeto ao soltar) */
@@ -35,6 +36,13 @@ interface Props {
   onJoinMenu: (e: React.MouseEvent, rightId: string) => void
   /** soltou um arquivo do PC: o Montage importa e põe o corte */
   onDropFile: (path: string, trackKind: 'video' | 'audio', trackId: string | null, start: number) => void
+  /** blocos de instrução (nas faixas de vídeo) */
+  blockSel: string | null
+  onBlockSel: (id: string | null) => void
+  onBlockOpen: (id: string) => void
+  onBlockMenu: (e: React.MouseEvent, id: string) => void
+  /** bloco gerando prévia agora */
+  blockBusy: string | null
 }
 
 export const HEAD_W = 132
@@ -110,7 +118,7 @@ export function EditTimeline(p: Props) {
     ro.observe(el)
     return () => ro.disconnect()
   }, [scrollRef])
-  const end = Math.max(30, Math.max(0, ...data.clips.map(clipEndT)) + 20, (view.w - HEAD_W) / pps)
+  const end = Math.max(30, Math.max(0, ...data.clips.map(clipEndT), ...(data.blocks ?? []).map((b) => b.end)) + 20, (view.w - HEAD_W) / pps)
   const width = end * pps
   const mediaDur = (id: string) => mediaLen(p.media.get(id))
 
@@ -178,6 +186,7 @@ export function EditTimeline(p: Props) {
   const snap = (t: number, skip: string[]) => {
     const cands = [0, p.posRef.current]
     for (const c of data.clips) if (!skip.includes(c.id)) cands.push(c.start, clipEndT(c))
+    for (const b of data.blocks ?? []) if (!skip.includes(b.id)) cands.push(b.start, b.end)
     let best = t
     let bestD = SNAP_PX / pps
     for (const c of cands) {
@@ -492,6 +501,21 @@ export function EditTimeline(p: Props) {
                           </div>
                         )
                       })}
+                    {tr.kind === 'video' && (
+                      <BlockLayer
+                        data={data}
+                        track={tr.id}
+                        pps={pps}
+                        selected={p.blockSel}
+                        onSelect={p.onBlockSel}
+                        onOpen={p.onBlockOpen}
+                        onMenu={p.onBlockMenu}
+                        change={p.change}
+                        snap={snap}
+                        trackAt={trackAt}
+                        busy={p.blockBusy}
+                      />
+                    )}
                     {p.recording?.track === tr.id && (
                       <div className="mt-clip rec" ref={p.recClipRef} style={{ left: p.recording.start * pps, width: 2 }}>
                         <span className="mt-clip-name">● gravando…</span>

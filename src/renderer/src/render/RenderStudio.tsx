@@ -23,6 +23,7 @@ import {
 import { api, fileUrl, RESOLUTIONS, type Format, type MontageData, type MontageBin, type TimelineAsset } from '../lib'
 import { instructionBlocks, narrationPieces, planSteps, scriptText } from './plan'
 import './render.css'
+import { blocksBriefSection } from '../montage/blocks'
 
 /**
  * Workspace Render: mostra tudo que vai alimentar o Claude, confere se ele consegue acessar
@@ -383,26 +384,8 @@ export function RenderStudio({ active, dir, title, format, montage, lang, getDoc
         ''
       )
     } else if (on('narration')) out.push('## Narração cortada', ...g('narration').items.map(line), '')
-    if (on('blocks')) {
-      out.push('## Blocos de instrução (o que mostrar em cada trecho)')
-      const ts = (s: number) => `${fmtT(s)}.${Math.floor((s % 1) * 10)}`
-      instructionBlocks(montage).forEach((b, i) => {
-        out.push('', `### Bloco ${i + 1} · ${ts(b.start)} → ${ts(b.end)} (${r2(b.end - b.start)} s)`)
-        if (b.text.trim()) out.push(b.dynamic ? 'Motion dinâmico, com esta direção:' : 'Motion pedido:', b.text.trim())
-        else out.push('Motion dinâmico: deduza o motion do que é falado nesse trecho (veja a transcrição).')
-        if (b.approved && b.preview?.html) out.push(`- PRÉVIA APROVADA pelo autor: ${b.preview.html}. Reaproveite essa animação (mesma composição e timing), só na resolução e fps do vídeo.`)
-        for (const a of b.attachments ?? []) {
-          const c = checks[a.path]
-          const bad = c && !c.ok ? ' (SEM ACESSO)' : ''
-          out.push(
-            a.use === 'insert'
-              ? `- INSERIR: ${a.path}${bad}${a.note ? ` (${a.note})` : ''}. Mostre no vídeo e trabalhe em cima (setas, círculos, zoom, destaques), seguindo as instruções.`
-              : `- REFERÊNCIA: ${a.path}${bad}${a.note ? ` (${a.note})` : ''}. Não mostre o arquivo: recrie em motion, com design bonito no estilo do vídeo (ex.: um clone estilizado da página), animado conforme as instruções.`
-          )
-        }
-      })
-      out.push('')
-    }
+    // blocos de instrução + direção de motion + memória de motion (o que o autor aprovou)
+    out.push(...blocksBriefSection(on('blocks') ? montage.blocks : undefined, off.has('style') ? undefined : format?.motion?.memory, montage.tracks))
     if (on('raw')) out.push('## Material bruto (B-roll: pros trechos sem vídeo nem bloco na timeline; pastas ⭐ são as preferidas)', ...g('raw').items.map(line), '')
     if (on('sfx')) out.push('## Áudios e SFX (bibliotecas ⭐ são as referências essenciais de som: use com mais frequência)', ...g('sfx').items.map(line), '')
     if (on('style')) {
@@ -426,6 +409,7 @@ export function RenderStudio({ active, dir, title, format, montage, lang, getDoc
       '- É uma PRÉVIA: priorize ter o vídeo inteiro montado e sincronizado com a narração; capriche nos letterings e textos na tela (legendas .ass com as fontes instaladas) e nos cortes de B-roll.',
       '- Motion com variedade: alterne de 3 a 7 ideias de apresentação e composição de cena (tela cheia, split, cartão flutuante, zoom numa imagem, tipografia grande, gráfico, comparação lado a lado…). Não transforme o vídeo numa lista de tópicos que acompanha cada frase; sincronize com a fala só nos momentos-chave.',
       '- Trecho sem vídeo nem bloco na timeline: B-roll do material bruto que combine com a fala, ou o fundo do estilo com um lettering curto.',
+      '- Onde há bloco de instrução, ele manda naquele trecho (instruções e anexos dele, não o roteiro).',
       '- Áudio: siga as faixas de áudio da timeline (ganho, fades, crossfades). Narração na frente, música por baixo, SFX nos pontos de impacto. Sem clipping.'
     )
     return out.filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n')

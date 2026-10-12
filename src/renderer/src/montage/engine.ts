@@ -97,7 +97,7 @@ export function envAt(s: Span, rel: number) {
 }
 
 /** instantes (relativos ao trecho) onde o envelope muda: rampas lineares entre eles seguem a curva */
-function envPoints(s: Span) {
+export function envPoints(s: Span) {
   const c = s.clip
   const d = s.t1 - s.t0
   const dur = c.out - c.in
