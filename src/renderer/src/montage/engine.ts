@@ -1,5 +1,5 @@
 import { followOutput } from '../audio'
-import { api, clipEndT, fileUrl, type MontageClip, type MontageData, type MontageMedia } from '../lib'
+import { api, clipEndT, fileUrl, type FadeCurve, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 
 export const PEAKS_PER_SEC = 100
 
@@ -10,58 +10,110 @@ export interface LoadedAudio {
 
 const dbToGain = (db = 0) => Math.pow(10, db / 20)
 
-/** Trecho que um clipe realmente toca, já contando as Emendas (crossfade) com os vizinhos. */
+/** Trecho que um clipe realmente toca, já contando os crossfades com os vizinhos. */
 export interface Span {
   clip: MontageClip
   /** início/fim na timeline e de onde o arquivo começa */
   t0: number
   t1: number
   src0: number
-  /** rampas de entrada/saída (s) */
-  fin: number
-  fout: number
+  /** meia-duração dos crossfades de entrada/saída (s): o trecho começa xIn antes do corte */
+  xIn: number
+  xOut: number
   gain: number
 }
 
-/** Emenda = crossfade centrado no corte: o clipe da esquerda estica x/2, o da direita começa x/2 antes. */
+const LINEAR: FadeCurve = [0.5, 0.5]
+
+/** x da bezier quadrática (0,0)→(cx,·)→(1,·) volta pro t */
+function solveT(cx: number, x: number) {
+  const a = 1 - 2 * cx
+  const b = 2 * cx
+  if (Math.abs(a) < 1e-6) return b ? x / b : x
+  return (-b + Math.sqrt(Math.max(0, b * b + 4 * a * x))) / (2 * a)
+}
+
+/** volume do fade de entrada no progresso p (0..1), seguindo a curva */
+export function fadeInGain(curve: FadeCurve | undefined, p: number) {
+  if (p <= 0) return 0
+  if (p >= 1) return 1
+  const [cx, cy] = curve ?? LINEAR
+  const t = solveT(cx, p)
+  return Math.max(0, Math.min(1, 2 * t * (1 - t) * cy + t * t))
+}
+
+/** volume do fade de saída no progresso p (0 = começo do fade, 1 = fim) */
+export function fadeOutGain(curve: FadeCurve | undefined, p: number) {
+  if (p <= 0) return 1
+  if (p >= 1) return 0
+  const [cx, cy] = curve ?? LINEAR
+  const t = solveT(cx, p)
+  return Math.max(0, Math.min(1, (1 - t) * (1 - t) + 2 * t * (1 - t) * cy))
+}
+
+/** colados: o fim de um é o começo do outro */
+export const butted = (a: MontageClip | undefined, b: MontageClip | undefined) => !!a && !!b && Math.abs(clipEndT(a) - b.start) < 0.002
+
+/**
+ * Meia-duração real do crossfade entre prev e c (s). O crossfade é centrado no corte e usa o
+ * que sobra do arquivo antes do "in" de c e depois do "out" de prev: se um lado não tem sobra,
+ * o crossfade encolhe pros dois (fica simétrico, sem buraco no volume).
+ */
+export function xfadeHalf(prev: MontageClip | undefined, c: MontageClip, mediaDur: (id: string) => number) {
+  if (!c.splice || !butted(prev, c)) return 0
+  return Math.max(0, Math.min(c.splice / 2, c.in, mediaDur(prev!.media) - prev!.out))
+}
+
+/** clipes de cada faixa (ligada), em ordem */
+function byTrack(data: MontageData) {
+  return data.tracks.filter((t) => !t.muted).map((tr) => data.clips.filter((c) => c.track === tr.id).sort((a, b) => a.start - b.start))
+}
+
 export function spans(data: MontageData, mediaDur: (id: string) => number): Span[] {
   const out: Span[] = []
-  for (const tr of data.tracks) {
-    if (tr.muted) continue
-    const list = data.clips.filter((c) => c.track === tr.id).sort((a, b) => a.start - b.start)
+  for (const list of byTrack(data)) {
     list.forEach((c, i) => {
-      const prev = list[i - 1]
-      const next = list[i + 1]
-      const butted = (a: MontageClip | undefined, b: MontageClip | undefined) => !!a && !!b && Math.abs(clipEndT(a) - b.start) < 0.002
-      // emenda com o anterior: começa antes usando o que sobra antes do "in"
-      const xIn = butted(prev, c) && c.splice ? Math.min(c.splice / 2, c.in) : 0
-      // emenda com o próximo: estica usando o que sobra depois do "out"
-      const xOut = butted(c, next) && next!.splice ? Math.min(next!.splice / 2, Math.max(0, mediaDur(c.media) - c.out)) : 0
-      out.push({
-        clip: c,
-        t0: c.start - xIn,
-        t1: clipEndT(c) + xOut,
-        src0: c.in - xIn,
-        fin: Math.max(c.fadeIn ?? 0, xIn * 2),
-        fout: Math.max(c.fadeOut ?? 0, xOut * 2),
-        gain: dbToGain(c.gainDb)
-      })
+      const xIn = xfadeHalf(list[i - 1], c, mediaDur)
+      const xOut = list[i + 1] ? xfadeHalf(c, list[i + 1], mediaDur) : 0
+      out.push({ clip: c, t0: c.start - xIn, t1: clipEndT(c) + xOut, src0: c.in - xIn, xIn, xOut, gain: dbToGain(c.gainDb) })
     })
   }
   return out
 }
 
 /** valor do envelope (0..1) num instante relativo ao começo do trecho */
-const envAt = (s: Span, rel: number) => {
+export function envAt(s: Span, rel: number) {
+  const c = s.clip
   const d = s.t1 - s.t0
+  const dur = c.out - c.in
   let v = 1
-  if (s.fin > 0 && rel < s.fin) v = Math.min(v, rel / s.fin)
-  if (s.fout > 0 && rel > d - s.fout) v = Math.min(v, (d - rel) / s.fout)
-  return Math.max(0, v)
+  if (s.xIn > 0) v *= Math.min(1, Math.max(0, rel / (2 * s.xIn)))
+  if (s.xOut > 0) v *= Math.min(1, Math.max(0, (d - rel) / (2 * s.xOut)))
+  // fades do próprio clipe contam a partir das bordas dele (não do crossfade)
+  const r = rel - s.xIn
+  if (c.fadeIn) v *= fadeInGain(c.fadeInCurve, r / c.fadeIn)
+  if (c.fadeOut) v *= fadeOutGain(c.fadeOutCurve, (r - (dur - c.fadeOut)) / c.fadeOut)
+  return v
+}
+
+/** instantes (relativos ao trecho) onde o envelope muda: rampas lineares entre eles seguem a curva */
+function envPoints(s: Span) {
+  const c = s.clip
+  const d = s.t1 - s.t0
+  const dur = c.out - c.in
+  const pts = [0, d]
+  const region = (a: number, b: number, n: number) => {
+    for (let i = 0; i <= n; i++) pts.push(a + ((b - a) * i) / n)
+  }
+  if (s.xIn) region(0, 2 * s.xIn, 1)
+  if (s.xOut) region(d - 2 * s.xOut, d, 1)
+  if (c.fadeIn) region(s.xIn, s.xIn + c.fadeIn, 24)
+  if (c.fadeOut) region(s.xIn + dur - c.fadeOut, s.xIn + dur, 24)
+  return [...new Set(pts.filter((p) => p >= 0 && p <= d))].sort((a, b) => a - b)
 }
 
 /**
- * Toca o áudio da Montagem (das prévias mono do ffmpeg) com corte exato, fades e Emendas.
+ * Toca o áudio da Montagem (das prévias mono do ffmpeg) com corte exato, fades e crossfades.
  * O vídeo só acompanha o relógio daqui.
  */
 export class MontageEngine {
@@ -159,8 +211,7 @@ export class MontageEngine {
       const g = gain.gain
       g.setValueAtTime(s.gain * envAt(s, rel0), when)
       const d = s.t1 - s.t0
-      // pontos do envelope: fim do fade de entrada e começo do de saída
-      for (const p of [s.fin, d - s.fout, d]) {
+      for (const p of envPoints(s)) {
         if (p <= rel0 || p > d) continue
         g.linearRampToValueAtTime(s.gain * envAt(s, p), when + (p - rel0))
       }

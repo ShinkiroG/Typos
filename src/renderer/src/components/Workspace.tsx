@@ -1637,7 +1637,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
                   <span>R</span><span>gravar na faixa armada</span>
                   <span>V / C</span><span>seleção / lâmina</span>
                   <span>S</span><span>dividir no playhead</span>
-                  <span>E</span><span>Emenda no corte</span>
+                  <span>E</span><span>Crossfade no corte</span>
                   <span>Delete / Shift+Delete</span><span>apagar / apagar e juntar</span>
                   <span>← → / Shift+← →</span><span>quadro a quadro / de corte em corte</span>
                   <span>+ / -</span><span>zoom</span>

@@ -21,7 +21,7 @@ const greeting = () => {
 const TIPS = [
   'Ctrl+1 a Ctrl+6 trocam o tipo do bloco: capítulo, fala, prompt, transição, sobe som, sonora.',
   'Selecione um trecho e clique em Prompt na bolha de formatação pra prender um pedido de motion naquele pedaço.',
-  'Na Montagem, C liga a lâmina, S corta no cursor, E faz a Emenda entre dois cortes e R grava.',
+  'Na Montagem, C liga a lâmina, S corta no cursor, E faz o crossfade entre dois cortes e R grava.',
   'Pastas ⭐ e bibliotecas de som favoritas são as que o Claude usa com mais frequência no Render.',
   'No Render, prévia a 25% sai em segundos; deixe o Full HD pra versão final.',
   'Capítulos viram lettering capitular: clique com o botão direito no capítulo pra trocar.',
