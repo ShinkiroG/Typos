@@ -67,7 +67,7 @@ interface Props {
   /** blocos do roteiro, na ordem (pro corte automático achar cada frase) */
   getBlocks: () => ScriptBlock[]
   /** grava os tempos da narração nos blocos do roteiro; devolve quantas falas mudaram */
-  onSyncScript: (d: MontageData) => number
+  onSyncScript: (d: MontageData) => Promise<number>
   /** pasta do projeto (as gravações vão pra assets/gravacoes) */
   dir: string
   /** velocidade de fala (rolagem do teleprompter) */
@@ -1731,12 +1731,9 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
         <span className="mt-grow" />
         <button
           className="btn small primary"
-          disabled={!data.clips.some((c) => c.block !== undefined)}
-          title="Grava o tempo real de cada fala (e das pausas) no roteiro. A timeline do roteiro passa a tocar esta narração."
-          onClick={() => {
-            const n = onSyncScript(dataRef.current)
-            if (!n) alert('Nenhum corte está ligado a uma fala do roteiro. Use o Corte automático primeiro.')
-          }}
+          disabled={!data.clips.length}
+          title="Troca o texto escrito das falas pelo que foi falado na narração (improvisos entram, o que não foi dito sai). Só o texto."
+          onClick={() => onSyncScript(dataRef.current)}
         >
           <FileCheck2 size={13} /> Atualizar roteiro
         </button>
