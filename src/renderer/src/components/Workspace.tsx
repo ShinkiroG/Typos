@@ -57,7 +57,8 @@ import {
   letteringOn,
   letteringAttr,
   inlineMd,
-  mdToJson
+  mdToJson,
+  placeMenu
 } from '../lib'
 import { LibraryPanel, SNIPPET_MIME } from './LibraryPanel'
 import { StyleStudio } from '../style/StyleStudio'
@@ -1351,13 +1352,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         <div
           className="ctx-menu"
           style={{ left: menu.x, top: menu.y }}
-          ref={(el) => {
-            // não deixa o menu sair da tela
-            if (!el) return
-            const r = el.getBoundingClientRect()
-            if (r.bottom > window.innerHeight - 8) el.style.top = `${Math.max(8, window.innerHeight - r.height - 8)}px`
-            if (r.right > window.innerWidth - 8) el.style.left = `${Math.max(8, window.innerWidth - r.width - 8)}px`
-          }}
+          ref={(el) => placeMenu(el, menu.x, menu.y)}
           onMouseDown={(e) => {
             // mantém o foco no texto (a troca da palavra acontece onde está o cursor)
             e.preventDefault()

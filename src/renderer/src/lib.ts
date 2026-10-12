@@ -697,3 +697,24 @@ export function defaultMontage(): MontageData {
     spliceDefault: 0.02
   }
 }
+
+/**
+ * Posiciona um menu de contexto (position: fixed) no ponto do clique sem deixá-lo sair da janela:
+ * se não couber embaixo, abre para cima; se não couber à direita, abre para a esquerda; e,
+ * se mesmo assim não couber, encosta na borda (com rolagem quando for mais alto que a janela).
+ * Use como ref callback: ref={(el) => placeMenu(el, menu.x, menu.y)}
+ */
+export function placeMenu(el: HTMLElement | null, x: number, y: number, margin = 8) {
+  if (!el) return
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  el.style.maxHeight = `${vh - margin * 2}px`
+  el.style.overflowY = 'auto'
+  const { width, height } = el.getBoundingClientRect()
+  let left = x + width > vw - margin ? x - width : x
+  let top = y + height > vh - margin ? y - height : y
+  left = Math.max(margin, Math.min(left, vw - width - margin))
+  top = Math.max(margin, Math.min(top, vh - height - margin))
+  el.style.left = `${left}px`
+  el.style.top = `${top}px`
+}

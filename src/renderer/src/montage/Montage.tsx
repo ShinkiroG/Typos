@@ -36,7 +36,7 @@ import {
   ArrowDown,
   Sparkles
 } from 'lucide-react'
-import { api, clipDur, clipEndT, fileUrl, uid, type MontageBin, type MontageClip, type MontageData, type MontageMedia } from '../lib'
+import { api, clipDur, clipEndT, fileUrl, placeMenu, uid, type MontageBin, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
 import { Recorder } from '../audio'
 import { askText } from '../components/AskDialog'
@@ -1275,7 +1275,12 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
       </section>
 
       {areaMenu && (
-        <div className="ctx-menu" style={{ left: areaMenu.x, top: areaMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <div
+          className="ctx-menu"
+          style={{ left: areaMenu.x, top: areaMenu.y }}
+          ref={(el) => placeMenu(el, areaMenu.x, areaMenu.y)}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
           <div className="ctx-label">{curBin?.name}</div>
           <button
             onClick={() => {
@@ -1305,7 +1310,12 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
       )}
       {catsOpen && <CategoriesModal data={data} onClose={() => setCatsOpen(false)} onSave={(bins, media) => change({ ...dataRef.current, bins, media })} />}
       {folderMenu && (
-        <div className="ctx-menu" style={{ left: folderMenu.x, top: folderMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <div
+          className="ctx-menu"
+          style={{ left: folderMenu.x, top: folderMenu.y }}
+          ref={(el) => placeMenu(el, folderMenu.x, folderMenu.y)}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
           <button
             onClick={() => {
               renameFolder(folderMenu.id)
@@ -1596,14 +1606,8 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           return (
             <div
               className="ctx-menu"
-              style={{ left: clipMenu.x, top: clipMenu.y, maxHeight: window.innerHeight - 16, overflowY: 'auto' }}
-              ref={(el) => {
-                // mede o menu de verdade: se não couber embaixo, sobe (e nunca sai da tela)
-                if (!el) return
-                const r = el.getBoundingClientRect()
-                if (r.bottom > window.innerHeight - 8) el.style.top = `${Math.max(8, window.innerHeight - r.height - 8)}px`
-                if (r.right > window.innerWidth - 8) el.style.left = `${Math.max(8, window.innerWidth - r.width - 8)}px`
-              }}
+              style={{ left: clipMenu.x, top: clipMenu.y }}
+              ref={(el) => placeMenu(el, clipMenu.x, clipMenu.y)}
               onMouseDown={(e) => e.stopPropagation()}
             >
               <div className="ctx-label">{one ? m?.name ?? 'corte' : `${targets.length} cortes`}</div>

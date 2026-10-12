@@ -21,7 +21,8 @@ import {
   type Segment,
   type TimelineAsset,
   type Track,
-  absPath
+  absPath,
+  placeMenu
 } from '../lib'
 import { Boxes, Plus, Link2, X as XIcon } from 'lucide-react'
 import { FILE_MIME } from './FoldersPanel'
@@ -1130,7 +1131,12 @@ export function Timeline({
       </div>
 
       {tlMenu && (
-        <div className="ctx-menu" style={{ left: tlMenu.x, top: tlMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <div
+          className="ctx-menu"
+          style={{ left: tlMenu.x, top: tlMenu.y }}
+          ref={(el) => placeMenu(el, tlMenu.x, tlMenu.y)}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
           {tlMenu.lane === 'pause' && (
             <>
               <button
