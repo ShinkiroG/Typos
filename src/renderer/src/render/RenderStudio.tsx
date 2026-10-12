@@ -7,7 +7,6 @@ import {
   Loader2,
   RefreshCw,
   FileText,
-  Image as ImageIcon,
   Mic,
   Film,
   AudioLines,
@@ -18,7 +17,7 @@ import {
   Sparkles,
   Music
 } from 'lucide-react'
-import { api, absPath, fileUrl, RESOLUTIONS, type Attachment, type Format, type MontageData, type MontageBin, type TimelineAsset } from '../lib'
+import { api, fileUrl, RESOLUTIONS, type Format, type MontageData, type MontageBin, type TimelineAsset } from '../lib'
 import './render.css'
 
 /**
@@ -32,13 +31,14 @@ interface Props {
   title: string
   format?: Format
   montage: MontageData
-  timelineAssets: TimelineAsset[]
+  /** trilha marcada no Roteiro: não vai mais pro render (o roteiro não mexe no vídeo) */
+  timelineAssets?: TimelineAsset[]
   getDoc: () => JSONContent | undefined
   save: () => Promise<void>
 }
 
 type Check = { path: string; ok: boolean; files?: number; error?: string }
-type GroupId = 'script' | 'attach' | 'narration' | 'edit' | 'raw' | 'sfx' | 'track' | 'style'
+type GroupId = 'script' | 'narration' | 'edit' | 'raw' | 'sfx' | 'style'
 interface Group {
   id: GroupId
   label: string
@@ -63,13 +63,17 @@ const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
 const r2 = (n: number) => Math.round(n * 100) / 100
 
 /** todos os nós de um JSON do TipTap */
-function walk(n: JSONContent | undefined, f: (n: JSONContent) => void) {
-  if (!n) return
-  f(n)
-  n.content?.forEach((c) => walk(c, f))
+/**
+ * Do roteiro, o render só recebe as falas, em texto puro: é o script de referência pra acertar
+ * nomes e termos ao ouvir a narração. Prompts, transições, capítulos e anexos ficam no Roteiro
+ * (servem pra gravar), não mandam no vídeo.
+ */
+function spokenLines(doc: JSONContent | undefined): string[] {
+  const text = (n: JSONContent): string => (n.type === 'text' ? (n.text ?? '') : n.type === 'hardBreak' ? ' ' : (n.content ?? []).map(text).join(''))
+  return (doc?.content ?? []).filter((n) => n.type === 'paragraph').map((n) => text(n).replace(/\s+/g, ' ').trim()).filter(Boolean)
 }
 
-export function RenderStudio({ active, dir, title, format, montage, timelineAssets, getDoc, save }: Props) {
+export function RenderStudio({ active, dir, title, format, montage, getDoc, save }: Props) {
   const [quality, setQuality] = useState(loadQuality)
   const [off, setOff] = useState<Set<GroupId>>(new Set())
   const [checks, setChecks] = useState<Record<string, Check>>({})
@@ -115,20 +119,10 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     const roleOfBin = (id: string) => rootOf(binById.get(id))?.role
     const mediaById = new Map(montage.media.map((m) => [m.id, m]))
 
-    // roteiro
-    let falas = 0
-    let prompts = 0
-    let chapters = 0
-    const attachments: Attachment[] = []
-    walk(doc, (n) => {
-      if (n.type === 'paragraph' && n.content?.length) falas++
-      if (n.type === 'prompt') prompts++
-      if (n.type === 'chapter') chapters++
-      const a = n.attrs?.attachments as Attachment[] | undefined
-      if (Array.isArray(a)) attachments.push(...a)
-    })
+    // roteiro: só as falas
+    const falas = spokenLines(doc)
+    const palavras = falas.reduce((s, l) => s + l.split(' ').length, 0)
 
-    const STATUS: Record<string, string> = { ref: 'referência', aprovado: 'aprovado', recortar: 'RECORTAR', regerar: 'REGERAR' }
     const narrClips = montage.clips.filter((c) => roleOfBin(mediaById.get(c.media)?.bin ?? '') === 'narration')
     const narrDur = narrClips.reduce((s, c) => s + c.out - c.in, 0)
     const editEnd = montage.clips.reduce((s, c) => Math.max(s, c.start + c.out - c.in), 0)
@@ -139,7 +133,6 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     const rawLinked = linkedIn('raw')
     const sfx = inRole('sfx')
     const sfxLinked = linkedIn('sfx')
-    const track = timelineAssets.filter((a) => a.path)
     const m = format?.motion
     const styleItems: Group['items'] = []
     if (format?.rules?.trim()) styleItems.push({ label: 'Regras do formato', note: format.rules.trim().slice(0, 90) })
@@ -153,18 +146,11 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     return [
       {
         id: 'script',
-        label: 'Roteiro',
+        label: 'Script (falas do roteiro)',
         icon: <FileText size={15} />,
-        summary: `${falas} falas · ${chapters} capítulos · ${prompts} prompts`,
-        items: [{ label: 'roteiro.md (texto, prompts, transições e tempos)', path: dir + '\\roteiro.md' }]
-      },
-      {
-        id: 'attach',
-        label: 'Arquivos escolhidos a dedo',
-        icon: <ImageIcon size={15} />,
-        summary: `${attachments.length} anexos nos prompts`,
-        items: attachments.map((a) => ({ label: a.name, path: absPath(a), note: a.status ? STATUS[a.status] ?? a.status : undefined })),
-        empty: !attachments.length
+        summary: `${falas.length} falas · ${palavras} palavras · só como referência de nomes e termos`,
+        items: [],
+        empty: !falas.length
       },
       {
         id: 'narration',
@@ -178,7 +164,7 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
         id: 'edit',
         label: 'Timeline de edição',
         icon: <Film size={15} />,
-        summary: montage.clips.length ? `${montage.clips.length} clipes em ${montage.tracks.length} faixas · ${fmtT(editEnd)}` : 'vazia (o Claude monta pelo roteiro)',
+        summary: montage.clips.length ? `${montage.clips.length} clipes em ${montage.tracks.length} faixas · ${fmtT(editEnd)}` : 'vazia (o Claude monta pela narração)',
         items: montage.tracks.map((t) => ({ label: t.name, note: `${montage.clips.filter((c) => c.track === t.id).length} clipes${t.muted ? ' · mudo' : ''}` })),
         empty: !montage.clips.length
       },
@@ -205,14 +191,6 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
         empty: !sfx.length && !sfxLinked.length
       },
       {
-        id: 'track',
-        label: 'Trilha do roteiro',
-        icon: <Music size={15} />,
-        summary: `${track.length} músicas/efeitos marcados no texto`,
-        items: track.map((a) => ({ label: a.name, path: absPath({ id: a.id, name: a.name, path: a.path! }) })),
-        empty: !track.length
-      },
-      {
         id: 'style',
         label: 'Estilo do formato',
         icon: <Palette size={15} />,
@@ -221,7 +199,7 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
         empty: !styleItems.length
       }
     ]
-  }, [doc, montage, timelineAssets, format, dir])
+  }, [doc, montage, format, dir])
 
   const allPaths = useMemo(() => [...new Set(groups.flatMap((g) => g.items.map((i) => i.path).filter(Boolean) as string[]))], [groups])
 
@@ -267,12 +245,13 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     }
     if (on('script'))
       out.push(
-        '## Roteiro',
-        `${dir}\\roteiro.md: ${g('script').summary}.`,
-        'As falas são a narração. [PROMPT] e [PROMPT NO TRECHO] dizem o que mostrar na tela naquele momento; [TRANSIÇÃO] e [SOBE SOM] são instruções de edição; capítulos com LETTERING viram um título capitular animado.',
+        '## Script (as falas que o autor escreveu, só como referência)',
+        'Serve pra acertar nomes e termos ao transcrever/ouvir a narração. O que vale é o que foi FALADO na narração: improvisos e mudanças em relação a este texto são respeitados. Não leia roteiro.md nem roteiro.json: o roteiro é só a ferramenta de gravação do autor e não define nada do vídeo.',
+        '```text',
+        ...spokenLines(doc),
+        '```',
         ''
       )
-    if (on('attach')) out.push('## Arquivos escolhidos a dedo (anexos dos prompts: use exatamente onde o prompt pede)', ...g('attach').items.map(line), '')
     if (on('edit')) {
       const media = new Map(montage.media.map((m) => [m.id, m]))
       const tl = montage.tracks.map((t) => ({
@@ -290,13 +269,12 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
             ganhoDb: c.gainDb || undefined,
             fadeIn: c.fadeIn || undefined,
             fadeOut: c.fadeOut || undefined,
-            emenda: c.splice || undefined,
-            bloco: c.block
+            emenda: c.splice || undefined
           }))
       }))
       out.push(
         '## Timeline de edição (a montagem do autor: siga à risca)',
-        '`inicio` = segundo na timeline; `de`/`ate` = trecho do arquivo; `emenda` = crossfade curto com o clipe anterior; `bloco` = índice do bloco do roteiro que esse trecho fala.',
+        '`inicio` = segundo na timeline; `de`/`ate` = trecho do arquivo; `emenda` = crossfade curto com o clipe anterior.',
         montage.norm ? `Normalização da narração: ${montage.norm} (peak = pico em dBFS, lufs = volume percebido).` : '',
         '```json',
         JSON.stringify(tl, null, 1),
@@ -304,10 +282,9 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
         ''
       )
     } else if (on('narration')) out.push('## Narração cortada', ...g('narration').items.map(line), '')
-    if (!on('edit')) out.push('A timeline de edição está vazia: monte a ordem pelo roteiro, usando a narração e o material disponível.', '')
-    if (on('raw')) out.push('## Material bruto (B-roll: escolha o que combina com cada prompt; pastas ⭐ são as preferidas)', ...g('raw').items.map(line), '')
+    if (!on('edit')) out.push('A timeline de edição está vazia: monte na ordem da narração, usando o material disponível.', '')
+    if (on('raw')) out.push('## Material bruto (B-roll: escolha o que combina com cada trecho da narração; pastas ⭐ são as preferidas)', ...g('raw').items.map(line), '')
     if (on('sfx')) out.push('## Áudios e SFX (bibliotecas ⭐ são as referências essenciais de som: use com mais frequência)', ...g('sfx').items.map(line), '')
-    if (on('track')) out.push('## Trilha marcada no roteiro', ...g('track').items.map(line), '')
     if (on('style')) {
       const m = format?.motion
       out.push('## Estilo', ...g('style').items.filter((i) => i.path).map(line))
@@ -327,7 +304,6 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     out.push(
       '## Como fazer',
       '- É uma PRÉVIA: priorize ter o vídeo inteiro montado e sincronizado com a narração; capriche nos letterings e textos na tela (legendas .ass com as fontes instaladas) e nos cortes de B-roll.',
-      '- Onde o prompt pede algo que não existe nos arquivos, use um cartão simples (fundo do estilo + texto do prompt) pra marcar o lugar.',
       '- Áudio: narração na frente, música por baixo (uns -18 dB), SFX nos pontos de impacto. Sem clipping.'
     )
     return out.filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n')
@@ -386,32 +362,23 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
     }
     const mediaById = new Map(montage.media.map((m) => [m.id, m]))
     const used = (pred: (m: (typeof montage.media)[number]) => boolean) => montage.clips.map((c) => mediaById.get(c.media)).filter((m): m is NonNullable<typeof m> => !!m && pred(m))
-    const attach: Attachment[] = []
-    walk(doc, (n) => {
-      const a = n.attrs?.attachments as Attachment[] | undefined
-      if (Array.isArray(a)) attach.push(...a)
-    })
     const uniq = (ps: (string | undefined)[]) => [...new Set(ps.filter(Boolean) as string[])]
 
     const videoMedia = [...used((m) => m.kind !== 'audio'), ...montage.media.filter((m) => m.kind !== 'audio' && roleOf(m.bin) === 'raw')]
-    const videoAttach = attach.filter((a) => a.kind === 'video' || a.kind === 'image' || !a.kind)
     const narr = used((m) => roleOf(m.bin) === 'narration')
     const narrDur = montage.clips.filter((c) => roleOf(mediaById.get(c.media)?.bin ?? '') === 'narration').reduce((s, c) => s + c.out - c.in, 0)
     const musicMedia = used((m) => m.kind === 'audio' && roleOf(m.bin) !== 'narration' && roleOf(m.bin) !== 'sfx')
-    const musicTrack = timelineAssets.filter((a) => a.path && a.kind === 'music')
     const sfxMedia = montage.media.filter((m) => roleOf(m.bin) === 'sfx')
     const sfxLinked = montage.bins.filter((b) => b.linked && roleOf(b.id) === 'sfx')
-    const sfxTrack = timelineAssets.filter((a) => a.path && a.kind !== 'music')
-    const asset = (a: TimelineAsset) => absPath({ id: a.id, name: a.name, path: a.path! })
 
     return [
       {
         id: 'video',
         label: 'Vídeos',
         icon: <Film size={18} />,
-        count: uniq(videoMedia.map((m) => m.path)).length + videoAttach.length,
-        detail: `${uniq(videoMedia.map((m) => m.path)).length} na montagem · ${videoAttach.length} anexos`,
-        paths: uniq([...videoMedia.map((m) => m.path), ...videoAttach.map(absPath)]),
+        count: uniq(videoMedia.map((m) => m.path)).length,
+        detail: `${uniq(videoMedia.map((m) => m.path)).length} na montagem`,
+        paths: uniq(videoMedia.map((m) => m.path)),
         required: true
       },
       {
@@ -427,22 +394,22 @@ export function RenderStudio({ active, dir, title, format, montage, timelineAsse
         id: 'music',
         label: 'Músicas',
         icon: <Music size={18} />,
-        count: uniq(musicMedia.map((m) => m.path)).length + musicTrack.length,
-        detail: `${uniq(musicMedia.map((m) => m.path)).length} na timeline · ${musicTrack.length} no roteiro`,
-        paths: uniq([...musicMedia.map((m) => m.path), ...musicTrack.map(asset)]),
+        count: uniq(musicMedia.map((m) => m.path)).length,
+        detail: `${uniq(musicMedia.map((m) => m.path)).length} na timeline`,
+        paths: uniq(musicMedia.map((m) => m.path)),
         required: false
       },
       {
         id: 'sfx',
         label: 'Efeitos sonoros',
         icon: <AudioLines size={18} />,
-        count: sfxMedia.length + sfxLinked.length + sfxTrack.length,
-        detail: `${sfxLinked.length} bibliotecas${sfxLinked.some((b) => b.star) ? ' ⭐' : ''} · ${sfxMedia.length + sfxTrack.length} arquivos`,
-        paths: uniq([...sfxLinked.map((b) => b.linked), ...sfxMedia.map((m) => m.path), ...sfxTrack.map(asset)]),
+        count: sfxMedia.length + sfxLinked.length,
+        detail: `${sfxLinked.length} bibliotecas${sfxLinked.some((b) => b.star) ? ' ⭐' : ''} · ${sfxMedia.length} arquivos`,
+        paths: uniq([...sfxLinked.map((b) => b.linked), ...sfxMedia.map((m) => m.path)]),
         required: false
       }
     ]
-  }, [doc, montage, timelineAssets])
+  }, [montage])
 
   // os caminhos do checklist também passam pela conferência de acesso
   const extraPaths = checklist.flatMap((c) => c.paths).filter((p) => !allPaths.includes(p))
