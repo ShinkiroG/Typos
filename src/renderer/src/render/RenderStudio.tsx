@@ -171,7 +171,10 @@ export function RenderStudio({ active, dir, title, format, montage, lang, getDoc
         label: 'Blocos de instrução',
         icon: <Boxes size={15} />,
         summary: `${blocks.length} blocos · ${blocks.reduce((s, b) => s + (b.attachments?.length ?? 0), 0)} anexos`,
-        items: blocks.flatMap((b) => (b.attachments ?? []).map((a) => ({ label: a.name, path: a.path, note: a.use === 'insert' ? 'inserir' : 'referência' }))),
+        items: blocks.flatMap((b) => [
+          ...(b.approved && b.preview?.html ? [{ label: 'prévia aprovada', path: b.preview.html, note: 'reaproveitar' }] : []),
+          ...(b.attachments ?? []).map((a) => ({ label: a.name, path: a.path, note: a.use === 'insert' ? 'inserir' : 'referência' }))
+        ]),
         empty: !blocks.length
       },
       {
@@ -393,13 +396,14 @@ export function RenderStudio({ active, dir, title, format, montage, lang, getDoc
         out.push('', `### Bloco ${i + 1} · ${ts(b.start)} → ${ts(b.end)} (${r2(b.end - b.start)} s)`)
         if (b.text.trim()) out.push(b.dynamic ? 'Motion dinâmico, com esta direção:' : 'Motion pedido:', b.text.trim())
         else out.push('Motion dinâmico: deduza o motion do que é falado nesse trecho (veja a transcrição).')
+        if (b.approved && b.preview?.html) out.push(`- PRÉVIA APROVADA pelo autor: ${b.preview.html}. Reaproveite essa animação (mesma composição e timing), só na resolução e fps do vídeo.`)
         for (const a of b.attachments ?? []) {
           const c = checks[a.path]
           const bad = c && !c.ok ? ' (SEM ACESSO)' : ''
           out.push(
             a.use === 'insert'
-              ? `- INSERIR: ${a.path}${bad}. Mostre no vídeo e trabalhe em cima (setas, círculos, zoom, destaques), seguindo as instruções.`
-              : `- REFERÊNCIA: ${a.path}${bad}. Não mostre o arquivo: recrie em motion, com design bonito no estilo do vídeo (ex.: um clone estilizado da página), animado conforme as instruções.`
+              ? `- INSERIR: ${a.path}${bad}${a.note ? ` (${a.note})` : ''}. Mostre no vídeo e trabalhe em cima (setas, círculos, zoom, destaques), seguindo as instruções.`
+              : `- REFERÊNCIA: ${a.path}${bad}${a.note ? ` (${a.note})` : ''}. Não mostre o arquivo: recrie em motion, com design bonito no estilo do vídeo (ex.: um clone estilizado da página), animado conforme as instruções.`
           )
         }
       })

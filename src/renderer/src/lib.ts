@@ -681,9 +681,11 @@ export interface MontageData {
 
 /** anexo de um bloco de instrução: imagem/vídeo pra INSERIR no vídeo ou só REFERÊNCIA pro motion */
 export interface InstructionAttachment {
+  /** caminho absoluto (o leitor do render já resolve o relativo à pasta do projeto) */
   path: string
   name: string
   use: 'insert' | 'ref'
+  note?: string
 }
 /** bloco de instrução na timeline: o render segue o texto dele (e nada do roteiro) nesse trecho */
 export interface InstructionBlock {
@@ -698,6 +700,9 @@ export interface InstructionBlock {
   /** motion dinâmico: o Claude deduz da fala do trecho */
   dynamic?: boolean
   attachments?: InstructionAttachment[]
+  /** prévia aprovada: o HTML da animação pode ser reaproveitado no render */
+  approved?: boolean
+  preview?: { html?: string; video?: string }
 }
 
 export const clipDur = (c: MontageClip) => c.out - c.in

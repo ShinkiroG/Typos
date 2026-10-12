@@ -1,5 +1,5 @@
 import type { JSONContent } from '@tiptap/core'
-import type { InstructionBlock, MontageData, MontageBin } from '../lib'
+import { absPath, type InstructionBlock, type MontageData, type MontageBin } from '../lib'
 
 /**
  * Plano do render: a timeline vira uma lista de etapas com arquivo de saída conhecido
@@ -59,7 +59,15 @@ export function instructionBlocks(montage: MontageData): InstructionBlock[] {
         dynamic: !!b?.dynamic,
         attachments: (Array.isArray(b?.attachments) ? b.attachments : [])
           .filter((a: any) => a?.path)
-          .map((a: any) => ({ path: String(a.path), name: String(a.name ?? String(a.path).split(/[\\/]/).pop()), use: a.use === 'insert' ? 'insert' : 'ref' }))
+          .map((a: any) => ({
+            // anexos seguem a regra do Attachment: relativo à pasta do projeto, a não ser que external
+            path: /^([a-z]:[\\/]|[\\/])/i.test(String(a.path)) ? String(a.path) : absPath(a),
+            name: String(a.name ?? String(a.path).split(/[\\/]/).pop()),
+            use: a.use === 'insert' ? 'insert' : 'ref',
+            note: a.note ? String(a.note) : undefined
+          })),
+        approved: !!b?.approved,
+        preview: b?.preview?.html || b?.preview?.video ? { html: b.preview.html, video: b.preview.video } : undefined
       } as InstructionBlock
     })
     .filter((b) => b.end > b.start)
