@@ -192,7 +192,7 @@ export function SettingsModal({ onClose, currentDir, onCleanAssets }: { onClose:
           {!info.hasElevenLabsKey && saved && <p className="muted small">{saved}</p>}
         </section>
 
-        <AiSection />
+        <AiSection currentDir={currentDir} />
 
         <PrefsSection />
 

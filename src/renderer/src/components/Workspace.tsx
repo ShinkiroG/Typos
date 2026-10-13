@@ -268,6 +268,13 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [toast, setToast] = useState(() =>
     repaired.current ? 'O corte automático foi pra faixa "Corte automático", logo abaixo da narração original (que ficou silenciada pra comparar: clique no alto-falante da faixa).' : ''
   )
+  const [aiUsage, setAiUsage] = useState<Parameters<Parameters<typeof api.onAiUsage>[0]>[0] | null>(null)
+  useEffect(() => {
+    api.onAiUsage(setAiUsage)
+  }, [])
+  useEffect(() => {
+    api.aiSetProject(draft ? null : dir)
+  }, [dir, draft])
   const [spell, setSpell] = useState<{ word: string; from: number; to: number; suggestions: string[] | null } | null>(null)
 
   const [mode, setMode] = useState<'script' | 'montage' | 'style' | 'render' | 'clips'>('script')
@@ -1511,6 +1518,18 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             <span className="stat t-sonora">{stats.sonoras} pausas</span>
           </>
         )}
+        {aiUsage && (
+          <button
+            className={'stat stat-btn ai-usage' + (aiUsage.cap !== undefined && (aiUsage.spent ?? 0) >= aiUsage.cap ? ' over' : '')}
+            title="Último pedido de IA: tempo e custo (custo só aparece em quem cobra por uso). Clique pra ver o gasto do projeto e o limite."
+            onClick={onOpenSettings}
+          >
+            ✨ IA {aiUsage.ok ? '' : '(falhou) '}
+            {aiUsage.ms < 60000 ? `${Math.max(1, Math.round(aiUsage.ms / 1000))} s` : formatTime(aiUsage.ms / 1000)}
+            {aiUsage.provider === 'claude-code' ? ' · no seu plano' : aiUsage.cost === null ? ' · custo ?' : ` · ${usd(aiUsage.cost)}`}
+            {aiUsage.spent !== undefined && ` · projeto ${usd(aiUsage.spent)}${aiUsage.cap !== undefined ? ' de ' + usd(aiUsage.cap) : ''}`}
+          </button>
+        )}
       </footer>
 
       {menu && (menuNode || spell || menu.sel || menu.ref || menu.prompt || menu.pos >= -1) && (
@@ -1994,3 +2013,6 @@ function versionWhen(at: number) {
   const hm = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
   return d.toDateString() === new Date().toDateString() ? `hoje ${hm}` : `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${hm}`
 }
+
+/** dólar curto: centavos de fração quando é pouco (US$ 0,031) */
+const usd = (n: number) => 'US$ ' + n.toFixed(n < 1 ? 3 : 2).replace('.', ',')

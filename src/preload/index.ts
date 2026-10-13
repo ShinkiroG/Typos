@@ -112,6 +112,14 @@ const api = {
     aspect: string
   ): Promise<{ attachment: { id: string; path: string; name: string; kind: 'image' }; provider: AiProvider } | { error: string }> =>
     ipcRenderer.invoke('ai:image', dir, prompt, aspect),
+  // quanto cada pedido de IA levou e custou, e o gasto/limite do projeto
+  aiSetProject: (dir: string | null) => ipcRenderer.invoke('ai:project', dir),
+  aiBudget: (dir: string): Promise<{ spent: number; cap?: number }> => ipcRenderer.invoke('ai:budget', dir),
+  aiSetBudget: (dir: string, cap: number | null): Promise<{ spent: number; cap?: number }> => ipcRenderer.invoke('ai:setBudget', dir, cap),
+  onAiUsage: (cb: (u: { provider: AiProvider; ms: number; ok: boolean; cost: number | null; spent?: number; cap?: number }) => void) => {
+    ipcRenderer.removeAllListeners('ai:usage')
+    ipcRenderer.on('ai:usage', (_e, u) => cb(u))
+  },
 
   // Montagem (ffmpeg no main)
   ffmpegInfo: (force?: boolean): Promise<{ path: string; version: string; whisper: boolean } | null> => ipcRenderer.invoke('media:ffmpeg', force),
@@ -121,6 +129,8 @@ const api = {
   ): Promise<{ duration: number; hasVideo: boolean; hasAudio: boolean; width?: number; height?: number; fps?: number } | { error: string }> =>
     ipcRenderer.invoke('media:probe', path),
   proxyAudio: (path: string): Promise<string | { error: string }> => ipcRenderer.invoke('media:proxy', path),
+  /** cópia 720p só pra prévia de vídeo pesado (4K, HEVC, ProRes…); null = o original já toca leve */
+  proxyVideo: (path: string): Promise<string | null> => ipcRenderer.invoke('media:proxyVideo', path),
   loudness: (path: string, start: number, dur: number): Promise<{ i: number; tp: number } | null> => ipcRenderer.invoke('media:loudness', path, start, dur),
   mediaExists: (paths: string[]): Promise<boolean[]> => ipcRenderer.invoke('media:exists', paths),
   missingMedia: (paths: string[]): Promise<string[]> => ipcRenderer.invoke('media:missing', paths),

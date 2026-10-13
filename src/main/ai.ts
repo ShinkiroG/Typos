@@ -5,6 +5,7 @@ import { spawn, execFile } from 'child_process'
 import { randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { loadSettings, saveSettings, type AiSettings } from './settings'
+import { chargeAnthropic, chargeOpenAI, initAiMeter, metered } from './aiMeter'
 
 /**
  * IA do Typos, sem depender de um fornecedor só. O app pede uma TAREFA ("texto" ou
@@ -118,6 +119,7 @@ async function textAnthropic(s: AiSettings, job: TextJob) {
     system: 'Você ajuda a escrever roteiros de vídeo para YouTube, em português do Brasil.',
     messages: [{ role: 'user', content: `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}` }]
   })
+  chargeAnthropic(res.model, res.usage)
   if (res.stop_reason === 'refusal') throw new Error('O Claude recusou esse pedido.')
   return res.content
     .map((b) => (b.type === 'text' ? b.text : ''))
@@ -145,12 +147,15 @@ async function textOpenAI(s: AiSettings, job: TextJob) {
       { role: 'user', content: `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}` }
     ]
   })
+  chargeOpenAI(String(j?.model ?? ''), j?.usage)
   return String(j?.choices?.[0]?.message?.content ?? '').trim()
 }
 
 async function imageOpenAI(s: AiSettings, prompt: string, aspect: string) {
   const size = aspect === '9:16' || aspect === '4:5' ? '1024x1536' : aspect === '1:1' ? '1024x1024' : '1536x1024'
-  const j = await openaiFetch(s, 'images/generations', { model: s.openaiImageModel || DEFAULT_MODELS.openaiImage, prompt, size, n: 1 })
+  const model = s.openaiImageModel || DEFAULT_MODELS.openaiImage
+  const j = await openaiFetch(s, 'images/generations', { model, prompt, size, n: 1 })
+  chargeOpenAI(model, j?.usage)
   const b64 = j?.data?.[0]?.b64_json
   if (!b64) throw new Error('A OpenAI não devolveu imagem.')
   return Buffer.from(b64, 'base64')
@@ -229,6 +234,7 @@ async function routeFor(task: Task): Promise<ProviderId> {
 }
 
 export function initAi() {
+  initAiMeter()
   ipcMain.handle('ai:status', () => status())
 
   ipcMain.handle('ai:set', async (_e, patch: Partial<AiSettings>) => {
@@ -249,8 +255,9 @@ export function initAi() {
     try {
       const provider = await routeFor('text')
       const s = (await loadSettings()).ai ?? {}
-      const text =
-        provider === 'claude-code' ? await textClaudeCode(s, job) : provider === 'anthropic' ? await textAnthropic(s, job) : await textOpenAI(s, job)
+      const text = await metered(provider, job.dir, () =>
+        provider === 'claude-code' ? textClaudeCode(s, job) : provider === 'anthropic' ? textAnthropic(s, job) : textOpenAI(s, job)
+      )
       return { text, provider }
     } catch (e: any) {
       return { error: String(e?.message ?? e) }
@@ -263,7 +270,7 @@ export function initAi() {
       const provider = await routeFor('image')
       if (!CAPS[provider].includes('image')) throw new Error('A conexão escolhida não gera imagem.')
       const s = (await loadSettings()).ai ?? {}
-      const bytes = await imageOpenAI(s, prompt, aspect)
+      const bytes = await metered(provider, dir, () => imageOpenAI(s, prompt, aspect))
       const name = `ia-${prompt.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30) || 'imagem'}-${randomUUID().slice(0, 8)}.png`
       await fs.mkdir(join(dir, 'assets'), { recursive: true })
       await fs.writeFile(join(dir, 'assets', name), bytes)
@@ -331,6 +338,7 @@ async function motionAnthropic(s: AiSettings, job: MotionTrainJob) {
     fallbacks: 'default',
     messages: [{ role: 'user', content: [...imgs, { type: 'text', text: job.prompt }] }]
   })
+  chargeAnthropic(res.model, res.usage)
   if (res.stop_reason === 'refusal') throw new Error('O Claude recusou esse pedido.')
   return res.content
     .map((b) => (b.type === 'text' ? b.text : ''))
@@ -346,6 +354,7 @@ async function motionOpenAI(s: AiSettings, job: MotionTrainJob) {
     model: s.openaiTextModel || DEFAULT_MODELS.openaiText,
     messages: [{ role: 'user', content: [{ type: 'text', text: job.prompt }, ...imgs] }]
   })
+  chargeOpenAI(String(j?.model ?? ''), j?.usage)
   return String(j?.choices?.[0]?.message?.content ?? '').trim()
 }
 
@@ -354,8 +363,9 @@ export function initMotionAi() {
     try {
       const provider = await routeFor('text')
       const s = (await loadSettings()).ai ?? {}
-      const text =
-        provider === 'claude-code' ? await motionClaudeCode(s, job) : provider === 'anthropic' ? await motionAnthropic(s, job) : await motionOpenAI(s, job)
+      const text = await metered(provider, undefined, () =>
+        provider === 'claude-code' ? motionClaudeCode(s, job) : provider === 'anthropic' ? motionAnthropic(s, job) : motionOpenAI(s, job)
+      )
       return { text, provider }
     } catch (e: any) {
       return { error: String(e?.message ?? e) }
@@ -427,7 +437,7 @@ export function initSfxFinder() {
       ].join('\n')
       const dirs = [...new Set([process.env.USERPROFILE, process.env.ProgramData, process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.CommonProgramFiles, ...hints].filter(Boolean) as string[])]
       const args = ['-p', '--output-format', 'json', '--allowedTools', 'Glob,Grep,Read', ...dirs.flatMap((d) => ['--add-dir', d])]
-      const r = await run(cc.path, args, { cwd: process.env.USERPROFILE, input: prompt, timeoutMs: 15 * 60000 })
+      const r = await metered('claude-code', undefined, () => run(cc.path, args, { cwd: process.env.USERPROFILE, input: prompt, timeoutMs: 15 * 60000 }))
       let parsed: any = null
       try {
         parsed = JSON.parse(r.out)
