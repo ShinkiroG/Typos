@@ -32,7 +32,7 @@ const FLOW = [
   { icon: <PenLine size={18} />, name: 'Roteiro', text: 'Fala, prompts de motion, transições e sobe som, com tempo de leitura.' },
   { icon: <Film size={18} />, name: 'Montagem', text: 'Grave ou importe a narração, corte os silêncios e monte a timeline.' },
   { icon: <Palette size={18} />, name: 'Estilo', text: 'Ensine seu motion ao Claude com referências, fontes e cores.' },
-  { icon: <Clapperboard size={18} />, name: 'Render', text: 'Confira tudo que vai pro Claude e clique em Criar Vídeo.' }
+  { icon: <Clapperboard size={18} />, name: 'Render', text: 'Veja a fila, confira a prévia de cada vídeo e clique em Renderizar.' }
 ]
 
 /** linhas da página que se escreve na abertura (tipo: fala, prompt, sobe som…) */

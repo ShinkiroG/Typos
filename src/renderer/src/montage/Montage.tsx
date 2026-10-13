@@ -96,7 +96,7 @@ interface Props {
   toolbarExtra?: React.ReactNode
   /** proporção do quadro do visualizador ("9:16"): o vídeo preenche e corta as sobras, igual ao export */
   frame?: string
-  /** botão de destaque "Enviar pra fila de render" (põe o vídeo nos exports pendentes do Render) */
+  /** botão de destaque "Enviar pra fila de render" (põe o vídeo na fila do Render) */
   onQueueRender?: () => void
   /** arquivos usados fora desta timeline (recortes do Criar Clipes, vídeo principal): a limpeza não manda pra Lixeira */
   usedElsewhere?: () => Set<string>
@@ -2091,7 +2091,7 @@ export function Montage({
           <button
             className="btn small primary"
             disabled={!data.clips.length}
-            title="Põe o vídeo desta timeline na fila do Render (exports pendentes). Você continua editando; o render sai de lá."
+            title="Põe o vídeo desta timeline na fila do Render. Você continua editando; o render sai de lá."
             onClick={onQueueRender}
           >
             <ListPlus size={13} /> Enviar pra fila de render

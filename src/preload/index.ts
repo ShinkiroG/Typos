@@ -172,6 +172,8 @@ const api = {
     fresh?: boolean
     sub?: string
     fit?: 'contain' | 'cover'
+    exportDir?: string
+    exportName?: string
   }): Promise<{ path?: string; summary: string; seconds: number } | { error: string }> => ipcRenderer.invoke('render:start', job),
   renderStatus: (dir: string): Promise<{ status: 'rodando' | 'interrompido' | 'pronto'; reason?: string; done: number; total: number; pct: number; updated: number } | null> =>
     ipcRenderer.invoke('render:status', dir),
@@ -182,6 +184,10 @@ const api = {
     ipcRenderer.on('render:state', (_e, p) => cb(p))
   },
   renderCancel: () => ipcRenderer.invoke('render:cancel'),
+  /** escolhe a pasta de export (null = cancelou) */
+  renderPickDir: (current?: string): Promise<string | null> => ipcRenderer.invoke('render:pickDir', current),
+  /** os arquivos ainda existem? (pra prévia dos vídeos já renderizados) */
+  renderExists: (paths: string[]): Promise<boolean[]> => ipcRenderer.invoke('render:exists', paths),
   onRenderProgress: (cb: (ev: { kind: 'say' | 'info'; text: string }) => void) => {
     ipcRenderer.removeAllListeners('render:progress')
     ipcRenderer.on('render:progress', (_e, ev) => cb(ev))

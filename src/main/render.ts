@@ -1,5 +1,5 @@
-import { ipcMain, type WebContents } from 'electron'
-import { join, resolve as resolvePath, sep } from 'path'
+import { BrowserWindow, dialog, ipcMain, type WebContents } from 'electron'
+import { basename, join, resolve as resolvePath, sep } from 'path'
 import { promises as fs, existsSync } from 'fs'
 import { spawn, type ChildProcess } from 'child_process'
 import { createHash } from 'crypto'
@@ -76,6 +76,9 @@ export interface RenderJob {
   sub?: string
   /** como o vídeo entra no quadro: contain (padrão) ou cover (preenche e corta, pros recortes verticais) */
   fit?: 'contain' | 'cover'
+  /** pasta de export: o vídeo pronto é copiado pra lá (com exportName) e é essa cópia que volta */
+  exportDir?: string
+  exportName?: string
 }
 
 interface StepState {
@@ -316,7 +319,21 @@ async function start(sender: WebContents, job: RenderJob) {
   await writeState(out, state)
   progress('final')
   const seconds = Math.round((Date.now() - t0) / 1000)
-  return { path: join(out, fin.file), summary: `Vídeo compilado: ${job.parts.length} partes, ${job.width}×${job.height} a ${job.fps} fps.`, seconds }
+  let path = join(out, fin.file)
+  let where = ''
+  if (job.exportDir) {
+    const name = basename(job.exportName || fin.file).replace(/[<>:"/\\|?*\x00-\x1f]/g, '-') || fin.file
+    const dest = join(job.exportDir, /\.mp4$/i.test(name) ? name : name + '.mp4')
+    try {
+      await fs.mkdir(job.exportDir, { recursive: true })
+      await fs.copyFile(path, dest)
+      path = dest
+      where = ` Copiado pra ${job.exportDir}.`
+    } catch (e: any) {
+      where = ` Não deu pra copiar pra pasta de export (${String(e?.message ?? e)}): ficou em render/.`
+    }
+  }
+  return { path, summary: `Vídeo compilado: ${job.parts.length} partes, ${job.width}×${job.height} a ${job.fps} fps.${where}`, seconds }
 }
 
 /** pra mostrar "Continuar" ao abrir o projeto: o que a última rodada deixou pronto */
@@ -350,6 +367,13 @@ export function initRender() {
       busy = false
     }
   })
+  ipcMain.handle('render:pickDir', async (e, current?: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { title: 'Pasta de export dos vídeos', buttonLabel: 'Exportar pra cá', defaultPath: current || undefined, properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] }
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    return r.canceled ? null : (r.filePaths[0] ?? null)
+  })
+  ipcMain.handle('render:exists', (_e, paths: string[]) => paths.map((p) => !!p && existsSync(p)))
   ipcMain.handle('render:cancel', () => {
     cancelled = true
     current?.kill()

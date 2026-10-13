@@ -5,7 +5,8 @@ import { SHORT_TARGET_DEFAULT, type ShortTarget } from '../lib'
 const ASPECTS = [
   { id: '9:16', label: '9:16 · Reels, TikTok, Shorts' },
   { id: '1:1', label: '1:1 · quadrado' },
-  { id: '4:5', label: '4:5 · feed do Instagram' }
+  { id: '4:5', label: '4:5 · feed do Instagram' },
+  { id: '16:9', label: '16:9 · horizontal' }
 ]
 
 /** Antes de abrir o Criar Clipes: tempo mínimo, ideal e máximo dos recortes e a proporção. */
