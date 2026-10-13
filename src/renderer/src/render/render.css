@@ -1,5 +1,8 @@
 /* ---------- workspace Render ---------- */
 .render-studio {
+  /* filho do .montage-layer (flex): sem flex: 1 a largura vinha do conteúdo e sobrava faixa preta à direita */
+  flex: 1;
+  min-width: 0;
   height: 100%;
   overflow-y: auto;
   background:
