@@ -4,5 +4,6 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   main: { plugins: [externalizeDepsPlugin()] },
   preload: { plugins: [externalizeDepsPlugin()] },
-  renderer: { plugins: [react()] }
+  // o electron-vite não minifica o renderer por padrão: o JS ia pro app com ~2,2 MB legível
+  renderer: { plugins: [react()], build: { minify: true } }
 })
