@@ -86,6 +86,16 @@ export function AiSection() {
             onBlur={(e) => e.target.value !== st.models.claudeCodePath && set({ claudeCodePath: e.target.value })}
           />
         </label>
+        <label className="ai-field">
+          Tempo máximo por pedido (minutos)
+          <input
+            type="number"
+            min={1}
+            max={120}
+            defaultValue={st.models.claudeCodeMaxMin}
+            onBlur={(e) => e.target.value !== st.models.claudeCodeMaxMin && set({ claudeCodeMaxMin: e.target.value })}
+          />
+        </label>
       </div>
 
       <div className="ai-card">

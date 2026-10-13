@@ -83,12 +83,17 @@ const api = {
   aiStatus: (): Promise<{
     providers: { id: AiProvider; label: string; caps: ('text' | 'image')[]; configured: boolean; detail: string }[]
     routes: { text: AiProvider | null; image: AiProvider | null }
-    models: { anthropicModel: string; openaiTextModel: string; openaiImageModel: string; claudeCodePath: string }
+    models: { anthropicModel: string; openaiTextModel: string; openaiImageModel: string; claudeCodePath: string; claudeCodeMaxMin: string }
   }> => ipcRenderer.invoke('ai:status'),
   aiSet: (patch: Record<string, string | null>) => ipcRenderer.invoke('ai:set', patch),
   aiTest: (id: AiProvider): Promise<{ ok: boolean; message: string }> => ipcRenderer.invoke('ai:test', id),
   aiText: (job: { instruction: string; input: string; dir?: string }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
     ipcRenderer.invoke('ai:text', job),
+  /** andamento do pedido de texto em curso (por enquanto só o Claude Code avisa) */
+  onAiProgress: (cb: (p: { stage: 'start' | 'thinking' | 'searching' | 'writing'; chars: number; seconds: number }) => void) => {
+    ipcRenderer.removeAllListeners('ai:progress')
+    ipcRenderer.on('ai:progress', (_e, p) => cb(p))
+  },
   aiImage: (
     dir: string,
     prompt: string,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Sparkles, Send, Loader2, FileDiff, Copy, Check, Trash2 } from 'lucide-react'
 import { askAboutScript, requestDraft } from '../review'
+import { api } from '../lib'
 import type { JSONContent } from '@tiptap/core'
 
 const PROVIDER_LABEL: Record<string, string> = { 'claude-code': 'Claude Code', anthropic: 'Claude (API)', openai: 'ChatGPT (API)' }
@@ -38,7 +39,9 @@ export function AiChatPanel({ dir, getLines, save, onDraft }: Props) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(-1)
+  const [progress, setProgress] = useState<{ stage: string; chars: number; seconds: number } | null>(null)
   const end = useRef<HTMLDivElement>(null)
+  useEffect(() => api.onAiProgress((p) => setProgress(p)), [])
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' })
   }, [msgs])
@@ -47,6 +50,7 @@ export function AiChatPanel({ dir, getLines, save, onDraft }: Props) {
     if (!ask.trim() || busy) return
     setText('')
     setBusy(true)
+    setProgress(null)
     setMsgs((m) => [...m, { ask, mode }])
     await save()
     const lines = getLines()
@@ -69,6 +73,16 @@ export function AiChatPanel({ dir, getLines, save, onDraft }: Props) {
       }
     }
     setBusy(false)
+    setProgress(null)
+  }
+
+  const progressText = (mode: Msg['mode']) => {
+    const base = mode === 'draft' ? 'escrevendo a versão revisada… (o roteiro todo pode levar alguns minutos)' : 'pensando…'
+    if (!progress) return base
+    const t = progress.seconds >= 60 ? `${Math.floor(progress.seconds / 60)} min ${progress.seconds % 60}s` : `${progress.seconds}s`
+    if (progress.stage === 'searching') return `pesquisando na web… · ${t}`
+    if (progress.stage === 'writing') return `escrevendo… ${progress.chars.toLocaleString('pt-BR')} caracteres · ${t}`
+    return `${base} · ${t}`
   }
 
   return (
@@ -92,7 +106,7 @@ export function AiChatPanel({ dir, getLines, save, onDraft }: Props) {
             </div>
             {!m.answer && !m.error && (
               <div className="ai-answer muted">
-                <Loader2 size={12} className="spin" /> {m.mode === 'draft' ? 'escrevendo a versão revisada… (o roteiro todo pode levar um minuto)' : 'pensando…'}
+                <Loader2 size={12} className="spin" /> {progressText(m.mode)}
               </div>
             )}
             {m.error && <div className="ai-answer error">{m.error}</div>}
