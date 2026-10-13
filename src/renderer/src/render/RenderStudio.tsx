@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Clapperboard, CheckCircle2, XCircle, Loader2, RefreshCw, Mic, Film, AudioLines, FolderOpen, Square, Sparkles, Music, Boxes, RotateCcw, Play, Type } from 'lucide-react'
-import { api, fileUrl, RESOLUTIONS, type Format, type MontageData } from '../lib'
+import { Clapperboard, CheckCircle2, XCircle, Loader2, RefreshCw, Mic, Film, AudioLines, FolderOpen, Square, Sparkles, Music, Boxes, RotateCcw, Play, Type, Scissors, ListPlus, Clock } from 'lucide-react'
+import { api, fileUrl, RESOLUTIONS, type Format, type MontageData, type ShortClip, type ShortsData } from '../lib'
 import { planRender } from './plan'
+import { shortDuration, shortKey, slug } from '../shorts/shorts'
 import './render.css'
 
 /**
@@ -17,7 +18,13 @@ interface Props {
   format?: Format
   montage: MontageData
   save: () => Promise<void>
+  /** recortes do Criar Clipes: os aprovados viram exports pendentes */
+  shorts?: ShortsData
+  patchShort?: (id: string, p: Partial<ShortClip>) => void
 }
+
+/** um item da fila de exports: o vídeo principal ou um recorte */
+type QItem = { id: string; kind: 'main' | 'short'; shortId?: string; label: string; status: 'pendente' | 'rodando' | 'pronto' | 'erro'; error?: string; path?: string; fresh?: boolean }
 
 type Check = { path: string; ok: boolean; files?: number; error?: string }
 
@@ -40,11 +47,22 @@ type Progress = { phase: 'letterings' | 'partes' | 'final'; pct: number; eta: nu
 type Resume = Awaited<ReturnType<typeof api.renderStatus>>
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
 
-export function RenderStudio({ active, dir, format, montage, save }: Props) {
+export function RenderStudio({ active, dir, format, montage, save, shorts, patchShort }: Props) {
   const [quality, setQuality] = useState(loadQuality)
   const [checks, setChecks] = useState<Record<string, Check>>({})
   const [checking, setChecking] = useState(false)
-  const [job, setJob] = useState<{ busy: boolean; log: { kind: string; text: string }[]; t0: number; path?: string; summary?: string; error?: string; seconds?: number } | null>(null)
+  const [job, setJob] = useState<{
+    busy: boolean
+    log: { kind: string; text: string }[]
+    t0: number
+    path?: string
+    summary?: string
+    error?: string
+    seconds?: number
+    /** o que está saindo (na fila) e a proporção dele */
+    label?: string
+    aspect?: string
+  } | null>(null)
   const [now, setNow] = useState(Date.now())
   const [prog, setProg] = useState<Progress | null>(null)
   /** o que uma rodada anterior deixou pronto (pra "Continuar") */
@@ -146,16 +164,104 @@ export function RenderStudio({ active, dir, format, montage, save }: Props) {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
   }, [job?.log.length])
 
+  // ---------- fila de exports: o vídeo principal e os recortes aprovados, um depois do outro ----------
+  const [queue, setQueueState] = useState<QItem[]>([])
+  const queueRef = useRef<QItem[]>([])
+  const setQueue = (fn: (q: QItem[]) => QItem[]) => {
+    queueRef.current = fn(queueRef.current)
+    setQueueState(queueRef.current)
+  }
+  const setItem = (id: string, p: Partial<QItem>) => setQueue((q) => q.map((x) => (x.id === id ? { ...x, ...p } : x)))
+  const shortsRef = useRef(shorts)
+  shortsRef.current = shorts
+  const running = useRef(false)
+  const stopQueue = useRef(false)
+  const qualityRef = useRef({ outW, outH, fps: quality.fps, pct: quality.pct, plan, finalFile })
+  qualityRef.current = { outW, outH, fps: quality.fps, pct: quality.pct, plan, finalFile }
+
+  /** resolução do recorte: a mesma qualidade escolhida, na proporção dele */
+  const shortSize = (aspect: string, pct: number) => {
+    const [w, h] = (RESOLUTIONS[aspect] ?? '1080×1920').split('×').map(Number)
+    return pct === -1 ? [even(w), even(h)] : [even((w * pct) / 100), even((h * pct) / 100)]
+  }
+
+  const specFor = (it: QItem) => {
+    const q = qualityRef.current
+    if (it.kind === 'main') {
+      return { aspect: format?.aspect ?? '16:9', job: { dir, width: q.outW, height: q.outH, fps: q.fps, finalFile: q.finalFile, parts: q.plan.parts, letterings: q.plan.letterings, fresh: it.fresh } }
+    }
+    const sd = shortsRef.current
+    const sh = sd?.items.find((x) => x.id === it.shortId)
+    if (!sd || !sh) return { error: 'O recorte não existe mais.' }
+    const [w, h] = shortSize(sd.aspect, q.pct)
+    const p = planRender(sh.montage, { from: 0, to: Infinity, width: w, height: h, fps: q.fps, format })
+    if (!p.parts.length) return { error: 'A timeline do recorte está vazia.' }
+    const name = slug(sh.title)
+    return {
+      aspect: sd.aspect,
+      key: shortKey(sh),
+      job: { dir, width: w, height: h, fps: q.fps, finalFile: `${name}-${w}x${h}.mp4`, parts: p.parts, letterings: p.letterings, sub: `clipes/${name}-${sh.id}`, fit: 'cover' as const }
+    }
+  }
+
+  const runQueue = async () => {
+    if (running.current) return
+    running.current = true
+    stopQueue.current = false
+    await save()
+    while (!stopQueue.current) {
+      const it = queueRef.current.find((x) => x.status === 'pendente')
+      if (!it) break
+      setItem(it.id, { status: 'rodando', error: undefined })
+      const spec = specFor(it)
+      if ('error' in spec) {
+        setItem(it.id, { status: 'erro', error: spec.error })
+        continue
+      }
+      setJob({ busy: true, log: [], t0: Date.now(), label: it.label, aspect: spec.aspect })
+      setProg(null)
+      const r = await api.renderStart(spec.job)
+      setJob((j) => ({ ...(j ?? { log: [], t0: Date.now() }), busy: false, ...('error' in r ? { error: r.error } : r) }))
+      if ('error' in r) {
+        // cancelado: volta pra fila (as partes prontas são reaproveitadas na próxima)
+        setItem(it.id, stopQueue.current ? { status: 'pendente' } : { status: 'erro', error: r.error })
+      } else {
+        setItem(it.id, { status: 'pronto', path: r.path, fresh: false })
+        if (it.kind === 'short' && r.path && 'key' in spec) patchShort?.(it.shortId!, { exported: { path: r.path, key: spec.key!, at: new Date().toISOString() } })
+      }
+    }
+    running.current = false
+    setQueue((q) => [...q])
+    api.renderStatus(dir).then(setResume)
+  }
+
+  const enqueue = (items: Omit<QItem, 'status'>[]) => {
+    setQueue((q) => [
+      // o que já saiu ou deu erro sai da fila quando o mesmo item entra de novo
+      ...q.filter((x) => !items.some((n) => n.id === x.id) || x.status === 'rodando'),
+      ...items.filter((n) => !q.some((x) => x.id === n.id && x.status === 'rodando')).map((n) => ({ ...n, status: 'pendente' as const }))
+    ])
+    runQueue()
+  }
+
   const create = async (fresh = false) => {
     if (fresh && !confirm('Recomeçar do zero? As partes já prontas do render anterior são apagadas.')) return
     if (bad.length && !confirm(`${bad.length} arquivo(s) da timeline não estão acessíveis e vão sair pretos ou mudos. Criar mesmo assim?`)) return
-    await save()
-    setJob({ busy: true, log: [], t0: Date.now() })
-    setProg(null)
-    const r = await api.renderStart({ dir, width: outW, height: outH, fps: quality.fps, finalFile, parts: plan.parts, letterings: plan.letterings, fresh })
-    setJob((j) => ({ ...(j ?? { log: [], t0: Date.now() }), busy: false, ...('error' in r ? { error: r.error } : r) }))
-    api.renderStatus(dir).then(setResume)
+    enqueue([{ id: 'main', kind: 'main', label: 'Vídeo principal', fresh }])
   }
+
+  const cancel = () => {
+    stopQueue.current = true
+    api.renderCancel()
+  }
+
+  // ---------- exports pendentes: recortes aprovados que ainda não saíram (ou mudaram depois) ----------
+  const approved = (shorts?.items ?? []).filter((x) => x.approved)
+  const isFresh = (x: ShortClip) => !!x.exported && x.exported.key === shortKey(x)
+  const pendingShorts = approved.filter((x) => !isFresh(x))
+  const shortItem = (x: ShortClip) => ({ id: 'short-' + x.id, kind: 'short' as const, shortId: x.id, label: x.title })
+  const qOf = (x: ShortClip) => queue.find((q) => q.shortId === x.id)
+  const queuedN = queue.filter((q) => q.status === 'pendente' || q.status === 'rodando').length
 
   const stateOf = (c: (typeof checklist)[number]): CheckState => {
     if (!c.count) return 'none'
@@ -165,7 +271,7 @@ export function RenderStudio({ active, dir, format, montage, save }: Props) {
   const STATE_LABEL: Record<CheckState, string> = { ok: 'OK', bad: 'sem acesso', checking: 'conferindo', none: 'nenhum' }
   const readyCount = checklist.filter((c) => stateOf(c) === 'ok').length
 
-  const [rw, rh] = (format?.aspect ?? '16:9').split(':').map(Number)
+  const [rw, rh] = (job?.aspect ?? format?.aspect ?? '16:9').split(':').map(Number)
   const lastLine = job?.log.length ? job.log[job.log.length - 1].text : 'Preparando…'
   const phaseLabel = (p: Progress) =>
     p.phase === 'letterings' ? 'gravando os letterings' : p.phase === 'final' ? 'juntando as partes' : `${p.steps.filter((x) => x.done).length}/${p.steps.length} etapas`
@@ -217,7 +323,9 @@ export function RenderStudio({ active, dir, format, montage, save }: Props) {
               <div className="rn-screen-busy">
                 <div className="rn-scan" />
                 <Loader2 size={30} className="spin" />
-                <b>Compilando o vídeo… {fmtT((now - job.t0) / 1000)}</b>
+                <b>
+                  {job.label && job.label !== 'Vídeo principal' ? `Exportando "${job.label}"` : 'Compilando o vídeo'}… {fmtT((now - job.t0) / 1000)}
+                </b>
                 {prog && (
                   <div className="rn-progress">
                     <div className="rn-progress-bar">
@@ -327,9 +435,16 @@ export function RenderStudio({ active, dir, format, montage, save }: Props) {
               </p>
             )}
             {job?.busy ? (
-              <button className="btn small rn-cancel" onClick={() => api.renderCancel()} title="Para agora. As partes que já ficaram prontas são guardadas e dá pra continuar depois.">
-                <Square size={12} /> Cancelar
-              </button>
+              <>
+                <button className="btn small rn-cancel" onClick={cancel} title="Para agora (e a fila também). As partes que já ficaram prontas são guardadas e dá pra continuar depois.">
+                  <Square size={12} /> Cancelar
+                </button>
+                {!queue.some((q) => q.id === 'main' && (q.status === 'pendente' || q.status === 'rodando')) && (
+                  <button className="btn small" onClick={() => create()} disabled={!plan.parts.length} title="Entra na fila: começa quando o export de agora terminar">
+                    <ListPlus size={13} /> Pôr o vídeo principal na fila
+                  </button>
+                )}
+              </>
             ) : resume && resume.status !== 'pronto' && resume.done > 0 ? (
               <>
                 <button className="rn-create" onClick={() => create()} disabled={!plan.parts.length} title="Reaproveita as partes prontas que não mudaram na timeline">
@@ -365,6 +480,61 @@ export function RenderStudio({ active, dir, format, montage, save }: Props) {
               </div>
             )}
           </section>
+
+          {(approved.length > 0 || queue.length > 0) && (
+            <section className="rn-card rn-queue">
+              <h3>
+                <Scissors size={14} /> Exports pendentes
+              </h3>
+              <p className="muted small">
+                Recortes aprovados no Criar Clipes ({shorts?.aspect ?? '9:16'}, a mesma qualidade e fps daqui). Saem em render/clipes, um depois do outro.
+              </p>
+              <ul className="rn-qlist">
+                {queue
+                  .filter((q) => q.kind === 'main')
+                  .map((q) => (
+                    <li key={q.id} className={'rn-q ' + q.status}>
+                      <QState s={q.status} />
+                      <span className="rn-qname">{q.label}</span>
+                      <small>{q.status === 'erro' ? q.error : q.status}</small>
+                    </li>
+                  ))}
+                {approved.map((x) => {
+                  const q = qOf(x)
+                  const st = q && q.status !== 'pronto' ? q.status : isFresh(x) ? 'pronto' : 'pendente'
+                  const path = isFresh(x) ? x.exported!.path : undefined
+                  return (
+                    <li key={x.id} className={'rn-q ' + st} title={q?.error}>
+                      <QState s={st} />
+                      <span className="rn-qname">{x.title}</span>
+                      <small>
+                        {Math.round(shortDuration(x))} s · {st === 'erro' ? 'erro' : st === 'rodando' ? 'exportando' : st === 'pronto' ? 'exportado' : x.exported ? 'mudou: exportar de novo' : q ? 'na fila' : 'pendente'}
+                      </small>
+                      {path ? (
+                        <button className="icon-btn" title="Mostrar na pasta" onClick={() => api.showItem(path)}>
+                          <FolderOpen size={13} />
+                        </button>
+                      ) : (
+                        !q || q.status === 'erro' ? (
+                          <button className="icon-btn" title="Exportar este" onClick={() => enqueue([shortItem(x)])}>
+                            <Play size={13} />
+                          </button>
+                        ) : null
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+              <button
+                className="btn small primary"
+                disabled={!pendingShorts.filter((x) => !qOf(x) || qOf(x)!.status === 'erro').length}
+                onClick={() => enqueue(pendingShorts.filter((x) => !qOf(x) || qOf(x)!.status === 'erro').map(shortItem))}
+              >
+                <Sparkles size={13} /> Exportar pendentes ({pendingShorts.filter((x) => !qOf(x) || qOf(x)!.status === 'erro').length})
+              </button>
+              {queuedN > 0 && <span className="muted small"> {queuedN} na fila</span>}
+            </section>
+          )}
         </aside>
       </section>
 
@@ -418,4 +588,8 @@ export function RenderStudio({ active, dir, format, montage, save }: Props) {
       </div>
     </div>
   )
+}
+
+function QState({ s }: { s: QItem['status'] }) {
+  return s === 'pronto' ? <CheckCircle2 size={14} className="rn-q-ok" /> : s === 'erro' ? <XCircle size={14} className="rn-q-bad" /> : s === 'rodando' ? <Loader2 size={14} className="spin" /> : <Clock size={14} className="muted" />
 }

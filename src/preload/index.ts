@@ -87,7 +87,7 @@ const api = {
   }> => ipcRenderer.invoke('ai:status'),
   aiSet: (patch: Record<string, string | null>) => ipcRenderer.invoke('ai:set', patch),
   aiTest: (id: AiProvider): Promise<{ ok: boolean; message: string }> => ipcRenderer.invoke('ai:test', id),
-  aiText: (job: { instruction: string; input: string; dir?: string }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
+  aiText: (job: { instruction: string; input: string; dir?: string; timeoutMs?: number }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
     ipcRenderer.invoke('ai:text', job),
   aiImage: (
     dir: string,
@@ -166,6 +166,8 @@ const api = {
     }[]
     letterings: { id: string; label: string; t: number; dur: number; html: string }[]
     fresh?: boolean
+    sub?: string
+    fit?: 'contain' | 'cover'
   }): Promise<{ path?: string; summary: string; seconds: number } | { error: string }> => ipcRenderer.invoke('render:start', job),
   renderStatus: (dir: string): Promise<{ status: 'rodando' | 'interrompido' | 'pronto'; reason?: string; done: number; total: number; pct: number; updated: number } | null> =>
     ipcRenderer.invoke('render:status', dir),

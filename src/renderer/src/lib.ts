@@ -252,6 +252,8 @@ export interface ProjectData {
   montage?: MontageData
   /** todo capítulo vira lettering capitular (padrão: sim) */
   chapterLettering?: boolean
+  /** workspace Criar Clipes (recortes curtos pra Reels/TikTok/Shorts); some até ser ativado */
+  shorts?: ShortsData
   createdAt: string
   updatedAt: string
 }
@@ -777,3 +779,35 @@ export function defaultMontage(): MontageData {
     spliceDefault: 0.02
   }
 }
+
+// ---------- Criar Clipes (recortes curtos) ----------
+/** tempos alvo dos recortes (s): sempre mira o ideal; o máximo é folga pra não cortar uma ideia no meio */
+export interface ShortTarget {
+  min: number
+  ideal: number
+  max: number
+}
+export interface ShortClip {
+  id: string
+  title: string
+  /** por que o Claude escolheu esse trecho */
+  reason?: string
+  /** trecho da timeline principal de onde ele saiu (s) */
+  from: number
+  to: number
+  /** a timeline própria do recorte (começa em 0) */
+  montage: MontageData
+  /** aprovado: entra nos exports pendentes do Render */
+  approved?: boolean
+  /** último export: arquivo e a impressão digital da timeline quando saiu (mudou = exporta de novo) */
+  exported?: { path: string; key: string; at: string }
+}
+export interface ShortsData {
+  target: ShortTarget
+  /** proporção dos recortes ("9:16" pra Reels/TikTok/Shorts) */
+  aspect: string
+  items: ShortClip[]
+  analyzedAt?: string
+  provider?: string
+}
+export const SHORT_TARGET_DEFAULT: ShortTarget = { min: 25, ideal: 45, max: 60 }

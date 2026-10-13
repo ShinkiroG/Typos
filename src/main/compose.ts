@@ -35,6 +35,8 @@ export interface PartSpec {
   /** de baixo pra cima */
   video: VLayer[]
   audio: ALayer[]
+  /** contain = cabe inteiro (com barras); cover = preenche o quadro e corta as sobras (recortes verticais) */
+  fit?: 'contain' | 'cover'
   outVideo: string
   outWav: string
 }
@@ -115,7 +117,9 @@ export function partArgs(p: PartSpec): string[] {
     const f = [
       'setpts=PTS-STARTPTS',
       `fps=${fps}`,
-      `scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=bicubic`,
+      ...(p.fit === 'cover'
+        ? [`scale=${W}:${H}:force_original_aspect_ratio=increase:flags=bicubic`, `crop=${W}:${H}`]
+        : [`scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=bicubic`]),
       'setsar=1',
       'format=yuva420p',
       `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black@0`

@@ -72,8 +72,8 @@ interface Props {
   lang: string
   /** blocos do roteiro, na ordem (pro corte automático achar cada frase) */
   getBlocks: () => ScriptBlock[]
-  /** grava os tempos da narração nos blocos do roteiro; devolve quantas falas mudaram */
-  onSyncScript: (d: MontageData) => Promise<number>
+  /** grava os tempos da narração nos blocos do roteiro; devolve quantas falas mudaram (sem = some o botão) */
+  onSyncScript?: (d: MontageData) => Promise<number>
   /** pasta do projeto (as gravações vão pra assets/gravacoes) */
   dir: string
   /** velocidade de fala (rolagem do teleprompter) */
@@ -83,6 +83,16 @@ interface Props {
   /** formato do projeto (estilo e memória de motion dos blocos de instrução) */
   format?: Format
   onFormatChange?: (f: Format) => void
+  /** botão "Preparar Clipes" (abre o workspace Criar Clipes) */
+  onPrepareClips?: () => void
+  /** rótulo do botão acima (ex.: já ativado) */
+  prepareLabel?: string
+  /** algo no topo da área de mídia (ex.: a pasta Recortes do Criar Clipes) */
+  poolTop?: React.ReactNode
+  /** botões a mais na barra de ferramentas, à direita */
+  toolbarExtra?: React.ReactNode
+  /** proporção do quadro do visualizador ("9:16"): o vídeo preenche e corta as sobras, igual ao export */
+  frame?: string
 }
 
 const LAYOUT_KEY = 'typos.montageLayout'
@@ -96,7 +106,7 @@ const loadLayout = () => {
 
 type WStatus = Awaited<ReturnType<typeof api.whisperStatus>>
 
-export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript, dir, wpm, onAudioSettings, format, onFormatChange }: Props) {
+export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript, dir, wpm, onAudioSettings, format, onFormatChange, onPrepareClips, prepareLabel, poolTop, toolbarExtra, frame }: Props) {
   const engine = useMemo(() => new MontageEngine(), [])
   const [wavesVersion, setWavesVersion] = useState(0)
   const [selected, setSelected] = useState<string[]>([])
@@ -212,8 +222,11 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
 
   useEffect(() => {
     api.whisperStatus().then(setWstatus)
-    api.onWhisperProgress((p) => setBusy((b) => (b ? { ...b, pct: p.pct } : b)))
   }, [])
+  // o aviso de progresso vai pra uma Montagem só (a do Criar Clipes também usa): fica com a da frente
+  useEffect(() => {
+    if (active) api.onWhisperProgress((p) => setBusy((b) => (b ? { ...b, pct: p.pct } : b)))
+  }, [active])
 
   const model = wstatus?.models.find((m) => m.id === wstatus.model)
 
@@ -868,8 +881,8 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     if (blockOpen === id) setBlockOpen(null)
   }
   useEffect(() => {
-    api.onMotionPreviewProgress((p) => setBlockBusy((b) => (b && b.id === p.block ? { ...b, label: p.stage === 'vídeo' ? 'Montando o vídeo…' : b.label, pct: p.pct } : b)))
-  }, [])
+    if (active) api.onMotionPreviewProgress((p) => setBlockBusy((b) => (b && b.id === p.block ? { ...b, label: p.stage === 'vídeo' ? 'Montando o vídeo…' : b.label, pct: p.pct } : b)))
+  }, [active])
   const makePreview = async (id: string) => {
     const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
     if (!b || blockBusy) return
@@ -1239,6 +1252,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
       <div className="mt-split h" style={{ bottom: layout.tl + 40 - 3 }} onPointerDown={(e) => startSplit('tl', e)} title="Arraste pra mudar a altura da timeline" />
       {/* ---------- mídia do projeto ---------- */}
       <section className="mt-pool">
+        {poolTop}
         <div className="mt-bins">
           {data.bins.filter((b) => !b.parent).map((b) => (
             <button
@@ -1648,7 +1662,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
 
       {/* ---------- visualizador ---------- */}
       <section className="mt-viewer">
-        <div className="mt-screen">
+        <div className={'mt-screen' + (frame ? ' framed' : '')} style={frame ? ({ ['--frame' as any]: frame.replace(':', ' / ') } as React.CSSProperties) : undefined}>
           {source ? (
             source.kind === 'image' ? (
               <img src={fileUrl(source.path)} />
@@ -1933,14 +1947,27 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           <Redo2 size={15} />
         </button>
         <span className="mt-grow" />
-        <button
-          className="btn small primary"
-          disabled={!data.clips.length}
-          title="Troca o texto escrito das falas pelo que foi falado na narração (improvisos entram, o que não foi dito sai). Só o texto."
-          onClick={() => onSyncScript(dataRef.current)}
-        >
-          <FileCheck2 size={13} /> Atualizar roteiro
-        </button>
+        {onPrepareClips && (
+          <button
+            className="btn small mt-clips-btn"
+            disabled={!data.clips.length}
+            title="Criar Clipes: o Claude lê a transcrição e sugere os melhores trechos pra Reels, TikTok e Shorts; cada recorte ganha a timeline dele"
+            onClick={onPrepareClips}
+          >
+            <Scissors size={13} /> {prepareLabel ?? 'Preparar Clipes'}
+          </button>
+        )}
+        {onSyncScript && (
+          <button
+            className="btn small primary"
+            disabled={!data.clips.length}
+            title="Troca o texto escrito das falas pelo que foi falado na narração (improvisos entram, o que não foi dito sai). Só o texto."
+            onClick={() => onSyncScript(dataRef.current)}
+          >
+            <FileCheck2 size={13} /> Atualizar roteiro
+          </button>
+        )}
+        {toolbarExtra}
         <button className="icon-btn" title="Faixas de áudio mais baixas" onClick={() => resizeAudio(1 / 1.3)}>
           <FoldVertical size={15} />
         </button>

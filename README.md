@@ -43,6 +43,11 @@ Funciona tanto na versão instalada quanto na do .zip.
 - **Keyframes de volume**: duplo clique no clipe cria, arrastar o ponto move, botão direito apaga. Fade in/out prontos no painel do clipe.
 - **SFX**: gera efeitos com a ElevenLabs. Coloque sua chave em Configurações; ela fica só no seu PC.
 
+### Criar Clipes (recortes curtos)
+Na Montagem, **Preparar Clipes** pergunta o tempo mínimo, ideal e máximo dos recortes e a proporção (9:16 por padrão). O Claude lê a transcrição da narração e sugere os melhores trechos: sempre mira o tempo ideal e só passa dele, até o máximo, pra não cortar um assunto no meio.
+- O workspace **Clipes** aparece no topo. A pasta **Recortes** fica na área de mídia: clicar num recorte abre a timeline dele (✓ verde = aprovado, ✗ = ainda não).
+- **Aprovar short** põe o recorte nos **Exports pendentes** do Render, que exporta tudo em fila (em `render/clipes/`), preenchendo o quadro vertical.
+
 ### Claude
 O botão **Claude** salva e copia um pedido pronto. É só colar no Claude, que ele lê o `roteiro.md` e os anexos. Recortes feitos pelo Claude vão em `assets/recortes/` e aparecem no app ao lado da imagem original.
 
