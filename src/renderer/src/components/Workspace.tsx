@@ -92,7 +92,8 @@ interface Props {
   onOpenSettings: () => void
   registerFlush: (fn: (() => Promise<void>) | null) => void
   /** trocar de roteiro pelo menu Arquivo (novo / abrir / recente) */
-  onSwitchProject: (kind: 'new' | 'open', dir?: string) => void
+  /** restore: volta o roteiro pra uma cópia automática (versão) e reabre */
+  onSwitchProject: (kind: 'new' | 'open' | 'restore', dir?: string, version?: string) => void
 }
 
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error'
@@ -766,6 +767,20 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         { label: draft ? 'Salvar…' : 'Salvar como…', shortcut: 'Ctrl+Shift+S', onClick: () => saveAs() },
         { label: 'Mudar pasta do projeto…', onClick: () => moveProject() },
         { label: 'Abrir pasta do projeto', onClick: () => api.openPath(dir) },
+        {
+          label: 'Versões anteriores',
+          items: async () => {
+            const list = await api.listVersions(dir)
+            if (!list.length) return [{ label: 'Nenhuma cópia ainda (sai uma a cada 3 min de edição)', disabled: true }]
+            return list.map((v) => ({
+              label: `${versionWhen(v.at)} · ${v.words.toLocaleString('pt-BR')} palavras`,
+              onClick: () => {
+                if (confirm(`Voltar o roteiro pra versão de ${versionWhen(v.at)}?\n\nO roteiro de agora também fica guardado nas versões, dá pra voltar pra ele.`))
+                  onSwitchProject('restore', dir, v.name)
+              }
+            }))
+          }
+        },
         { sep: true },
         { label: 'Copiar referências pro rodapé', onClick: () => setRefsOpen(true) },
         { label: 'Copiar pedido pro Claude', onClick: () => sendToClaude() },
@@ -1956,4 +1971,13 @@ function gridLayout(left: boolean, right: boolean, timeline: boolean, leftW = 23
     gridTemplateRows: (context ? '94px' : '52px') + ' 1fr ' + (timeline ? 'auto ' : '') + '32px',
     gridTemplateAreas: [row('top'), '"' + mid.join(' ') + '"', timeline && row('timeline'), row('status')].filter(Boolean).join(' ')
   }
+}
+
+/** "há 12 min", "hoje 14:05", "12/10 09:30" */
+function versionWhen(at: number) {
+  const min = Math.round((Date.now() - at) / 60000)
+  if (min < 60) return min <= 1 ? 'agora há pouco' : `há ${min} min`
+  const d = new Date(at)
+  const hm = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  return d.toDateString() === new Date().toDateString() ? `hoje ${hm}` : `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${hm}`
 }

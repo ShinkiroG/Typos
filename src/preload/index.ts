@@ -9,6 +9,9 @@ const api = {
   saveProjectAs: (dir: string, data: unknown, markdown: string): Promise<{ dir: string } | { error: string } | null> =>
     ipcRenderer.invoke('project:saveAs', dir, data, markdown),
   recentProjects: () => ipcRenderer.invoke('project:recent'),
+  /** cópias automáticas do roteiro (as 10 mais novas, uma a cada 3 min no máximo) */
+  listVersions: (dir: string): Promise<{ name: string; at: number; words: number; title: string }[]> => ipcRenderer.invoke('versions:list', dir),
+  restoreVersion: (dir: string, name: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('versions:restore', dir, name),
   removeRecent: (dir: string) => ipcRenderer.invoke('project:removeRecent', dir),
   drafts: (keep?: string): Promise<{ dir: string; title: string; updatedAt: string; preview: string }[]> =>
     ipcRenderer.invoke('project:drafts', keep),
