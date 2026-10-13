@@ -2397,3 +2397,9 @@ body.resizing * {
   color: var(--accent);
   font-weight: 700;
 }
+.statusbar .ai-usage {
+  margin-left: auto;
+}
+.statusbar .ai-usage.over {
+  color: var(--warn, #f5a524);
+}

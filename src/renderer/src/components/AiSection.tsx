@@ -8,15 +8,20 @@ type ProviderId = Status['providers'][number]['id']
 const INSTALL_CMD = 'irm https://claude.ai/install.ps1 | iex'
 
 /** Conexões de IA (Claude Code, API da Anthropic, API da OpenAI) e quem faz cada tarefa. */
-export function AiSection() {
+export function AiSection({ currentDir }: { currentDir?: string }) {
   const [st, setSt] = useState<Status | null>(null)
   const [tests, setTests] = useState<Partial<Record<ProviderId, { busy?: boolean; ok?: boolean; message?: string }>>>({})
   const [keys, setKeys] = useState({ anthropicKey: '', openaiKey: '' })
+
+  const [budget, setBudget] = useState<{ spent: number; cap?: number } | null>(null)
 
   const refresh = () => api.aiStatus().then(setSt)
   useEffect(() => {
     refresh()
   }, [])
+  useEffect(() => {
+    if (currentDir) api.aiBudget(currentDir).then(setBudget)
+  }, [currentDir])
   if (!st) return null
 
   const p = (id: ProviderId) => st.providers.find((x) => x.id === id)!
@@ -173,6 +178,34 @@ export function AiSection() {
           </select>
         </label>
       </div>
+
+      {currentDir && budget && (
+        <div className="ai-routes">
+          <b>Gasto deste projeto</b>
+          <p className="muted small">
+            Só conta o que é pago por uso (chave da Anthropic ou da OpenAI), calculado pelos tokens de cada pedido. O Claude Code usa o seu plano e fica de fora. O
+            último pedido aparece na barra de baixo.
+          </p>
+          <label>
+            Gasto até agora <b>US$ {budget.spent.toFixed(3).replace('.', ',')}</b>
+          </label>
+          <label>
+            Limite (US$, vazio = sem limite)
+            <input
+              key={String(budget.cap)}
+              type="number"
+              min="0"
+              step="0.5"
+              placeholder="sem limite"
+              defaultValue={budget.cap ?? ''}
+              onBlur={async (e) => {
+                const v = parseFloat(e.target.value.replace(',', '.'))
+                setBudget(await api.aiSetBudget(currentDir, isFinite(v) && v > 0 ? v : null))
+              }}
+            />
+          </label>
+        </div>
+      )}
     </section>
   )
 }
