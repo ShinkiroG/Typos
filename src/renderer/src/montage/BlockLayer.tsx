@@ -1,5 +1,6 @@
 import { useRef } from 'react'
-import { Paperclip, Sparkles, Film } from 'lucide-react'
+import { Paperclip, Sparkles, Film, Ear, Loader2 } from 'lucide-react'
+import type { BlockHeard } from './AudioRead'
 import { formatTime, uid, type InstructionBlock, type MontageData } from '../lib'
 import { BLOCK_MIN, blockDur, blockLabel, previewStale } from './blocks'
 
@@ -24,6 +25,8 @@ export function BlockLayer(p: {
   trackAt: (clientY: number) => { id: string; kind: 'video' | 'audio' } | null
   /** gerando prévia agora */
   busy: string | null
+  /** o som do bloco já foi lido (Whisper)? */
+  heard?: (b: InstructionBlock) => BlockHeard
 }) {
   const drag = useRef<{ kind: 'move' | 'l' | 'r'; x0: number; orig: InstructionBlock; all: InstructionBlock[]; g: string; moved: boolean } | null>(null)
   const blocks = (p.data.blocks ?? []).filter((b) => b.track === p.track)
@@ -107,6 +110,18 @@ export function BlockLayer(p: {
             </span>
             <span className="mt-iblock-text">{b.text.trim() || (b.dynamic ? 'dinâmico (pela fala)' : 'sem instruções')}</span>
             <span className="mt-iblock-badges">
+              {(() => {
+                const h = p.heard?.(b) ?? 'none'
+                if (h === 'none') return null
+                return (
+                  <span
+                    className={'heard ' + h}
+                    title={h === 'done' ? 'Som do trecho já lido: a prévia não espera o Whisper' : h === 'running' ? 'Lendo o som do trecho (Whisper)…' : 'Som do trecho ainda não lido (Ler áudio, na barra da timeline)'}
+                  >
+                    {h === 'running' ? <Loader2 size={10} className="spin" /> : <Ear size={10} />}
+                  </span>
+                )
+              })()}
               {b.attachments.length > 0 && (
                 <span title={`${b.attachments.length} anexo(s)`}>
                   <Paperclip size={10} />

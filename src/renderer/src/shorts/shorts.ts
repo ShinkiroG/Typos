@@ -1,5 +1,6 @@
 import { api, clipEndT, uid, type MontageClip, type MontageData, type ShortClip, type ShortTarget } from '../lib'
 import { planRender, timelineEnd } from '../render/plan'
+import { runningLabel, watchJobs } from '../montage/transcripts'
 
 /**
  * Criar Clipes: lê a transcrição da narração (Whisper, com cache por arquivo), pede pro Claude os
@@ -39,8 +40,13 @@ export async function timelineWords(m: MontageData, lang: string, onStep?: (labe
   const byPath = new Map<string, TlWord[]>()
   const paths = [...new Set(clips.map((c) => media.get(c.media)!.path))]
   for (const [i, p] of paths.entries()) {
-    onStep?.(`Lendo a transcrição (${i + 1}/${paths.length})…`)
-    const r = await api.transcribe(p, lang)
+    const step = () => {
+      const j = runningLabel(p, lang)
+      onStep?.(`Lendo a transcrição (${i + 1}/${paths.length})${j ? ': ' + j : '…'}`)
+    }
+    step()
+    const stop = watchJobs(step)
+    const r = await api.transcribe(p, lang).finally(stop)
     if ('error' in r) return r
     byPath.set(p, r.words)
   }

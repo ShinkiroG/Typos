@@ -2,6 +2,17 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 type AiProvider = 'claude-code' | 'anthropic' | 'openai'
 
+/** um arquivo na fila do Whisper (ver main/whisper.ts) */
+export interface WhisperJob {
+  path: string
+  lang: string
+  state: 'queued' | 'running' | 'done' | 'error'
+  stage: 'audio' | 'model' | 'listen' | null
+  pct: number
+  since?: number
+  error?: string
+}
+
 const api = {
   newProject: () => ipcRenderer.invoke('project:new'),
   openProject: (dir?: string) => ipcRenderer.invoke('project:open', dir),
@@ -138,9 +149,22 @@ const api = {
   whisperDownload: (id: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('whisper:download', id),
   transcribe: (path: string, lang: string): Promise<{ words: { s: number; e: number; w: string }[] } | { error: string }> =>
     ipcRenderer.invoke('whisper:transcribe', path, lang),
-  onWhisperProgress: (cb: (p: { stage: 'download' | 'transcribe'; pct: number; path?: string }) => void) => {
+  onWhisperProgress: (cb: (p: { stage: 'download'; pct: number }) => void) => {
     ipcRenderer.removeAllListeners('whisper:progress')
     ipcRenderer.on('whisper:progress', (_e, p) => cb(p))
+  },
+  // leitura do áudio em segundo plano (fila com cache)
+  whisperQueue: (paths: string[], lang: string): Promise<void> => ipcRenderer.invoke('whisper:queue', paths, lang),
+  whisperCached: (paths: string[], lang: string): Promise<Record<string, boolean>> => ipcRenderer.invoke('whisper:cached', paths, lang),
+  whisperJobs: (): Promise<WhisperJob[]> => ipcRenderer.invoke('whisper:jobs'),
+  whisperCancel: (path?: string, lang?: string): Promise<void> => ipcRenderer.invoke('whisper:cancel', path, lang),
+  whisperClearErrors: (): Promise<void> => ipcRenderer.invoke('whisper:clear'),
+  whisperParallel: (n?: number): Promise<number> => ipcRenderer.invoke('whisper:parallel', n),
+  /** a fila toda, a cada mudança (todas as janelas e partes do app ouvem) */
+  onWhisperJobs: (cb: (jobs: WhisperJob[]) => void) => {
+    const f = (_e: unknown, jobs: WhisperJob[]) => cb(jobs)
+    ipcRenderer.on('whisper:jobs', f)
+    return () => ipcRenderer.removeListener('whisper:jobs', f)
   },
 
   // workspace Estilo (treinar motion)
