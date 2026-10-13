@@ -74,7 +74,8 @@ async function readJson<T>(file: string, fallback: T): Promise<T> {
 }
 
 async function writeJson(file: string, data: unknown) {
-  const tmp = file + '.tmp'
+  // .tmp único: duas gravações do mesmo arquivo ao mesmo tempo não se atropelam no rename
+  const tmp = `${file}.${randomUUID().slice(0, 8)}.tmp`
   await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
   await fs.rename(tmp, file)
 }
@@ -159,6 +160,8 @@ type Recent = { dir: string; title: string; openedAt: string }
 
 async function touchRecent(dir: string, title: string) {
   const list = await readJson<Recent[]>(settingsFile('recent.json'), [])
+  // autosave do roteiro que já está no topo: nada muda na lista, não regrava o arquivo
+  if (list[0]?.dir === dir && list[0].title === title && Date.now() - Date.parse(list[0].openedAt) < 60_000) return
   const next = [{ dir, title, openedAt: new Date().toISOString() }, ...list.filter((r) => r.dir !== dir)].slice(0, 12)
   await writeJson(settingsFile('recent.json'), next)
 }
@@ -391,17 +394,30 @@ async function syncProjectFiles(root: string, data: any) {
   await writeGenerated(join(root, BLOCKS_DIR), blockFiles)
 }
 
-ipcMain.handle('project:save', async (_e, dir: string, data: any, markdown: string): Promise<Result<true>> => {
-  try {
-    await writeJson(join(dir, PROJECT_FILE), data)
-    await fs.writeFile(join(dir, MARKDOWN_FILE), markdown, 'utf8')
-    await syncProjectFiles(dir, data).catch((err) => console.warn('arquivos do projeto:', err))
-    if (!isDraft(dir)) await touchRecent(dir, data.title)
-    return true
-  } catch (err) {
-    return { error: String(err) }
-  }
-})
+/** salvamentos do mesmo roteiro em fila: o autosave pode disparar com o anterior ainda gravando */
+const saving = new Map<string, Promise<unknown>>()
+function queued<T>(dir: string, job: () => Promise<T>): Promise<T> {
+  const key = resolve(dir).toLowerCase()
+  const next = (saving.get(key) ?? Promise.resolve()).then(job, job)
+  const tail = next.catch(() => null)
+  saving.set(key, tail)
+  tail.then(() => saving.get(key) === tail && saving.delete(key))
+  return next
+}
+
+ipcMain.handle('project:save', (_e, dir: string, data: any, markdown: string): Promise<Result<true>> =>
+  queued(dir, async () => {
+    try {
+      await writeJson(join(dir, PROJECT_FILE), data)
+      await fs.writeFile(join(dir, MARKDOWN_FILE), markdown, 'utf8')
+      await syncProjectFiles(dir, data).catch((err) => console.warn('arquivos do projeto:', err))
+      if (!isDraft(dir)) await touchRecent(dir, data.title)
+      return true as const
+    } catch (err) {
+      return { error: String(err) }
+    }
+  })
+)
 
 /** Salvar como: copia a pasta do roteiro (com assets) pra onde o usuário escolher. */
 ipcMain.handle('project:saveAs', async (_e, dir: string, data: any, markdown: string): Promise<Result<{ dir: string } | null>> => {

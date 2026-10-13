@@ -62,7 +62,11 @@
     },
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "!**/node_modules/**/*.{map,ts,mts,cts}",
+      "!**/node_modules/**/{CHANGELOG,changelog}.md",
+      "!**/node_modules/@anthropic-ai/sdk/src/**",
+      "!**/node_modules/@anthropic-ai/sdk/**/*.mjs"
     ],
     "win": {
       "icon": "build/icon.ico",

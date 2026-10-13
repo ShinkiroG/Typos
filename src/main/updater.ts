@@ -1,6 +1,6 @@
 import { app, dialog, type BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import { existsSync, promises as fs } from 'fs'
+import { existsSync, writeFileSync, promises as fs } from 'fs'
 import { join, dirname } from 'path'
 import { spawn } from 'child_process'
 
@@ -100,14 +100,14 @@ Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $Zip -Force -ErrorAction SilentlyContinue
 if ($Relaunch -eq 1) { Start-Process -FilePath $Exe }
 `
-  return fs.writeFile(ps1, script, 'utf8').then(() => {
-    spawn(
-      'powershell.exe',
-      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ps1,
-        '-ProcId', String(process.pid), '-Zip', zip, '-Dest', dirname(exe), '-Exe', exe, '-Relaunch', relaunch ? '1' : '0'],
-      { detached: true, stdio: 'ignore', windowsHide: true }
-    ).unref()
-  })
+  // síncrono de propósito: no 'will-quit' o processo sai antes de uma escrita assíncrona terminar
+  writeFileSync(ps1, script, 'utf8')
+  spawn(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ps1,
+      '-ProcId', String(process.pid), '-Zip', zip, '-Dest', dirname(exe), '-Exe', exe, '-Relaunch', relaunch ? '1' : '0'],
+    { detached: true, stdio: 'ignore', windowsHide: true }
+  ).unref()
 }
 
 async function check(): Promise<{ version: string; zipUrl?: string } | null> {
@@ -125,6 +125,8 @@ async function applyNow(rel: { version: string; zipUrl?: string }) {
   send('update:status', { state: 'downloading', version: rel.version })
   if (installMode() === 'installer') {
     if (!downloadedInstaller) {
+      // cada "Sim" no diálogo registrava mais um ouvinte
+      autoUpdater.removeAllListeners('download-progress')
       autoUpdater.on('download-progress', (p) => progress(p.percent / 100))
       await autoUpdater.downloadUpdate()
       progress(-1)
@@ -137,7 +139,7 @@ async function applyNow(rel: { version: string; zipUrl?: string }) {
   const zip = pendingZip?.version === rel.version ? pendingZip.zip : await downloadZip(rel.zipUrl, rel.version)
   pendingZip = null
   await hooks.beforeQuit()
-  await runPortableSwap(zip, true)
+  runPortableSwap(zip, true)
   app.quit()
 }
 
@@ -216,7 +218,7 @@ export async function installDownloadedNow() {
     const { zip } = pendingZip
     pendingZip = null
     await hooks.beforeQuit()
-    await runPortableSwap(zip, true)
+    runPortableSwap(zip, true)
     app.quit()
   }
 }
