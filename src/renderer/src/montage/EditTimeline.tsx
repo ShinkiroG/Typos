@@ -38,6 +38,9 @@ interface Props {
   onDropFile: (path: string, trackKind: 'video' | 'audio', trackId: string | null, start: number) => void
   /** botão direito numa marcação de lettering */
   onMarkerMenu: (e: React.MouseEvent, m: MontageMarker) => void
+  /** menu de contexto da faixa: criar bloco de instrução / lettering naquele ponto */
+  onAddBlockAt: (track: string, t: number) => void
+  onAddLetteringAt: (t: number) => void
   /** blocos de instrução (nas faixas de vídeo) */
   blockSel: string | null
   onBlockSel: (id: string | null) => void
@@ -60,6 +63,8 @@ const tickLabel = (t: number, step: number) => {
 
 const SNAP_PX = 8
 const MIN_DUR = 0.04
+/** o ímã mexeu no valor (com folga de arredondamento) */
+const off = (a: number, b: number) => Math.abs(a - b) > 1e-6
 const RULER_H = 24
 /** altura padrão das faixas (px) e limites do redimensionar */
 export const trackHeight = (t: MontageTrack) => t.height ?? (t.kind === 'video' ? 64 : 58)
@@ -186,7 +191,24 @@ export function EditTimeline(p: Props) {
     main: string
     /** último estado do arrasto (o React pode não ter redesenhado ainda quando solta) */
     last?: MontageData
+    /** Shift+clique num corte já selecionado: tira da seleção se soltar sem arrastar */
+    toggleOff?: string
   } | null>(null)
+
+  /** arrastar a agulha: nunca passa pra trás dos nomes das faixas (encosta e rola a timeline) */
+  const scrubTo = (clientX: number, shift: boolean) => {
+    const el = scrollRef.current!
+    const r = el.getBoundingClientRect()
+    const left = r.left + HEAD_W
+    if (clientX < left && el.scrollLeft > 0) el.scrollLeft = Math.max(0, el.scrollLeft - Math.max(4, (left - clientX) * 0.6))
+    else if (clientX > r.right - 12) el.scrollLeft += Math.max(4, (clientX - r.right + 12) * 0.6)
+    const x = Math.max(left, Math.min(r.right - 1, clientX))
+    let t = Math.max(0, (x - left + el.scrollLeft) / pps)
+    const s = snap(t, [], shift, false)
+    showSnap(off(s, t) ? s : null)
+    t = s
+    p.seek(t)
+  }
 
   const timeAt = (clientX: number) => {
     const el = scrollRef.current!
@@ -194,11 +216,24 @@ export function EditTimeline(p: Props) {
     return Math.max(0, (clientX - r.left - HEAD_W + el.scrollLeft) / pps)
   }
 
-  /** ímã: bordas de outros clipes, playhead e zero */
-  const snap = (t: number, skip: string[]) => {
-    const cands = [0, p.posRef.current]
+  /**
+   * ímã (só com Shift segurado): começo/fim de cortes, blocos e letterings, playhead e zero.
+   * Mostra a linha do encaixe enquanto está grudado.
+   */
+  const snapLineRef = useRef<HTMLDivElement>(null)
+  const showSnap = (t: number | null) => {
+    const el = snapLineRef.current
+    if (!el) return
+    el.style.display = t === null ? 'none' : ''
+    if (t !== null) el.style.left = `${HEAD_W + t * pps}px`
+  }
+  const snap = (t: number, skip: string[], on = true, playhead = true) => {
+    if (!on) return t
+    const cands = [0]
+    if (playhead) cands.push(p.posRef.current)
     for (const c of data.clips) if (!skip.includes(c.id)) cands.push(c.start, clipEndT(c))
     for (const b of data.blocks ?? []) if (!skip.includes(b.id)) cands.push(b.start, b.end)
+    for (const m of data.markers ?? []) if (!skip.includes(m.id)) cands.push(m.t, m.t + m.dur)
     let best = t
     let bestD = SNAP_PX / pps
     for (const c of cands) {
@@ -228,12 +263,17 @@ export function EditTimeline(p: Props) {
       return
     }
     let ids = p.selected
-    if (e.shiftKey || e.ctrlKey) ids = ids.includes(c.id) ? ids.filter((i) => i !== c.id) : [...ids, c.id]
-    else if (!ids.includes(c.id)) ids = [c.id]
+    // Shift também é o ímã: num corte já selecionado ele só sai da seleção se for clique sem arrastar
+    let toggleOff: string | undefined
+    if (e.ctrlKey || e.metaKey) ids = ids.includes(c.id) ? ids.filter((i) => i !== c.id) : [...ids, c.id]
+    else if (e.shiftKey) {
+      if (ids.includes(c.id)) toggleOff = c.id
+      else ids = [...ids, c.id]
+    } else if (!ids.includes(c.id)) ids = [c.id]
     p.onSelect(ids)
     const kind = (role || 'move') as 'move' | 'trim-l' | 'trim-r' | 'fade-in' | 'fade-out' | 'curve-in' | 'curve-out'
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    drag.current = { kind, x0: e.clientX, orig: data, ids: kind === 'move' ? ids : [c.id], gesture: uid(), main: c.id, rect }
+    drag.current = { kind, x0: e.clientX, orig: data, ids: kind === 'move' ? ids : [c.id], gesture: uid(), main: c.id, rect, toggleOff }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
 
@@ -268,30 +308,38 @@ export function EditTimeline(p: Props) {
   const onMove = (e: React.PointerEvent) => {
     const d = drag.current
     if (!d) return
-    if (d.kind === 'scrub') return p.seek(timeAt(e.clientX))
+    if (d.kind === 'scrub') return scrubTo(e.clientX, e.shiftKey)
     const dt = (e.clientX - d.x0) / pps
-    if (Math.abs(e.clientX - d.x0) < 2 && d.kind === 'move') return
+    if (Math.abs(e.clientX - d.x0) < 2 && d.kind === 'move' && !d.last) return
+    const sh = e.shiftKey
+    let hit: number | null = null
     const o = d.orig.clips.find((c) => c.id === d.main)!
     const m = p.media.get(o.media)
     let clips = d.orig.clips
     if (d.kind === 'move') {
       // o clipe pego decide o ímã (pela borda mais perto)
       let ns = o.start + dt
-      const s1 = snap(ns, d.ids)
-      const s2 = snap(ns + clipDur(o), d.ids) - clipDur(o)
-      ns = Math.abs(s1 - ns) <= Math.abs(s2 - ns) ? s1 : s2
+      const s1 = snap(ns, d.ids, sh)
+      const s2 = snap(ns + clipDur(o), d.ids, sh) - clipDur(o)
+      const first = Math.abs(s1 - ns) <= Math.abs(s2 - ns)
+      if (first ? off(s1, ns) : off(s2, ns)) hit = first ? s1 : s2 + clipDur(o)
+      ns = first ? s1 : s2
       const shift = Math.max(-Math.min(...d.ids.map((id) => d.orig.clips.find((c) => c.id === id)!.start)), ns - o.start)
       const tr = d.ids.length === 1 ? trackAt(e.clientY) : null
       const okTrack = tr && tr.kind === d.orig.tracks.find((t) => t.id === o.track)?.kind ? tr.id : null
       clips = clips.map((c) => (d.ids.includes(c.id) ? { ...c, start: c.start + shift, track: okTrack ?? c.track } : c))
     } else if (d.kind === 'trim-l') {
       let nin = Math.min(o.out - MIN_DUR, Math.max(0, o.in + dt))
-      const st = snap(o.start + (nin - o.in), [o.id])
+      const raw = o.start + (nin - o.in)
+      const st = snap(raw, [o.id], sh)
+      if (off(st, raw)) hit = st
       nin = Math.min(o.out - MIN_DUR, Math.max(0, o.in + (st - o.start)))
       clips = clips.map((c) => (c.id === o.id ? { ...c, in: nin, start: o.start + (nin - o.in) } : c))
     } else if (d.kind === 'trim-r') {
       let nout = Math.max(o.in + MIN_DUR, Math.min(mediaLen(m), o.out + dt))
-      const en = snap(o.start + (nout - o.in), [o.id])
+      const raw = o.start + (nout - o.in)
+      const en = snap(raw, [o.id], sh)
+      if (off(en, raw)) hit = en
       nout = Math.max(o.in + MIN_DUR, Math.min(mediaLen(m), en - o.start + o.in))
       clips = clips.map((c) => (c.id === o.id ? { ...c, out: nout } : c))
     } else if (d.kind === 'curve-in' || d.kind === 'curve-out') {
@@ -315,6 +363,7 @@ export function EditTimeline(p: Props) {
       const v = Math.max(0, Math.min(clipDur(o) / 2, base + (d.kind === 'fade-in' ? dt : -dt)))
       clips = clips.map((c) => (c.id === o.id ? { ...c, [key]: v < 0.01 ? 0 : v } : c))
     }
+    showSnap(hit)
     d.last = { ...d.orig, clips }
     p.change(d.last, d.gesture)
   }
@@ -322,6 +371,8 @@ export function EditTimeline(p: Props) {
   const onUp = () => {
     const d = drag.current
     drag.current = null
+    showSnap(null)
+    if (d?.toggleOff && !d.last) p.onSelect(p.selected.filter((i) => i !== d.toggleOff))
     // terminou de mover/aparar: o que ficou por baixo é cortado (mesmo passo do desfazer)
     const cur = d?.last
     if (d && cur && (d.kind === 'move' || d.kind === 'trim-l' || d.kind === 'trim-r')) {
@@ -337,7 +388,7 @@ export function EditTimeline(p: Props) {
       e.preventDefault()
       const kind = /\.(mp3|wav|m4a|aac|flac|ogg|opus)$/i.test(pc) ? 'audio' : 'video'
       const over = trackAt(e.clientY)
-      p.onDropFile(pc, kind, over?.kind === kind ? over.id : null, snap(timeAt(e.clientX), []))
+      p.onDropFile(pc, kind, over?.kind === kind ? over.id : null, snap(timeAt(e.clientX), [], e.shiftKey))
       return
     }
     const id = e.dataTransfer.getData(MEDIA_MIME)
@@ -348,7 +399,7 @@ export function EditTimeline(p: Props) {
     const over = trackAt(e.clientY)
     const track = over?.kind === want ? over : data.tracks.find((t) => t.kind === want)
     if (!track) return
-    const start = snap(timeAt(e.clientX), [])
+    const start = snap(timeAt(e.clientX), [], e.shiftKey)
     const clip: MontageClip = { id: uid(), track: track.id, media: m.id, start, in: 0, out: m.kind === 'image' ? 5 : m.duration }
     p.change({ ...data, clips: [...data.clips, clip] })
     p.onSelect([clip.id])
@@ -391,6 +442,38 @@ export function EditTimeline(p: Props) {
     // vídeo novo entra em cima dos outros vídeos; áudio novo no fim
     p.change({ ...data, tracks: kind === 'video' ? [t, ...data.tracks] : [...data.tracks, t] })
   }
+  /** apaga a faixa com o que estiver nela (cortes e blocos); a última de cada tipo fica */
+  const removeTrack = (tr: MontageTrack) => {
+    const clips = data.clips.filter((c) => c.track === tr.id).length
+    const blocks = (data.blocks ?? []).filter((b) => b.track === tr.id).length
+    const what = [clips && `${clips} corte(s)`, blocks && `${blocks} bloco(s) de instrução`].filter(Boolean).join(' e ')
+    if (what && !confirm(`Apagar a faixa "${tr.name}" com ${what}? (Ctrl+Z desfaz)`)) return
+    p.change({
+      ...data,
+      tracks: data.tracks.filter((t) => t.id !== tr.id),
+      clips: data.clips.filter((c) => c.track !== tr.id),
+      blocks: (data.blocks ?? []).filter((b) => b.track !== tr.id)
+    })
+    p.onSelect(p.selected.filter((id) => data.clips.find((c) => c.id === id)?.track !== tr.id))
+  }
+
+  // ---------- menu de contexto (botão direito numa faixa ou no vazio) ----------
+  const [menu, setMenu] = useState<{ x: number; y: number; kind: 'video' | 'audio'; track: MontageTrack | null; t: number } | null>(null)
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(null)
+    window.addEventListener('mousedown', close)
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('blur', close)
+    }
+  }, [menu])
+  const openMenu = (e: React.MouseEvent, kind: 'video' | 'audio', track: MontageTrack | null) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setMenu({ x: e.clientX, y: e.clientY, kind, track, t: timeAt(e.clientX) })
+  }
   const DIVIDER_H = 6
 
   return (
@@ -408,9 +491,10 @@ export function EditTimeline(p: Props) {
         <div
           className="mt-ruler"
           onPointerDown={(e) => {
+            if (e.button !== 0) return
             drag.current = { kind: 'scrub', x0: e.clientX, orig: data, ids: [], gesture: '', main: '' }
             ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-            p.seek(timeAt(e.clientX))
+            scrubTo(e.clientX, e.shiftKey)
           }}
           onPointerMove={onMove}
           onPointerUp={onUp}
@@ -456,12 +540,29 @@ export function EditTimeline(p: Props) {
                     el.setPointerCapture(e.pointerId)
                     const move = (ev: PointerEvent) => {
                       const dt = (ev.clientX - x0) / pps
-                      const markers = (orig.markers ?? []).map((x) =>
-                        x.id !== mk.id ? x : resize ? { ...x, dur: Math.max(0.5, Math.round((mk.dur + dt) * 10) / 10) } : { ...x, t: Math.max(0, mk.t + dt) }
-                      )
+                      const sh = ev.shiftKey
+                      let hit: number | null = null
+                      let nt = Math.max(0, mk.t + dt)
+                      let nd = Math.max(0.5, Math.round((mk.dur + dt) * 10) / 10)
+                      if (resize) {
+                        const en = snap(mk.t + mk.dur + dt, [mk.id], sh)
+                        if (off(en, mk.t + mk.dur + dt)) {
+                          hit = en
+                          nd = Math.max(0.5, en - mk.t)
+                        }
+                      } else {
+                        const a = snap(nt, [mk.id], sh)
+                        const z = snap(nt + mk.dur, [mk.id], sh) - mk.dur
+                        const first = Math.abs(a - nt) <= Math.abs(z - nt)
+                        if (first ? off(a, nt) : off(z, nt)) hit = first ? a : z + mk.dur
+                        nt = Math.max(0, first ? a : z)
+                      }
+                      showSnap(hit)
+                      const markers = (orig.markers ?? []).map((x) => (x.id !== mk.id ? x : resize ? { ...x, dur: nd } : { ...x, t: nt }))
                       p.change({ ...orig, markers }, gesture)
                     }
                     const up = () => {
+                      showSnap(null)
                       el.removeEventListener('pointermove', move)
                       el.removeEventListener('pointerup', up)
                     }
@@ -484,14 +585,15 @@ export function EditTimeline(p: Props) {
             className={'mt-section k-' + kind}
             // cada metade ocupa pelo menos metade da altura; o vídeo encosta na divisória por cima
             style={{ minHeight: Math.max(0, (view.h - RULER_H - DIVIDER_H) / 2) }}
+            onContextMenu={(e) => openMenu(e, kind, null)}
           >
             {kind === 'audio' && <div className="mt-divider" style={{ height: DIVIDER_H }} />}
-            {kind === 'video' && <AddTrack kind="video" onAdd={addTrack} />}
+            {kind === 'video' && <AddHint kind="video" onMenu={(e) => openMenu(e, 'video', null)} />}
             {data.tracks
               .filter((tr) => tr.kind === kind)
               .map((tr) => (
                 <div key={tr.id} className={'mt-track k-' + tr.kind + (tr.muted ? ' muted' : '')} style={{ height: trackHeight(tr) }}>
-                  <div className="mt-head">
+                  <div className="mt-head" onContextMenu={(e) => openMenu(e, tr.kind, tr)} title="Botão direito: opções da faixa">
                     <span>{tr.name}</span>
                     {tr.kind === 'audio' && (
                       <button
@@ -517,6 +619,7 @@ export function EditTimeline(p: Props) {
                       if (e.button !== 0) return
                       startMarquee(e)
                     }}
+                    onContextMenu={(e) => openMenu(e, tr.kind, tr)}
                   >
                     {data.clips
                       .filter((c) => c.track === tr.id)
@@ -580,6 +683,7 @@ export function EditTimeline(p: Props) {
                         onMenu={p.onBlockMenu}
                         change={p.change}
                         snap={snap}
+                        showSnap={showSnap}
                         trackAt={trackAt}
                         busy={p.blockBusy}
                       />
@@ -592,7 +696,7 @@ export function EditTimeline(p: Props) {
                   </div>
                 </div>
               ))}
-            {kind === 'audio' && <AddTrack kind="audio" onAdd={addTrack} />}
+            {kind === 'audio' && <AddHint kind="audio" onMenu={(e) => openMenu(e, 'audio', null)} />}
           </div>
         ))}
         {box && (
@@ -606,18 +710,92 @@ export function EditTimeline(p: Props) {
             }}
           />
         )}
+        {menu && (
+          <TrackMenu
+            menu={menu}
+            canRemove={!!menu.track && data.tracks.filter((t) => t.kind === menu.kind).length > 1}
+            armed={!!menu.track && p.armed === menu.track.id}
+            close={() => setMenu(null)}
+            addTrack={() => addTrack(menu.kind)}
+            removeTrack={() => menu.track && removeTrack(menu.track)}
+            addBlock={() => {
+              const tr = menu.track ?? data.tracks.find((t) => t.kind === 'video')
+              if (tr) p.onAddBlockAt(tr.id, menu.t)
+            }}
+            addLettering={() => p.onAddLetteringAt(menu.t)}
+            arm={() => menu.track && p.onArm(menu.track.id)}
+          />
+        )}
+        <div className="mt-snapline" ref={snapLineRef} style={{ display: 'none' }} />
         <div className="mt-playhead" ref={p.playheadRef} style={{ left: HEAD_W }} />
       </div>
     </div>
   )
 }
 
-function AddTrack({ kind, onAdd }: { kind: 'video' | 'audio'; onAdd: (k: 'video' | 'audio') => void }) {
+/** no lugar dos botões de criar: lembra que o botão direito cria (e o clique abre o menu) */
+function AddHint({ kind, onMenu }: { kind: 'video' | 'audio'; onMenu: (e: React.MouseEvent) => void }) {
   return (
     <div className="mt-add-track">
-      <button className="btn small" onClick={() => onAdd(kind)}>
-        <Plus size={12} /> {kind === 'video' ? 'Vídeo' : 'Áudio'}
+      <button className="mt-add-hint" title="Clique (ou botão direito em qualquer faixa) pra ver as opções de criação" onClick={onMenu}>
+        <Plus size={11} /> {kind === 'video' ? 'botão direito: criar no vídeo' : 'botão direito: criar no áudio'}
       </button>
+    </div>
+  )
+}
+
+function TrackMenu(p: {
+  menu: { x: number; y: number; kind: 'video' | 'audio'; track: MontageTrack | null; t: number }
+  canRemove: boolean
+  armed: boolean
+  close: () => void
+  addTrack: () => void
+  removeTrack: () => void
+  addBlock: () => void
+  addLettering: () => void
+  arm: () => void
+}) {
+  const { menu } = p
+  const act = (fn: () => void) => () => {
+    p.close()
+    fn()
+  }
+  const video = menu.kind === 'video'
+  return (
+    <div
+      className="ctx-menu"
+      style={{ left: menu.x, top: menu.y }}
+      ref={(el) => {
+        if (!el) return
+        const r = el.getBoundingClientRect()
+        if (r.bottom > window.innerHeight - 8) el.style.top = `${Math.max(8, window.innerHeight - r.height - 8)}px`
+        if (r.right > window.innerWidth - 8) el.style.left = `${Math.max(8, window.innerWidth - r.width - 8)}px`
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <div className="ctx-label">
+        {menu.track ? menu.track.name : video ? 'Vídeo' : 'Áudio'} · {formatTime(menu.t)}
+      </div>
+      {video ? (
+        <>
+          <button onClick={act(p.addBlock)}>
+            Bloco de instrução aqui <kbd>B</kbd>
+          </button>
+          <button onClick={act(p.addLettering)}>
+            Lettering do capítulo aqui <kbd>L</kbd>
+          </button>
+        </>
+      ) : (
+        menu.track && <button onClick={act(p.arm)}>{p.armed ? 'Desarmar a gravação' : 'Gravar nesta faixa (armar)'}</button>
+      )}
+      <div className="ctx-sep" />
+      <button onClick={act(p.addTrack)}>{video ? 'Nova faixa de vídeo' : 'Nova faixa de áudio'}</button>
+      {menu.track && (
+        <button className="danger" disabled={!p.canRemove} title={p.canRemove ? '' : 'Precisa sobrar pelo menos uma faixa desse tipo'} onClick={act(p.removeTrack)}>
+          Apagar a faixa "{menu.track.name}"
+        </button>
+      )}
     </div>
   )
 }

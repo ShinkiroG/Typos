@@ -16,8 +16,10 @@ export function BlockLayer(p: {
   onOpen: (id: string) => void
   onMenu: (e: React.MouseEvent, id: string) => void
   change: (next: MontageData, gesture?: string) => void
-  /** ímã (bordas dos cortes, playhead) sem contar os ids passados */
-  snap: (t: number, skip: string[]) => number
+  /** ímã (bordas dos cortes, playhead) sem contar os ids passados; on = Shift segurado */
+  snap: (t: number, skip: string[], on?: boolean) => number
+  /** linha do encaixe (null esconde) */
+  showSnap: (t: number | null) => void
   /** faixa embaixo do mouse */
   trackAt: (clientY: number) => { id: string; kind: 'video' | 'audio' } | null
   /** gerando prévia agora */
@@ -41,26 +43,37 @@ export function BlockLayer(p: {
     d.moved = true
     const o = d.orig
     const dt = (e.clientX - d.x0) / p.pps
+    const sh = e.shiftKey
+    const off = (a: number, b: number) => Math.abs(a - b) > 1e-6
+    let hit: number | null = null
     let nb: InstructionBlock
     if (d.kind === 'move') {
       const len = blockDur(o)
       let s = Math.max(0, o.start + dt)
-      const a = p.snap(s, [o.id])
-      const z = p.snap(s + len, [o.id]) - len
-      s = Math.max(0, Math.abs(a - s) <= Math.abs(z - s) ? a : z)
+      const a = p.snap(s, [o.id], sh)
+      const z = p.snap(s + len, [o.id], sh) - len
+      const first = Math.abs(a - s) <= Math.abs(z - s)
+      if (first ? off(a, s) : off(z, s)) hit = first ? a : z + len
+      s = Math.max(0, first ? a : z)
       const tr = p.trackAt(e.clientY)
       nb = { ...o, start: s, end: s + len, track: tr?.kind === 'video' ? tr.id : o.track }
     } else if (d.kind === 'l') {
-      const s = Math.min(o.end - BLOCK_MIN, Math.max(0, p.snap(o.start + dt, [o.id])))
-      nb = { ...o, start: s }
+      const raw = Math.max(0, o.start + dt)
+      const sn = p.snap(raw, [o.id], sh)
+      if (off(sn, raw)) hit = sn
+      nb = { ...o, start: Math.min(o.end - BLOCK_MIN, Math.max(0, sn)) }
     } else {
-      const en = Math.max(o.start + BLOCK_MIN, p.snap(o.end + dt, [o.id]))
-      nb = { ...o, end: en }
+      const raw = o.end + dt
+      const sn = p.snap(raw, [o.id], sh)
+      if (off(sn, raw)) hit = sn
+      nb = { ...o, end: Math.max(o.start + BLOCK_MIN, sn) }
     }
+    p.showSnap(hit)
     p.change({ ...p.data, blocks: d.all.map((x) => (x.id === o.id ? nb : x)) }, d.g)
   }
   const up = () => {
     drag.current = null
+    p.showSnap(null)
   }
 
   return (

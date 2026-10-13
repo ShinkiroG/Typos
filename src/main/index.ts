@@ -314,10 +314,88 @@ ipcMain.handle('project:open', async (_e, dir?: string): Promise<Result<{ dir: s
   return { dir, data, draft: isDraft(dir) }
 })
 
+// ---------- arquivos da pasta do projeto (tipo Premiere) ----------
+// Cada capítulo e cada bloco de instrução vira um .md numa pasta do roteiro, pra ver quantos tem e o que
+// cada um diz sem abrir o Typos. São gerados a cada salvar; a fonte continua sendo o roteiro.json.
+const GEN_TAG = '<!-- typos: gerado automaticamente a cada salvar; edite no Typos -->'
+const CHAPTERS_DIR = 'Capítulos'
+const BLOCKS_DIR = 'Blocos de instrução'
+const fileSafe = (s: string) => s.replace(/[<>:"/\\|?*\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60).replace(/[. ]+$/, '') || 'sem nome'
+const tc = (t: number) => {
+  const m = Math.floor(Math.max(0, t) / 60)
+  const s = Math.max(0, t) - m * 60
+  return `${m}:${s.toFixed(1).padStart(4, '0')}`
+}
+const nodeText = (n: any): string => (typeof n?.text === 'string' ? n.text : Array.isArray(n?.content) ? n.content.map(nodeText).join('') : '')
+
+/** escreve os arquivos da pasta e apaga os que sobraram (só os que o Typos gerou) */
+async function writeGenerated(dir: string, files: Map<string, string>) {
+  if (!files.size && !existsSync(dir)) return
+  await fs.mkdir(dir, { recursive: true })
+  for (const [name, body] of files) {
+    const path = join(dir, name)
+    const old = await fs.readFile(path, 'utf8').catch(() => null)
+    if (old !== body) await fs.writeFile(path, body, 'utf8')
+  }
+  for (const name of await fs.readdir(dir).catch(() => [] as string[])) {
+    if (files.has(name) || !name.toLowerCase().endsWith('.md')) continue
+    const head = await fs.readFile(join(dir, name), 'utf8').catch(() => '')
+    if (head.startsWith(GEN_TAG)) await fs.rm(join(dir, name), { force: true })
+  }
+  // pasta vazia que só o Typos usava some
+  if (!files.size && !(await fs.readdir(dir).catch(() => ['x'])).length) await fs.rmdir(dir).catch(() => null)
+}
+
+async function syncProjectFiles(root: string, data: any) {
+  const content: any[] = data?.doc?.content ?? []
+  const markers: any[] = data?.montage?.markers ?? []
+  const chapters = new Map<string, string>()
+  let n = 0
+  content.forEach((node, i) => {
+    if (node?.type !== 'chapter') return
+    const title = nodeText(node).trim()
+    if (!title) return
+    n++
+    const body: string[] = [GEN_TAG, '', `# Capítulo ${n}: ${title}`, '']
+    const mk = markers.find((m) => m.block === i)
+    body.push(mk ? `- Lettering na timeline: ${tc(mk.t)} → ${tc(mk.t + mk.dur)} (${Number(mk.dur).toFixed(1)} s)` : '- Lettering na timeline: ainda não marcado')
+    body.push('', '## Texto', '')
+    for (let j = i + 1; j < content.length && content[j]?.type !== 'chapter'; j++) {
+      const t = nodeText(content[j]).trim()
+      if (!t) continue
+      const tag = content[j].type === 'paragraph' ? '' : `[${String(content[j].type).toUpperCase()}] `
+      body.push(tag + t, '')
+    }
+    chapters.set(`${String(n).padStart(2, '0')} - ${fileSafe(title)}.md`, body.join('\n'))
+  })
+  const tracks: any[] = data?.montage?.tracks ?? []
+  const blocks = [...(data?.montage?.blocks ?? [])].sort((a: any, b: any) => a.start - b.start)
+  const blockFiles = new Map<string, string>()
+  blocks.forEach((b: any, i: number) => {
+    const name = String(b.name || '').trim() || `Bloco ${i + 1}`
+    const body: string[] = [GEN_TAG, '', `# ${name}`, '']
+    body.push(`- Tempo: ${tc(b.start)} → ${tc(b.end)} (${(b.end - b.start).toFixed(1)} s)`)
+    body.push(`- Faixa: ${tracks.find((t) => t.id === b.track)?.name ?? b.track}`)
+    body.push(`- Modo: ${b.dynamic ? 'dinâmico (o Claude deduz o motion pela fala)' : 'instruções escritas'}`)
+    body.push(`- Prévia: ${b.preview ? (b.approved ? 'aprovada' : 'gerada') : 'nenhuma'}`)
+    body.push('', '## Instruções', '', String(b.text || '').trim() || '(sem instruções ainda)', '')
+    const att: any[] = b.attachments ?? []
+    if (att.length) {
+      body.push('## Anexos', '')
+      for (const a of att) body.push(`- ${a.path ?? a.name ?? ''} (${a.use === 'insert' ? 'entra no vídeo' : 'referência'})${a.note ? `: ${a.note}` : ''}`)
+      body.push('')
+    }
+    blockFiles.set(`${String(i + 1).padStart(2, '0')} - ${fileSafe(name)}.md`, body.join('\n'))
+  })
+  await writeGenerated(join(root, CHAPTERS_DIR), chapters)
+  await writeGenerated(join(root, BLOCKS_DIR), blockFiles)
+}
+
 ipcMain.handle('project:save', async (_e, dir: string, data: any, markdown: string): Promise<Result<true>> => {
   try {
     await writeJson(join(dir, PROJECT_FILE), data)
     await fs.writeFile(join(dir, MARKDOWN_FILE), markdown, 'utf8')
+    await syncProjectFiles(dir, data).catch((err) => console.warn('arquivos do projeto:', err))
     if (!isDraft(dir)) await touchRecent(dir, data.title)
     return true
   } catch (err) {
@@ -344,6 +422,7 @@ ipcMain.handle('project:saveAs', async (_e, dir: string, data: any, markdown: st
     await fs.cp(dir, target, { recursive: true })
     await writeJson(join(target, PROJECT_FILE), data)
     await fs.writeFile(join(target, MARKDOWN_FILE), markdown, 'utf8')
+    await syncProjectFiles(target, data).catch((err) => console.warn('arquivos do projeto:', err))
     if (isDraft(dir)) await fs.rm(dir, { recursive: true, force: true })
     await touchRecent(target, data.title)
     await rememberParent(target)
