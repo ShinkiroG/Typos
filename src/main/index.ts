@@ -16,6 +16,7 @@ import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, f
 import { initWhisper } from './whisper'
 import { initVersions, snapshotVersion } from './versions'
 import { initRelink } from './relink'
+import { initExportProject, fixExternalPaths } from './exportProject'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer.
 // Sem bypassCSP: o CSP de cada página decide o que ela pode ler (a do app libera rs:, a demo da IA não)
@@ -299,6 +300,7 @@ initDownloads()
 initWhisper()
 initVersions()
 initRelink()
+initExportProject()
 initLog(async () => {
   const s = await loadSettings()
   const ff = await findFfmpeg().catch(() => null)
@@ -366,8 +368,10 @@ ipcMain.handle('project:open', async (_e, dir?: string): Promise<Result<{ dir: s
   }
   const file = join(dir, PROJECT_FILE)
   if (!existsSync(file)) return { error: `Essa pasta não tem um ${PROJECT_FILE}.` }
-  const data = await readJson<any>(file, null)
-  if (!data) return { error: `Não consegui ler o ${PROJECT_FILE}.` }
+  const raw = await readJson<any>(file, null)
+  if (!raw) return { error: `Não consegui ler o ${PROJECT_FILE}.` }
+  // veio de um "Exportar projeto" aberto em outro PC: mídia de fora aponta pra _midia-externa daqui
+  const data = fixExternalPaths(dir, raw)
   if (!isDraft(dir)) await touchRecent(dir, data.title ?? basename(dir))
   return { dir, data, draft: isDraft(dir) }
 })

@@ -779,6 +779,21 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         { label: 'Mudar pasta do projeto…', onClick: () => moveProject() },
         { label: 'Abrir pasta do projeto', onClick: () => api.openPath(dir) },
         {
+          label: 'Exportar projeto (.zip)…',
+          onClick: async () => {
+            if (draft) return setToast('Salve o roteiro numa pasta antes de exportar.')
+            await save()
+            api.onExportProgress((pct) => setToast(`Exportando projeto… ${pct}%`))
+            const r = await api.exportProject(dir, title)
+            if (!r) return
+            if ('error' in r) return setToast(r.error)
+            const gb = r.bytes / 1024 ** 3
+            setToast(
+              `Projeto exportado (${gb >= 1 ? gb.toFixed(1).replace('.', ',') + ' GB' : Math.max(1, Math.round(r.bytes / 1024 ** 2)) + ' MB'}, ${r.external} ${r.external === 1 ? 'mídia de fora' : 'mídias de fora'}): ${r.path}`
+            )
+          }
+        },
+        {
           label: 'Versões anteriores',
           items: async () => {
             const list = await api.listVersions(dir)
