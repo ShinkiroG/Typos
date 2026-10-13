@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, BookmarkPlus, Check, Maximize2, Trash2, AlertTriangle } from 'lucide-react'
+import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle } from 'lucide-react'
 import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type InstructionBlock } from '../lib'
 import { blockDur, blockLabel, isImage, previewStale } from './blocks'
 
@@ -127,7 +127,7 @@ export function BlockForm({ b, dir, patch, big }: FormProps & { big?: boolean })
   )
 }
 
-/** prévia: vídeo, gerar de novo, aprovar e guardar na memória */
+/** prévia: vídeo, gerar de novo, aprovar (vira clipe na timeline) */
 export function BlockPreviewBox({
   b,
   busy,
@@ -152,7 +152,7 @@ export function BlockPreviewBox({
       ) : (
         <div className="blk-prev-empty">
           <Film size={big ? 28 : 18} />
-          <span>Sem prévia ainda. A prévia sai em 12 fps e baixa resolução, com o áudio do trecho.</span>
+          <span>Sem prévia ainda. A prévia sai em 12 fps e baixa resolução, com o áudio do trecho. Aprovada, ela é gravada na resolução do projeto e entra na timeline como clipe.</span>
         </div>
       )}
       {stale && (
@@ -178,8 +178,13 @@ export function BlockPreviewBox({
             <Sparkles size={13} /> {b.preview ? 'Refazer prévia' : 'Gerar prévia'}
           </button>
           {b.preview && (
-            <button className={'btn small' + (b.approved ? ' on' : '')} onClick={onApprove} title="Aprova esta prévia (o render reaproveita) e guarda o motion na memória do formato">
-              {b.approved ? <Check size={13} /> : <BookmarkPlus size={13} />} {b.approved ? 'Aprovada' : 'Aprovar e guardar na memória'}
+            <button
+              className="btn small"
+              disabled={!!busy}
+              onClick={onApprove}
+              title="Grava esta animação na resolução do projeto, com o áudio do trecho, e põe o clipe na timeline no lugar do bloco (Ctrl+Z desfaz). O motion também vai pra memória do formato."
+            >
+              <Check size={13} /> Aprovar e importar na timeline
             </button>
           )}
         </div>

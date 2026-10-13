@@ -1179,16 +1179,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
 
       {renderVisited && (
         <div className="montage-layer" style={mode === 'render' ? undefined : { display: 'none' }}>
-          <RenderStudio
-            active={mode === 'render'}
-            dir={dir}
-            title={title}
-            format={format}
-            montage={montage}
-            lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
-            getDoc={() => editorRef.current?.getJSON()}
-            save={save}
-          />
+          <RenderStudio active={mode === 'render'} dir={dir} format={format} montage={montage} save={save} />
         </div>
       )}
       {styleVisited && (

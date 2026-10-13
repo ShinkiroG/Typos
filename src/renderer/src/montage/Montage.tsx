@@ -48,7 +48,7 @@ import { askText } from '../components/AskDialog'
 import { YoutubeDownload } from '../components/YoutubeDownload'
 import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H, mediaLen, splitClip, trackHeight, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
-import { blockLabel, generatePreview, memoryFromBlock, newBlock } from './blocks'
+import { blockDur, blockLabel, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale } from './blocks'
 import { BlockInspector, BlockWindow, type BlockBusy } from './BlockPanel'
 
 export const fmtTc = (t: number) => {
@@ -57,6 +57,9 @@ export const fmtTc = (t: number) => {
   const sec = s - m * 60
   return `${m}:${sec.toFixed(2).padStart(5, '0')}`
 }
+
+/** pasta onde entram os clipes de motion aprovados */
+const MOTION_BIN = 'motion'
 
 const kindOfPath = (p: string): MontageMedia['kind'] =>
   /\.(mp3|wav|m4a|aac|flac|ogg|opus)$/i.test(p) ? 'audio' : /\.(png|jpe?g|webp)$/i.test(p) ? 'image' : 'video'
@@ -865,7 +868,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     if (blockOpen === id) setBlockOpen(null)
   }
   useEffect(() => {
-    api.onMotionPreviewProgress((p) => setBlockBusy((b) => (b && b.id === p.block ? { ...b, label: p.stage === 'vídeo' ? 'Montando o vídeo…' : 'Gravando a prévia (12 fps)…', pct: p.pct } : b)))
+    api.onMotionPreviewProgress((p) => setBlockBusy((b) => (b && b.id === p.block ? { ...b, label: p.stage === 'vídeo' ? 'Montando o vídeo…' : b.label, pct: p.pct } : b)))
   }, [])
   const makePreview = async (id: string) => {
     const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
@@ -891,19 +894,67 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
       setBlockBusy(null)
     }
   }
-  /** aprova a prévia (o render reaproveita) e guarda o motion na memória do formato */
+  /**
+   * Aprova a prévia: grava a mesma animação na resolução do projeto (com o áudio do trecho), põe o clipe
+   * na timeline no lugar do bloco e guarda o motion na memória do formato. Ctrl+Z traz o bloco de volta.
+   */
   const approveBlock = async (id: string) => {
     const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
-    if (!b?.preview) return
-    if (b.approved) return patchBlock(id, { approved: false })
-    patchBlock(id, { approved: true })
-    if (!format || !onFormatChange) return
-    const html = await fetch(fileUrl(b.preview.html))
-      .then((r) => r.text())
-      .catch(() => '')
-    const item = await memoryFromBlock(b, html)
-    const motion = format.motion ?? { refs: [] }
-    onFormatChange({ ...format, motion: { ...motion, memory: [...(motion.memory ?? []), item] } })
+    if (!b?.preview || blockBusy) return
+    if (previewStale(b) && !confirm('O bloco mudou depois desta prévia. Importar a prévia assim mesmo, com o tempo atual do bloco?')) return
+    setBlockBusy({ id, label: 'Preparando o clipe…', pct: null })
+    try {
+      const video = await generateClip({ block: b, data: dataRef.current, engine, dur, format, dir, onStage: (label, pct) => setBlockBusy({ id, label, pct }) })
+      const info = await api.probeMedia(video)
+      if ('error' in info) throw new Error(info.error)
+      const d = dataRef.current
+      const len = blockDur(b)
+      const bins = d.bins.some((x) => x.id === MOTION_BIN) ? d.bins : [...d.bins, { id: MOTION_BIN, name: 'Motion aprovado', role: 'custom' as const }]
+      const m: MontageMedia = {
+        id: uid(),
+        bin: MOTION_BIN,
+        path: video,
+        name: blockLabel(b) + '.mp4',
+        kind: 'video',
+        duration: info.duration || len,
+        hasAudio: info.hasAudio,
+        hasVideo: true,
+        width: info.width,
+        height: info.height,
+        fps: info.fps
+      }
+      // na faixa do bloco; se já tem corte ali, na primeira faixa de vídeo livre acima (ou numa nova, em cima de tudo)
+      const free = (tid: string) => !d.clips.some((c) => c.track === tid && c.start < b.end - 0.001 && clipEndT(c) > b.start + 0.001)
+      const vids = d.tracks.filter((t) => t.kind === 'video')
+      const at = Math.max(0, vids.findIndex((t) => t.id === b.track))
+      let tracks = d.tracks
+      let track = [vids[at], ...vids.slice(0, at).reverse()].find((t) => t && free(t.id))?.id
+      if (!track) {
+        const n = vids.length + 1
+        const t = { id: 'V' + n + '-' + uid().slice(0, 4), kind: 'video' as const, name: `V${n} · Motion` }
+        tracks = [t, ...tracks]
+        track = t.id
+      }
+      // o som do clipe é a narração do trecho, que já está nas faixas de áudio: fica desligado (dá pra ligar no inspetor)
+      const clip: MontageClip = { id: uid(), track, media: m.id, start: b.start, in: 0, out: Math.min(m.duration, len), audioOff: true }
+      change({ ...d, bins, tracks, media: [...d.media, m], clips: [...d.clips, clip], blocks: (d.blocks ?? []).filter((x) => x.id !== id) })
+      setBlockSel((s) => (s === id ? null : s))
+      setBlockOpen((s) => (s === id ? null : s))
+      setSelected([clip.id])
+      if (format && onFormatChange) {
+        const html = await fetch(fileUrl(b.preview.html))
+          .then((r) => r.text())
+          .catch(() => '')
+        const item = await memoryFromBlock(b, html)
+        const motion = format.motion ?? { refs: [] }
+        onFormatChange({ ...format, motion: { ...motion, memory: [...(motion.memory ?? []), item] } })
+      }
+    } catch (e) {
+      const msg = (e as Error).message
+      if (msg !== 'Cancelado.') alert('Não deu pra gerar o clipe: ' + msg)
+    } finally {
+      setBlockBusy(null)
+    }
   }
 
   // ---------- atalhos (só com a Montagem na frente) ----------
@@ -2232,6 +2283,12 @@ function ClipInspector({
         </label>
       </div>
       {m?.hasAudio && (
+        <label className="toggle-row mt-insp-row" title="Desligado, o som do arquivo não toca nem entra no render (clipes de motion aprovados já trazem a narração, que continua nas faixas de áudio)">
+          <input type="checkbox" checked={!c.audioOff} onChange={(e) => patch({ audioOff: e.target.checked ? undefined : true })} />
+          Tocar o som deste clipe
+        </label>
+      )}
+      {m?.hasAudio && !c.audioOff && (
         <label className="mt-insp-row">
           Volume <b>{(c.gainDb ?? 0) > 0 ? '+' : ''}{(c.gainDb ?? 0).toFixed(1)} dB</b>
           <input type="range" min={-30} max={12} step={0.5} value={c.gainDb ?? 0} onChange={(e) => patch({ gainDb: Number(e.target.value) }, g + 'g')} onDoubleClick={() => patch({ gainDb: 0 })} />

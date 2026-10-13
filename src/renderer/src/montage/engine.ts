@@ -196,7 +196,7 @@ export class MontageEngine {
     this.playing = true
 
     for (const s of spans(data, dur)) {
-      if (s.t1 <= from) continue
+      if (s.t1 <= from || s.clip.audioOff) continue
       const loaded = this.ready.get(s.clip.media)
       if (!loaded) continue
       const rel0 = Math.max(0, from - s.t0)

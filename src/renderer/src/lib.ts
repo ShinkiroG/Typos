@@ -674,6 +674,8 @@ export interface MontageClip {
   splice?: number
   /** bloco do roteiro (índice no documento) que esse trecho fala */
   block?: number
+  /** o som do próprio clipe não toca nem entra no render (ex.: clipe de motion que já traz a narração do trecho) */
+  audioOff?: boolean
 }
 export interface MontageData {
   bins: MontageBin[]
@@ -751,32 +753,6 @@ export interface MotionMemoryItem {
   text: string
   /** código da animação aprovada (resumido), pra servir de exemplo */
   html?: string
-}
-
-/** anexo de um bloco de instrução: imagem/vídeo pra INSERIR no vídeo ou só REFERÊNCIA pro motion */
-export interface InstructionAttachment {
-  /** caminho absoluto (o leitor do render já resolve o relativo à pasta do projeto) */
-  path: string
-  name: string
-  use: 'insert' | 'ref'
-  note?: string
-}
-/** bloco de instrução normalizado pro render (plan.ts): o render segue o texto dele (e nada do roteiro) nesse trecho */
-export interface RenderBlock {
-  id: string
-  /** faixa de vídeo onde o bloco está */
-  track: string
-  /** início e fim na timeline (s) */
-  start: number
-  end: number
-  /** como o autor imagina o motion */
-  text: string
-  /** motion dinâmico: o Claude deduz da fala do trecho */
-  dynamic?: boolean
-  attachments?: InstructionAttachment[]
-  /** prévia aprovada: o HTML da animação pode ser reaproveitado no render */
-  approved?: boolean
-  preview?: { html?: string; video?: string }
 }
 
 export const clipDur = (c: MontageClip) => c.out - c.in
