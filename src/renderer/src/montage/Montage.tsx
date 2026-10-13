@@ -35,7 +35,6 @@ import {
   ArrowUp,
   ArrowDown,
   Sparkles,
-  SquareDashed,
   AudioWaveform,
   FoldVertical,
   UnfoldVertical,
@@ -146,6 +145,10 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
   const recRef = useRef<Recorder | null>(null)
   const [armed, setArmed] = useState<string | null>(() => data.tracks.find((t) => t.kind === 'audio')?.id ?? null)
   const [rec, setRec] = useState<{ track: string; start: number } | null>(null)
+  // faixa armada foi apagada: a gravação passa pra primeira de áudio
+  useEffect(() => {
+    if (armed && !data.tracks.some((t) => t.id === armed)) setArmed(data.tracks.find((t) => t.kind === 'audio')?.id ?? null)
+  }, [data.tracks, armed])
   const recClipRef = useRef<HTMLDivElement>(null)
   const meterRef = useRef<HTMLDivElement>(null)
   const [prompter, setPrompter] = useState(() => localStorage.getItem('typos.prompter') !== '0')
@@ -844,12 +847,12 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     change({ ...d, blocks: (d.blocks ?? []).map((b) => (b.id === id ? { ...b, ...p } : b)) }, gesture)
   }
   /** bloco novo: no tempo dos cortes selecionados, ou 5 s a partir do playhead, na faixa de vídeo de cima */
-  const addBlock = () => {
+  const addBlock = (at?: { track: string; t: number }) => {
     const d = dataRef.current
-    const tr = d.tracks.find((t) => t.kind === 'video')
+    const tr = at ? d.tracks.find((t) => t.id === at.track) : d.tracks.find((t) => t.kind === 'video')
     if (!tr) return
-    const picked = d.clips.filter((c) => selected.includes(c.id))
-    const s = picked.length ? Math.min(...picked.map((c) => c.start)) : posRef.current
+    const picked = at ? [] : d.clips.filter((c) => selected.includes(c.id))
+    const s = picked.length ? Math.min(...picked.map((c) => c.start)) : (at?.t ?? posRef.current)
     const e = picked.length ? Math.max(...picked.map(clipEndT)) : s + 5
     const b = newBlock(tr.id, s, e)
     change({ ...d, blocks: [...(d.blocks ?? []), b] })
@@ -1054,13 +1057,13 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
     return () => window.removeEventListener('mousedown', close)
   }, [markMenu])
   /** marca no cursor o lettering do próximo capítulo que ainda não tem */
-  const addLettering = () => {
+  const addLettering = (at?: number) => {
     const chs = chapters()
     if (!chs.length) return alert('O roteiro não tem capítulos. Crie um capítulo (Ctrl+1) pra marcar o lettering dele.')
     const cur = dataRef.current
     const marked = new Set((cur.markers ?? []).map((m) => m.block))
     const ch = chs.find((c) => !marked.has(c.index)) ?? chs[0]
-    const mk: MontageMarker = { id: uid(), kind: 'lettering', t: posRef.current, dur: cur.letteringDur ?? 3, block: ch.index, label: ch.text.trim() }
+    const mk: MontageMarker = { id: uid(), kind: 'lettering', t: at ?? posRef.current, dur: cur.letteringDur ?? 3, block: ch.index, label: ch.text.trim() }
     change({ ...cur, markers: [...(cur.markers ?? []), mk].sort((a, b) => a.t - b.t) })
   }
   const patchMarker = (id: string, patch: Partial<MontageMarker>) =>
@@ -1798,7 +1801,7 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           ms
         </label>
         <span className="mt-sep" />
-        <button className="btn small mt-mark-btn" title="Marca no cursor onde entra o lettering do capítulo (L)" onClick={addLettering}>
+        <button className="btn small mt-mark-btn" title="Marca no cursor onde entra o lettering do capítulo (L)" onClick={() => addLettering()}>
           <Type size={13} /> Lettering
         </button>
         <label className="mt-splice-len" title="Tempo fixo de cada lettering novo (segundos)">
@@ -1871,14 +1874,6 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
             <Loader2 size={12} className="spin" /> {busy.label}
           </span>
         )}
-        <span className="mt-sep" />
-        <button
-          className="btn small"
-          title="Bloco de instrução (B): um trecho da faixa de vídeo com instruções de motion pro Claude. Entra no playhead (ou no tempo dos cortes selecionados)"
-          onClick={addBlock}
-        >
-          <SquareDashed size={13} /> Bloco de instrução
-        </button>
         <span className="mt-sep" />
         <button className="icon-btn" title="Desfazer (Ctrl+Z)" onClick={undo}>
           <Undo2 size={15} />
@@ -2181,6 +2176,8 @@ export function Montage({ active, data, onChange, lang, getBlocks, onSyncScript,
           onJoinMenu={onJoinMenu}
           onDropFile={dropPcFile}
           onMarkerMenu={(e, mk) => setMarkMenu({ x: e.clientX, y: e.clientY, id: mk.id })}
+          onAddBlockAt={(track, t) => addBlock({ track, t })}
+          onAddLetteringAt={(t) => addLettering(t)}
           armed={armed}
           onArm={(id) => setArmed((a) => (a === id ? null : id))}
           recording={rec}

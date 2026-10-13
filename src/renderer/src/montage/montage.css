@@ -1365,3 +1365,32 @@
   cursor: ew-resize;
   background: rgba(255, 255, 255, 0.25);
 }
+
+/* linha do ímã (Shift): aparece enquanto algo está grudado num começo/fim */
+.mt-snapline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed #ffd166;
+  pointer-events: none;
+  z-index: 5;
+}
+/* lembrete no lugar dos botões de criar faixa */
+.mt-add-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 10.5px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.mt-add-hint:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
