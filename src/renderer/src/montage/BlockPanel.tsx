@@ -269,6 +269,18 @@ export function BlockPreviewBox({
           <AlertTriangle size={12} /> O bloco mudou depois desta prévia.
         </div>
       )}
+      {!!b.preview?.safeIssues?.length && (
+        <details className="blk-prev-stale blk-prev-safe">
+          <summary>
+            <AlertTriangle size={12} /> Algo ainda ficou fora da safe zone. Peça um ajuste ou refaça.
+          </summary>
+          <ul>
+            {b.preview.safeIssues.map((t, i) => (
+              <li key={i}>{t.replace(/^- /, '')}</li>
+            ))}
+          </ul>
+        </details>
+      )}
       {mine ? (
         <div className="blk-prev-busy">
           <Loader2 size={13} className="spin" /> {busy!.label}

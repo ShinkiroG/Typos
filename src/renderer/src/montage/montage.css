@@ -1233,6 +1233,20 @@
   font-size: 11px;
   color: var(--c-transition);
 }
+.blk-prev-safe {
+  display: block;
+}
+.blk-prev-safe summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+.blk-prev-safe ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
 .blk-prev-busy {
   display: flex;
   flex-direction: column;
@@ -1332,6 +1346,7 @@
 }
 .modal.blk-window {
   width: min(1100px, 94vw);
+  height: 90vh;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
@@ -1350,11 +1365,27 @@
   margin-left: 6px;
 }
 .blk-window-body {
+  flex: 1;
   display: grid;
   grid-template-columns: 1.4fr 1fr;
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
-  overflow: auto;
   min-height: 0;
+}
+/* cada coluna rola sozinha; a prévia encolhe pra caber (vídeo vertical incluso) e os botões ficam à vista */
+.blk-window-body > * {
+  min-height: 0;
+  overflow: auto;
+}
+.blk-prev.big video {
+  flex: 0 1 auto;
+  min-height: 160px;
+  height: auto;
+  object-fit: contain;
+  background: transparent;
+}
+.blk-prev.big > :not(video) {
+  flex-shrink: 0;
 }
 
 /* corte por silêncio */
