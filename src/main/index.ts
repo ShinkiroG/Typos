@@ -13,9 +13,10 @@ import { initMotionPreview } from './motionPreview'
 import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, framesAt, initDownloads, type FrameWeights } from './media'
 import { initWhisper } from './whisper'
 
-// rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer
+// rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer.
+// Sem bypassCSP: o CSP de cada página decide o que ela pode ler (a do app libera rs:, a demo da IA não)
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'rs', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true, corsEnabled: true } }
+  { scheme: 'rs', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }
 ])
 
 const MIME: Record<string, string> = {
@@ -204,7 +205,7 @@ function createWindow() {
     ...(existsSync(join(app.getAppPath(), 'build', 'icon.png')) ? { icon: join(app.getAppPath(), 'build', 'icon.png') } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true
     }
   })
@@ -224,12 +225,46 @@ function createWindow() {
   else win.loadFile(join(__dirname, '../renderer/index.html'))
 }
 
+const HTML_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline' 'unsafe-eval'",
+  "style-src 'unsafe-inline' rs: data:",
+  'img-src rs: data: blob:',
+  'media-src rs: data: blob:',
+  'font-src rs: data:',
+  "connect-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'"
+].join('; ')
+
+/** arquivos do userData que guardam ajustes e chaves: o rs:// não serve */
+function isPrivateFile(p: string) {
+  const r = resolve(p).toLowerCase()
+  const ud = resolve(userDir()).toLowerCase()
+  return dirname(r) === ud && /\.(json|txt|typosprefs)$/.test(r)
+}
+
+/** o app só navega dentro dele mesmo: nada de janela ou quadro indo pra internet */
+const localUrl = (url: string) => /^(file|rs|devtools|about|data|blob):/i.test(url) || (!!process.env['ELECTRON_RENDERER_URL'] && url.startsWith(process.env['ELECTRON_RENDERER_URL']))
+app.on('web-contents-created', (_e, wc) => {
+  wc.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  wc.on('will-navigate', (e) => !localUrl(e.url) && e.preventDefault())
+  wc.on('will-frame-navigate', (e) => !localUrl(e.url) && e.preventDefault())
+})
+
 app.whenReady().then(() => {
   protocol.handle('rs', async (req) => {
     const p = decodeURIComponent(new URL(req.url).pathname.slice(1))
+    // configurações (com as chaves de API) nunca saem por aqui
+    if (isPrivateFile(p)) return new Response(null, { status: 403 })
     if (!existsSync(p)) return new Response(null, { status: 404 })
     // o renderer roda em file:// e precisa de CORS pra ler áudio com fetch()
     const headers = new Headers({ 'Access-Control-Allow-Origin': '*', 'Accept-Ranges': 'bytes', 'Content-Type': MIME[extname(p).toLowerCase()] ?? 'application/octet-stream' })
+    // HTML escrito pela IA (demo do estilo, prévias): roda isolado, sem ler arquivos nem falar com a internet
+    if (extname(p).toLowerCase() === '.html') headers.set('Content-Security-Policy', HTML_CSP)
     // vídeo grande: o player pede pedaços (Range) pra poder pular pra qualquer ponto sem ler tudo
     const size = (await fs.stat(p)).size
     const range = /bytes=(\d*)-(\d*)/.exec(req.headers.get('range') ?? '')

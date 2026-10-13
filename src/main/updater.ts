@@ -3,6 +3,7 @@ import { autoUpdater } from 'electron-updater'
 import { existsSync, writeFileSync, promises as fs } from 'fs'
 import { join, dirname } from 'path'
 import { spawn } from 'child_process'
+import { createHash } from 'crypto'
 
 const REPO = 'ShinkiroG/Typos'
 
@@ -28,6 +29,8 @@ function isNewer(remote: string, local: string) {
 interface Release {
   version: string
   zipUrl?: string
+  /** SHA-256 publicado junto (Typos-x.y.z-portable.zip.sha256); releases antigas não têm */
+  shaUrl?: string
 }
 
 async function latestRelease(): Promise<Release | null> {
@@ -38,7 +41,8 @@ async function latestRelease(): Promise<Release | null> {
   if (!r.ok) throw new Error(`GitHub respondeu ${r.status}`)
   const j: any = await r.json()
   const zip = (j.assets ?? []).find((a: any) => /portable\.zip$/i.test(a.name))
-  return { version: String(j.tag_name).replace(/^v/, ''), zipUrl: zip?.browser_download_url }
+  const sha = (j.assets ?? []).find((a: any) => /portable\.zip\.sha256$/i.test(a.name))
+  return { version: String(j.tag_name).replace(/^v/, ''), zipUrl: zip?.browser_download_url, shaUrl: sha?.browser_download_url }
 }
 
 interface Hooks {
@@ -59,7 +63,7 @@ function progress(p: number) {
   send('update:progress', p)
 }
 
-async function downloadZip(url: string, version: string) {
+async function downloadZip(url: string, version: string, shaUrl?: string) {
   const dest = join(app.getPath('temp'), `Typos-${version}-portable.zip`)
   const r = await fetch(url)
   if (!r.ok || !r.body) throw new Error(`Download falhou (${r.status})`)
@@ -78,6 +82,16 @@ async function downloadZip(url: string, version: string) {
   } finally {
     await fh.close()
     progress(-1)
+  }
+  // confere o arquivo antes de copiar por cima do app (download corrompido ou trocado no caminho)
+  if (shaUrl) {
+    const r2 = await fetch(shaUrl)
+    const want = r2.ok ? (await r2.text()).trim().split(/\s+/)[0]?.toLowerCase() : ''
+    const got2 = createHash('sha256').update(await fs.readFile(dest)).digest('hex')
+    if (!want || want !== got2) {
+      await fs.rm(dest, { force: true })
+      throw new Error('O arquivo da atualização veio diferente do publicado. Tente de novo mais tarde.')
+    }
   }
   return dest
 }
@@ -110,7 +124,7 @@ if ($Relaunch -eq 1) { Start-Process -FilePath $Exe }
   ).unref()
 }
 
-async function check(): Promise<{ version: string; zipUrl?: string } | null> {
+async function check(): Promise<Release | null> {
   if (installMode() === 'installer') {
     const r = await autoUpdater.checkForUpdates()
     const v = r?.updateInfo.version
@@ -121,7 +135,7 @@ async function check(): Promise<{ version: string; zipUrl?: string } | null> {
 }
 
 /** Baixa e instala já: fecha, atualiza e reabre. */
-async function applyNow(rel: { version: string; zipUrl?: string }) {
+async function applyNow(rel: Release) {
   send('update:status', { state: 'downloading', version: rel.version })
   if (installMode() === 'installer') {
     if (!downloadedInstaller) {
@@ -136,7 +150,7 @@ async function applyNow(rel: { version: string; zipUrl?: string }) {
     return
   }
   if (!rel.zipUrl) throw new Error('A versão nova não tem o .zip portátil.')
-  const zip = pendingZip?.version === rel.version ? pendingZip.zip : await downloadZip(rel.zipUrl, rel.version)
+  const zip = pendingZip?.version === rel.version ? pendingZip.zip : await downloadZip(rel.zipUrl, rel.version, rel.shaUrl)
   pendingZip = null
   await hooks.beforeQuit()
   runPortableSwap(zip, true)
@@ -200,7 +214,7 @@ async function autoCheck() {
       await autoUpdater.downloadUpdate()
       downloadedInstaller = rel.version
     } else if (rel.zipUrl) {
-      pendingZip = { zip: await downloadZip(rel.zipUrl, rel.version), version: rel.version }
+      pendingZip = { zip: await downloadZip(rel.zipUrl, rel.version, rel.shaUrl), version: rel.version }
     }
     send('update:ready', { version: rel.version })
   } catch {
