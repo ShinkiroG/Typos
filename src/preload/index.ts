@@ -22,6 +22,13 @@ const api = {
   recentProjects: () => ipcRenderer.invoke('project:recent'),
   /** Ajuda → Gerar relatório de erro (.txt com versão, ffmpeg e os últimos erros; sem chaves) */
   errorReport: (): Promise<{ path: string; lines: number } | null> => ipcRenderer.invoke('log:report'),
+  /** .zip com a pasta do roteiro e a mídia de fora que ele usa */
+  exportProject: (dir: string, title: string): Promise<{ path: string; files: number; external: number; bytes: number } | { error: string } | null> =>
+    ipcRenderer.invoke('project:export', dir, title),
+  onExportProgress: (cb: (pct: number) => void) => {
+    ipcRenderer.removeAllListeners('project:exportProgress')
+    ipcRenderer.on('project:exportProgress', (_e, pct) => cb(pct))
+  },
   logError: (text: string) => ipcRenderer.send('log:renderer', text),
   /** cópias automáticas do roteiro (as 10 mais novas, uma a cada 3 min no máximo) */
   listVersions: (dir: string): Promise<{ name: string; at: number; words: number; title: string }[]> => ipcRenderer.invoke('versions:list', dir),
