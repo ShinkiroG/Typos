@@ -588,3 +588,48 @@
   text-underline-offset: 4px;
   text-decoration-thickness: 1.5px;
 }
+
+/* ---------- mídia que sumiu (aviso ao abrir) ---------- */
+.missing-media {
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 81;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  max-width: min(760px, calc(100vw - 32px));
+  background: #2a2216;
+  border: 1px solid #8a6a2a;
+  border-radius: 10px;
+  padding: 8px 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+  color: #f7d9a0;
+}
+.missing-media em {
+  font-style: normal;
+  color: #e9e3d6;
+}
+.missing-list {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow: auto;
+  font-size: 12px;
+}
+.missing-list li {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  white-space: nowrap;
+}
+.missing-list li span {
+  color: #9a9384;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

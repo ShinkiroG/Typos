@@ -109,6 +109,9 @@ const api = {
   proxyAudio: (path: string): Promise<string | { error: string }> => ipcRenderer.invoke('media:proxy', path),
   loudness: (path: string, start: number, dur: number): Promise<{ i: number; tp: number } | null> => ipcRenderer.invoke('media:loudness', path, start, dur),
   mediaExists: (paths: string[]): Promise<boolean[]> => ipcRenderer.invoke('media:exists', paths),
+  missingMedia: (paths: string[]): Promise<string[]> => ipcRenderer.invoke('media:missing', paths),
+  /** procura na pasta (e subpastas) arquivos com o mesmo nome dos que sumiram: caminho antigo → novo */
+  relinkMedia: (paths: string[], root: string): Promise<Record<string, string>> => ipcRenderer.invoke('media:relink', paths, root),
   trashRecording: (path: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('media:trashRecording', path),
   trashProjectFiles: (dir: string, paths: string[]): Promise<{ trashed: number; errors: string[] }> => ipcRenderer.invoke('media:trashProjectFiles', dir, paths),
   showItem: (path: string) => ipcRenderer.invoke('shell:showItem', path),

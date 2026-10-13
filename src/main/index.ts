@@ -13,6 +13,7 @@ import { initMotionPreview } from './motionPreview'
 import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, framesAt, initDownloads, type FrameWeights } from './media'
 import { initWhisper } from './whisper'
 import { initVersions, snapshotVersion } from './versions'
+import { initRelink } from './relink'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer.
 // Sem bypassCSP: o CSP de cada página decide o que ela pode ler (a do app libera rs:, a demo da IA não)
@@ -295,6 +296,7 @@ initMedia()
 initDownloads()
 initWhisper()
 initVersions()
+initRelink()
 
 // ---------- configurações e atualizações ----------
 ipcMain.handle('settings:get', async () => {
