@@ -21,6 +21,7 @@ import { ShortsSetup } from '../shorts/ShortsSetup'
 import { separateAutoCut } from '../montage/autocut'
 import logoUrl from '../assets/logo.png'
 import { FilterBar } from './FilterBar'
+import { MissingMedia } from './MissingMedia'
 import { TrackGutter } from './TrackGutter'
 import { AiLineAssist } from './AiLineAssist'
 import { AiChatPanel } from './AiChatPanel'
@@ -1762,6 +1763,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         </div>
       )}
 
+      <MissingMedia montage={montage} onChange={setMontage} />
       {toast && <div className="toast">{toast}</div>}
       {mode === 'script' && (
         <FormatBubble
