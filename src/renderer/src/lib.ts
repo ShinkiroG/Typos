@@ -739,6 +739,8 @@ export interface BlockPreview {
   transcript: string
   /** impressão digital do bloco quando a prévia foi feita (muda = prévia desatualizada) */
   key: string
+  /** o que continuou fora da safe zone depois da correção automática */
+  safeIssues?: string[]
 }
 
 /** Bloco de instrução: um pedaço de tempo da faixa de vídeo com instruções de motion pro Claude. */

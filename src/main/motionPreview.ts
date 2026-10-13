@@ -223,6 +223,80 @@ export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed
   return { video, html: htmlPath }
 }
 
+export interface LayoutJob {
+  /** pasta do projeto: a checagem roda em <projeto>/previas/<bloco> */
+  dir: string
+  block: string
+  html: string
+  seconds: number
+  width: number
+  height: number
+  files: { src: string; name: string }[]
+  /** script que mede a página (devolve a lista de problemas daquele instante) */
+  probe: string
+  /** de quanto em quanto tempo medir (s) */
+  step?: number
+}
+
+export interface LayoutHit {
+  kind: string
+  what: string
+  t: number
+  rect: { x: number; y: number; w: number; h: number }
+}
+
+/**
+ * Checagem da safe zone: toca o HTML no relógio virtual (sem gravar quadros) e mede a página em vários
+ * instantes. Um elemento só conta se ficar fora do lugar por duas medições seguidas ou no quadro final
+ * (o que só atravessa a tela numa transição não conta).
+ */
+export async function checkLayout(job: LayoutJob): Promise<LayoutHit[]> {
+  const out = join(job.dir, 'previas', safeName(job.block))
+  await fs.mkdir(out, { recursive: true })
+  for (const f of job.files) await fs.copyFile(f.src, join(out, safeName(f.name))).catch(() => null)
+  const playPath = join(out, `_checar-${Math.random().toString(36).slice(2, 8)}.html`)
+  await fs.writeFile(playPath, withClock(job.html), 'utf8')
+  const W = Math.max(16, Math.round(job.width / 2) * 2)
+  const H = Math.max(16, Math.round(job.height / 2) * 2)
+  const ses = session.fromPartition('typos-motion-preview')
+  ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|blob|about|devtools):/i.test(d.url) }))
+  const win = new BrowserWindow({
+    show: false,
+    width: W,
+    height: H,
+    useContentSize: true,
+    frame: false,
+    enableLargerThanScreen: true,
+    webPreferences: { offscreen: true, session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
+  })
+  win.setContentSize(W, H)
+  win.webContents.setFrameRate(60)
+  const found = new Map<string, LayoutHit>()
+  try {
+    await win.loadFile(playPath)
+    await win.webContents.executeJavaScript('(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => true)').catch(() => null)
+    const step = job.step ?? 0.25
+    const times: number[] = []
+    for (let t = 0; t < job.seconds - 0.01; t += step) times.push(t)
+    times.push(Math.max(0, job.seconds - 0.05))
+    let prev = new Map<string, LayoutHit>()
+    for (const [i, t] of times.entries()) {
+      if (busy?.cancel) throw new Error('Cancelado.')
+      await win.webContents.executeJavaScript(`window.__typosStep && window.__typosStep(${(t * 1000).toFixed(3)})`).catch(() => null)
+      const hits: Omit<LayoutHit, 't'>[] = (await win.webContents.executeJavaScript(job.probe).catch(() => [])) ?? []
+      const now = new Map<string, LayoutHit>()
+      for (const h of hits) now.set(h.kind + '|' + h.what, { ...h, t })
+      const last = i === times.length - 1
+      for (const [k, h] of now) if ((prev.has(k) || last) && !found.has(k)) found.set(k, prev.get(k) ?? h)
+      prev = now
+    }
+  } finally {
+    win.destroy()
+    await fs.rm(playPath, { force: true }).catch(() => null)
+  }
+  return [...found.values()].sort((a, z) => a.t - z.t)
+}
+
 export interface UnderJob {
   /** pasta do projeto: fica em <projeto>/previas/<bloco>/embaixo */
   dir: string
@@ -278,6 +352,13 @@ export function initMotionPreview() {
       return { error: String(err?.message ?? err) }
     } finally {
       busy = null
+    }
+  })
+  ipcMain.handle('motion:checkLayout', async (_e, job: LayoutJob) => {
+    try {
+      return { issues: await checkLayout(job) }
+    } catch (err: any) {
+      return { error: String(err?.message ?? err) }
     }
   })
   ipcMain.handle('motion:previewCancel', () => {

@@ -18,6 +18,7 @@ import { envAt, envPoints, spans, type MontageEngine } from './engine'
 import type { ScriptBlock } from './autocut'
 import { jobPct, runningLabel, speechFiles, watchJobs } from './transcripts'
 import { planRender, type VLayer } from '../render/plan'
+import { issuesTweak, layoutProbe, safeZoneDirection, safeZones, type LayoutIssue } from './safezone'
 
 /**
  * Blocos de instrução: pedaços de tempo na faixa de vídeo com instruções de motion.
@@ -375,6 +376,7 @@ export function blockPrompt(o: {
   L.push('')
   if (o.falas) L.push('## Roteiro do vídeo (só as falas, pra entender o tema)', o.falas.slice(0, 12000), '')
   L.push('## Direção de motion', MOTION_DIRECTION, syncDirection(blockSync(b)), '')
+  L.push(safeZoneDirection(safeZones(o.format?.aspect, o.size.w, o.size.h), o.size), '')
   const guide = o.format?.motion?.learned?.guide
   if (guide) L.push('## Guia de estilo do formato', guide, '')
   const m = o.format?.motion
@@ -491,10 +493,52 @@ export async function generatePreview(c: PreviewCtx) {
     adjust
   })
   c.onStage(adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', null)
-  const r = await api.motionTrain({ prompt, images: [...files.map((f) => absPath(f.a)), ...(under?.frames.map((f) => f.path) ?? []), ...tf.flat().map((f) => absPath(f.a))] })
+  const images = [...files.map((f) => absPath(f.a)), ...(under?.frames.map((f) => f.path) ?? []), ...tf.flat().map((f) => absPath(f.a))]
+  const r = await api.motionTrain({ prompt, images })
   if ('error' in r) throw new Error(r.error)
-  const html = parseDemo(r.text)
+  let html = parseDemo(r.text)
   if (!html) throw new Error('A IA respondeu fora do formato (sem o HTML da animação). Tente de novo.')
+  const playFiles = [
+    ...files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
+    ...tf.flat().map((f) => ({ src: absPath(f.a), name: f.name })),
+    ...(under ? [{ src: under.video, name: UNDER_NAME }] : [])
+  ]
+  // safe zone: mede a animação e, se algo ficou fora do lugar, devolve pro Claude corrigir (uma vez)
+  const zones = safeZones(c.format?.aspect, size.w, size.h)
+  const check = async (h: string): Promise<LayoutIssue[]> => {
+    const got = await api.motionCheckLayout({ dir: c.dir, block: b.id, html: h, seconds: blockDur(b), width: size.w, height: size.h, files: playFiles, probe: layoutProbe(zones) })
+    if ('error' in got) {
+      if (got.error === 'Cancelado.') throw new Error(got.error)
+      return []
+    }
+    return got.issues
+  }
+  c.onStage('Conferindo a safe zone…', null)
+  let issues = await check(html)
+  if (issues.length && !c.signal?.aborted) {
+    c.onStage(`Claude corrigindo a safe zone (${issues.length} elemento${issues.length > 1 ? 's' : ''} fora do lugar)…`, null)
+    const fixPrompt = blockPrompt({
+      block: b,
+      format: c.format,
+      heard: heard.words,
+      heardError: heard.error,
+      hasAudio,
+      scriptHere: scriptIn(c.data, b, c.script),
+      falas: scriptFalas(c.script),
+      files,
+      size,
+      under,
+      adjust: { html, tweaks: [...(adjust?.tweaks ?? []), { text: issuesTweak(issues, zones), names: [] }] }
+    })
+    const f = await api.motionTrain({ prompt: fixPrompt, images })
+    const fixed = 'error' in f ? '' : parseDemo(f.text)
+    if (fixed) {
+      html = fixed
+      c.onStage('Conferindo a safe zone de novo…', null)
+      issues = await check(html)
+    }
+  }
+  if (c.signal?.aborted) throw new Error('Cancelado.')
   c.onStage('Mixando o áudio do trecho…', null)
   const wav = hasAudio ? await rangeWav(c.engine, c.data, c.dur, b.start, b.end).catch(() => undefined) : undefined
   c.onStage('Gravando a prévia (12 fps)…', 0)
@@ -507,11 +551,7 @@ export async function generatePreview(c: PreviewCtx) {
     height: size.h,
     fps: PREVIEW_FPS,
     wav,
-    files: [
-      ...files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
-      ...tf.flat().map((f) => ({ src: absPath(f.a), name: f.name })),
-      ...(under ? [{ src: under.video, name: UNDER_NAME }] : [])
-    ]
+    files: playFiles
   })
   if ('error' in v) throw new Error(v.error)
   return {
@@ -520,7 +560,8 @@ export async function generatePreview(c: PreviewCtx) {
     at: new Date().toISOString(),
     provider: r.provider,
     transcript: phrases(heard.words),
-    key: blockKey(b)
+    key: blockKey(b),
+    safeIssues: issues.length ? issuesTweak(issues, zones).split('\n').slice(1) : undefined
   }
 }
 

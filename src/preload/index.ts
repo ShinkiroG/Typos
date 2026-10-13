@@ -259,6 +259,19 @@ const api = {
     htmlPath?: string
   }): Promise<{ video: string; html: string } | { error: string }> => ipcRenderer.invoke('motion:preview', job),
   motionPreviewCancel: () => ipcRenderer.invoke('motion:previewCancel'),
+  /** mede o HTML do motion em vários instantes e devolve o que está fora da safe zone / em cima da faixa persistente */
+  motionCheckLayout: (job: {
+    dir: string
+    block: string
+    html: string
+    seconds: number
+    width: number
+    height: number
+    files: { src: string; name: string }[]
+    probe: string
+    step?: number
+  }): Promise<{ issues: { kind: 'fora' | 'faixa' | 'faixa-vaza'; what: string; t: number; rect: { x: number; y: number; w: number; h: number } }[] } | { error: string }> =>
+    ipcRenderer.invoke('motion:checkLayout', job),
   /** o que está nas faixas de vídeo embaixo de um bloco, recortado num MP4 sem som (0 s = começo do bloco) */
   motionUnderVideo: (job: {
     dir: string
