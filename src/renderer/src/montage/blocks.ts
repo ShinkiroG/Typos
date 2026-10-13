@@ -33,10 +33,28 @@ export function newBlock(track: string, start: number, end: number): Instruction
 
 /** impressão digital: se mudar, a prévia que existe ficou velha */
 export function blockKey(b: InstructionBlock) {
-  const s = JSON.stringify([b.start.toFixed(2), b.end.toFixed(2), b.text.trim(), !!b.dynamic, b.attachments.map((a) => [a.path, a.use, a.note ?? ''])])
+  const s = JSON.stringify([b.start.toFixed(2), b.end.toFixed(2), b.text.trim(), !!b.dynamic, b.attachments.map((a) => [a.path, a.use, a.note ?? '']), blockSync(b)])
   let h = 5381
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
   return (h >>> 0).toString(36)
+}
+
+/** sincronia do motion com a fala (0–1); blocos antigos ficam no meio-termo de antes */
+export const SYNC_DEFAULT = 0.3
+export const blockSync = (b: InstructionBlock) => Math.max(0, Math.min(1, b.sync ?? SYNC_DEFAULT))
+
+/** como o motion acompanha a fala, conforme o slider */
+export function syncDirection(v: number) {
+  const pct = Math.round(v * 100)
+  if (v <= 0.05)
+    return `- Sincronia com a fala: ${pct}% (NENHUMA). Ignore o tempo da fala: ela só dá o tema. O motion tem ritmo próprio, contínuo, sem nenhum evento marcado em palavra ou frase.`
+  if (v < 0.4)
+    return `- Sincronia com a fala: ${pct}% (pouca). NÃO sincronize cada frase. A fala dá o tema e só 1 a 3 momentos-chave (um número, um nome, uma virada) casam com o áudio, no tempo exato. O resto respira com movimento contínuo.`
+  if (v < 0.75)
+    return `- Sincronia com a fala: ${pct}% (meio-termo). Cada ideia nova da fala ganha uma mudança visual no tempo em que é dita (troca de composição, entrada de elemento), e os números, nomes e viradas caem no tempo exato. Entre essas marcas, movimento contínuo; não precisa seguir palavra por palavra.`
+  if (v < 0.95)
+    return `- Sincronia com a fala: ${pct}% (bastante). Quase toda frase tem um acontecimento visual no tempo em que é dita: elementos entram, mudam e saem acompanhando a narração, e as palavras-chave aparecem na tela no instante em que são faladas.`
+  return `- Sincronia com a fala: ${pct}% (TOTAL). Siga a narração frase a frase e palavra-chave por palavra-chave, usando os tempos da transcrição: cada fala tem seu evento visual exatamente no tempo dela (entra quando começa, troca quando a próxima começa). Texto na tela continua curto (palavras-chave), não a frase inteira.`
 }
 
 export const previewStale = (b: InstructionBlock) => !!b.preview && b.preview.key !== blockKey(b)
@@ -166,7 +184,6 @@ export const MOTION_DIRECTION = [
   '- Pense como motion designer, não como apresentador de slides: nada de lista de tópicos surgindo um embaixo do outro, nada de "cartão com título + bullets".',
   '- Antes de animar, imagine de 3 a 7 ideias de apresentação bem diferentes pro trecho (gráfico que se monta, objeto isométrico, mapa, linha do tempo, comparação lado a lado, tipografia gigante em close, colagem, interface recriada, câmera viajando por um cenário, contador, metáfora visual…) e escolha a mais forte. Em trechos longos, encadeie 2 ou 3 composições diferentes.',
   '- Varie a composição de cena de um momento pro outro: escala (close × aberto), centro × terços, camadas com profundidade, movimento de câmera, ritmo.',
-  '- NÃO sincronize cada frase da fala. A fala dá o tema e os momentos-chave (um número, um nome, uma virada); só esses picos casam com o áudio. O resto respira com movimento contínuo.',
   '- Texto na tela é curto (palavra-chave, número, título), nunca a frase falada inteira.',
   '- Siga o guia de estilo e a memória de motion (o que o autor já aprovou).'
 ].join('\n')
@@ -246,7 +263,7 @@ export function blockPrompt(o: {
   if (o.scriptHere.length) L.push('', 'Falas do roteiro que caem aqui (use pra acertar nomes e termos; a fala gravada manda, inclusive improvisos):', ...o.scriptHere.map((s) => '> ' + s))
   L.push('')
   if (o.falas) L.push('## Roteiro do vídeo (só as falas, pra entender o tema)', o.falas.slice(0, 12000), '')
-  L.push('## Direção de motion', MOTION_DIRECTION, '')
+  L.push('## Direção de motion', MOTION_DIRECTION, syncDirection(blockSync(b)), '')
   const guide = o.format?.motion?.learned?.guide
   if (guide) L.push('## Guia de estilo do formato', guide, '')
   const m = o.format?.motion

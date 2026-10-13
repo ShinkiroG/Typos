@@ -1106,6 +1106,17 @@
   font-size: 11px;
   color: var(--muted);
 }
+.blk-sync span {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.blk-sync b {
+  color: var(--text);
+}
+.blk-sync small {
+  margin-left: auto;
+}
 .blk-label textarea {
   resize: vertical;
   background: var(--bg);

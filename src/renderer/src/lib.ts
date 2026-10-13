@@ -741,6 +741,8 @@ export interface InstructionBlock {
   preview?: BlockPreview
   /** o autor aprovou a prévia (o render reaproveita a ideia) */
   approved?: boolean
+  /** quanto o motion acompanha a fala: 0 = não sincroniza, 1 = sincroniza tudo (sem valor = 0,3) */
+  sync?: number
 }
 
 /** memória de motion: o que o autor aprovou (demo do Estilo, prévias de blocos, notas) */

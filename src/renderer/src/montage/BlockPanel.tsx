@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle } from 'lucide-react'
 import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type InstructionBlock } from '../lib'
-import { blockDur, blockLabel, isImage, previewStale } from './blocks'
+import { blockDur, blockLabel, blockSync, isImage, previewStale } from './blocks'
 
 const fmtTc = (t: number) => {
   const m = Math.floor(Math.max(0, t) / 60)
@@ -71,6 +71,13 @@ export function BlockForm({ b, dir, patch, big }: FormProps & { big?: boolean })
           <Sparkles size={12} /> Dinâmico
         </button>
       </div>
+      <label className="blk-label blk-sync" title="Quanto o motion acompanha o que é dito no trecho. Vale na próxima prévia.">
+        <span>
+          Sincronia com a fala <b>{blockSync(b).toFixed(2).replace('.', ',')}</b>
+          <small>{blockSync(b) <= 0.05 ? 'não sincroniza' : blockSync(b) < 0.4 ? 'só os momentos-chave' : blockSync(b) < 0.75 ? 'meio-termo' : blockSync(b) < 0.95 ? 'quase tudo' : 'sincroniza tudo'}</small>
+        </span>
+        <input type="range" min={0} max={1} step={0.05} value={blockSync(b)} onChange={(e) => patch({ sync: Number(e.target.value) }, g + 'sy')} />
+      </label>
       <label className="blk-label">
         {b.dynamic ? 'Dicas (opcional): o motion sai da fala do trecho' : 'Como você imagina o motion'}
         <textarea
