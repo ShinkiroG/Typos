@@ -944,6 +944,26 @@ ipcMain.handle('media:trashRecording', async (_e, path: string) => {
     return { error: String(err) }
   }
 })
+/**
+ * Limpeza de arquivos não usados na Montagem: só o que está dentro da pasta do projeto vai pra Lixeira
+ * (gravações, downloads, clipes de motion); arquivos de fora ficam no PC, só saem do projeto.
+ */
+ipcMain.handle('media:trashProjectFiles', async (_e, dir: string, paths: string[]) => {
+  const root = resolve(dir) + sep
+  let trashed = 0
+  const errors: string[] = []
+  for (const p of paths) {
+    const full = resolve(p)
+    if (!full.toLowerCase().startsWith(root.toLowerCase()) || !existsSync(full)) continue
+    try {
+      await shell.trashItem(full)
+      trashed++
+    } catch (err) {
+      errors.push(`${basename(full)}: ${String(err)}`)
+    }
+  }
+  return { trashed, errors }
+})
 ipcMain.handle('shell:showItem', (_e, path: string) => shell.showItemInFolder(path))
 
 // ---------- workspace Estilo (treinar motion) ----------

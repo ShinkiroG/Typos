@@ -107,6 +107,7 @@ const api = {
   loudness: (path: string, start: number, dur: number): Promise<{ i: number; tp: number } | null> => ipcRenderer.invoke('media:loudness', path, start, dur),
   mediaExists: (paths: string[]): Promise<boolean[]> => ipcRenderer.invoke('media:exists', paths),
   trashRecording: (path: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('media:trashRecording', path),
+  trashProjectFiles: (dir: string, paths: string[]): Promise<{ trashed: number; errors: string[] }> => ipcRenderer.invoke('media:trashProjectFiles', dir, paths),
   showItem: (path: string) => ipcRenderer.invoke('shell:showItem', path),
   saveRecording: (dir: string, bytes: Uint8Array): Promise<string | { error: string }> => ipcRenderer.invoke('media:saveRecording', dir, bytes),
   ytdlpInfo: (): Promise<{ path: string } | null> => ipcRenderer.invoke('media:ytdlp'),
