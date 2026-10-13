@@ -65,6 +65,9 @@ export interface Probe {
   width?: number
   height?: number
   fps?: number
+  /** codec do vídeo (h264, hevc, prores…) e taxa em bits/s, quando o ffprobe diz */
+  codec?: string
+  bitrate?: number
 }
 
 export async function probe(path: string): Promise<Probe | { error: string }> {
@@ -83,7 +86,9 @@ export async function probe(path: string): Promise<Probe | { error: string }> {
         hasAudio: !!a,
         width: v?.width,
         height: v?.height,
-        fps: d ? n / d : undefined
+        fps: d ? n / d : undefined,
+        codec: v?.codec_name,
+        bitrate: Number(v?.bit_rate) || Number(j.format?.bit_rate) || undefined
       }
     } catch {
       /* cai pro ffmpeg -i */
@@ -97,7 +102,8 @@ export async function probe(path: string): Promise<Probe | { error: string }> {
     hasVideo: /Stream .*Video:/.test(r.err) && !/attached pic/.test(r.err),
     hasAudio: /Stream .*Audio:/.test(r.err),
     width: size ? +size[1] : undefined,
-    height: size ? +size[2] : undefined
+    height: size ? +size[2] : undefined,
+    codec: r.err.match(/Stream .*Video: (\w+)/)?.[1]
   }
 }
 
@@ -129,6 +135,52 @@ export function proxyAudio(path: string): Promise<string | { error: string }> {
   return p
 }
 
+// ---------- prévia leve de vídeo pesado ----------
+// 4K, HEVC, ProRes e afins travam o player da Montagem. Pra esses o Typos faz uma cópia
+// 720p em H.264 com quadro-chave a cada meio segundo (pular na timeline fica instantâneo)
+// e usa ela só na prévia; o render sempre lê o arquivo original.
+const HEAVY_CODECS = /^(hevc|h265|prores|dnxhd|dnxhr|av1|vp9|mpeg2video|cfhd|mjpeg|rawvideo|v210)$/i
+const videoProxies = new Map<string, Promise<string | null>>()
+let proxyChain: Promise<unknown> = Promise.resolve()
+
+export function proxyVideo(path: string): Promise<string | null> {
+  let p = videoProxies.get(path)
+  if (p) return p
+  p = (async () => {
+    const ff = await findFfmpeg()
+    if (!ff || !existsSync(path)) return null
+    const out = join(mediaCacheDir(), (await keyOf(path, 'proxy720')) + '.mp4')
+    if (existsSync(out)) return out
+    const info = await probe(path)
+    if ('error' in info || !info.hasVideo) return null
+    const heavy = (info.height ?? 0) > 1080 || (info.width ?? 0) > 1920 || HEAVY_CODECS.test(info.codec ?? '') || (info.bitrate ?? 0) > 60e6
+    if (!heavy) return null
+    // um de cada vez: não disputa a CPU com a edição
+    const job = proxyChain.then(async () => {
+      await fs.mkdir(mediaCacheDir(), { recursive: true })
+      const tmp = out + '.part.mp4'
+      const r = await run(ff.ffmpeg, [
+        '-hide_banner', '-y', '-i', path, '-an',
+        '-vf', 'scale=-2:min(720\\,ih)',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p',
+        '-g', String(Math.max(1, Math.round((info.fps || 30) / 2))), '-movflags', '+faststart', tmp
+      ])
+      if (r.code !== 0 || !existsSync(tmp)) {
+        await fs.rm(tmp, { force: true }).catch(() => null)
+        return null
+      }
+      await fs.rename(tmp, out)
+      return out
+    })
+    proxyChain = job.catch(() => null)
+    return job
+  })()
+  videoProxies.set(path, p)
+  // falhou: deixa tentar de novo depois
+  p.then((r) => r || videoProxies.delete(path))
+  return p
+}
+
 export function initMedia() {
   ipcMain.handle('media:ffmpeg', async (_e, force?: boolean) => {
     const f = await findFfmpeg(!!force)
@@ -149,6 +201,7 @@ export function initMedia() {
 
   ipcMain.handle('media:probe', (_e, path: string) => probe(path))
   ipcMain.handle('media:proxy', (_e, path: string) => proxyAudio(path))
+  ipcMain.handle('media:proxyVideo', (_e, path: string) => proxyVideo(path))
   ipcMain.handle('media:loudness', (_e, path: string, start: number, dur: number) => loudness(path, start, dur))
   ipcMain.handle('media:exists', (_e, paths: string[]) => paths.map((p) => existsSync(p)))
 }

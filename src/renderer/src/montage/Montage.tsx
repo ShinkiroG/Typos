@@ -352,6 +352,16 @@ export function Montage({
   const media = useMemo(() => new Map(data.media.map((m) => [m.id, m])), [data.media])
   const mediaRef = useRef(media)
   mediaRef.current = media
+  // vídeo pesado (4K, HEVC, ProRes…) toca a cópia leve na prévia; o render usa o original
+  const proxyRef = useRef(new Map<string, string>())
+  const proxyAsked = useRef(new Set<string>())
+  useEffect(() => {
+    for (const m of data.media) {
+      if (m.kind !== 'video' || !m.hasVideo || proxyAsked.current.has(m.path)) continue
+      proxyAsked.current.add(m.path)
+      api.proxyVideo(m.path).then((p) => p && proxyRef.current.set(m.path, p))
+    }
+  }, [data.media])
   const dur = useCallback((id: string) => mediaLen(mediaRef.current.get(id)), [])
 
   useEffect(() => {
@@ -515,7 +525,7 @@ export function Montage({
     }
     img.style.visibility = 'hidden'
     v.style.visibility = 'visible'
-    const src = fileUrl(m.path)
+    const src = fileUrl(proxyRef.current.get(m.path) ?? m.path)
     if (v.dataset.src !== src) {
       v.src = src
       v.dataset.src = src
