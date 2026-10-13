@@ -1,3 +1,5 @@
+// precisa vir antes de tudo: registra os erros de todos os pedidos (Ajuda → Gerar relatório de erro)
+import { initLog } from './log'
 import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, session, nativeImage } from 'electron'
 import { join, basename, extname, dirname, resolve, sep } from 'path'
 import { promises as fs, existsSync, createReadStream } from 'fs'
@@ -10,7 +12,7 @@ import { initSpell } from './spell'
 import { initAi, initMotionAi, initSfxFinder } from './ai'
 import { initRender } from './render'
 import { initMotionPreview } from './motionPreview'
-import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, framesAt, initDownloads, type FrameWeights } from './media'
+import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, framesAt, initDownloads, findFfmpeg, findYtDlp, type FrameWeights } from './media'
 import { initWhisper } from './whisper'
 import { initVersions, snapshotVersion } from './versions'
 import { initRelink } from './relink'
@@ -297,6 +299,20 @@ initDownloads()
 initWhisper()
 initVersions()
 initRelink()
+initLog(async () => {
+  const s = await loadSettings()
+  const ff = await findFfmpeg().catch(() => null)
+  const yt = await findYtDlp().catch(() => null)
+  return {
+    Instalação: installMode(),
+    ffmpeg: ff ? ff.ffmpeg + (ff.ffprobe ? ' (com ffprobe)' : ' (sem ffprobe)') : 'não encontrado',
+    'yt-dlp': yt ?? 'não encontrado',
+    IA: { texto: s.ai?.routeText ?? 'padrão', imagem: s.ai?.routeImage ?? 'padrão', 'chave Anthropic': !!s.ai?.anthropicKey, 'chave OpenAI': !!s.ai?.openaiKey },
+    'chave ElevenLabs': !!s.elevenLabsKey,
+    Whisper: s.whisperModel ?? 'padrão',
+    'Atualização automática': s.autoUpdate
+  }
+})
 
 // ---------- configurações e atualizações ----------
 ipcMain.handle('settings:get', async () => {
