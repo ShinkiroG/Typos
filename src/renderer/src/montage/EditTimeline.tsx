@@ -3,6 +3,8 @@ import { Volume2, VolumeX, Plus } from 'lucide-react'
 import { clipDur, clipEndT, formatTime, uid, type MontageClip, type MontageData, type MontageMarker, type MontageMedia, type MontageTrack } from '../lib'
 import { PEAKS_PER_SEC, butted, fadeInGain, fadeOutGain, xfadeHalf, type MontageEngine } from './engine'
 import { BlockLayer } from './BlockLayer'
+import type { BlockHeard } from './AudioRead'
+import type { InstructionBlock } from '../lib'
 
 export const MEDIA_MIME = 'application/x-typos-media'
 /** arquivo de uma pasta do PC vinculada (entra no projeto ao soltar) */
@@ -48,6 +50,8 @@ interface Props {
   onBlockMenu: (e: React.MouseEvent, id: string) => void
   /** bloco gerando prévia agora */
   blockBusy: string | null
+  /** o som de cada bloco já foi lido (Whisper)? */
+  blockHeard?: (b: InstructionBlock) => BlockHeard
   /** vão vazio selecionado (clique no vazio entre cortes; Delete fecha) */
   gap: GapSel | null
   onGap: (g: GapSel | null) => void
@@ -723,6 +727,7 @@ export function EditTimeline(p: Props) {
                         showSnap={showSnap}
                         trackAt={trackAt}
                         busy={p.blockBusy}
+                        heard={p.blockHeard}
                       />
                     )}
                     {p.recording?.track === tr.id && (

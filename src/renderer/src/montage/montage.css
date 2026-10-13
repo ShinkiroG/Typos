@@ -1613,3 +1613,176 @@
 .mt-item.unused .mt-item-name {
   opacity: 0.6;
 }
+/* ler o áudio (Whisper) em segundo plano */
+.ar {
+  position: relative;
+}
+.ar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ar-btn.ar-all {
+  color: #4ade80;
+}
+.ar-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  color: var(--muted);
+}
+.ar-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.ar-head b {
+  color: var(--text);
+}
+.ar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow: auto;
+}
+.ar-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+.ar-list li > svg {
+  flex: none;
+}
+.ar-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.ar-list small {
+  flex: none;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ar-ok {
+  color: #4ade80;
+}
+.ar-run {
+  color: var(--c-prompt);
+}
+.ar-todo {
+  color: var(--muted);
+}
+.ar-err {
+  color: var(--c-transition);
+}
+.ar-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ar-btns .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ar-par {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ar-note {
+  margin: 0;
+  font-size: 11px;
+}
+.mt-iblock-badges .heard {
+  color: var(--muted);
+}
+.mt-iblock-badges .heard.done {
+  color: #4ade80;
+}
+.mt-iblock-badges .heard.running {
+  color: var(--c-prompt);
+}
+.blk-heard-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.blk-heard-row.ok {
+  color: #4ade80;
+}
+.blk-heard-row .btn {
+  margin-left: auto;
+}
+.blk-prev-bg {
+  color: var(--muted);
+}
+.mt-block-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #4ade80;
+}
+/* aviso no canto: Whisper lendo em segundo plano */
+.wj-chip {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 900;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  color: var(--muted);
+}
+.wj-chip.open {
+  width: 340px;
+}
+.wj-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.wj-head span {
+  flex: 1;
+}
+.wj-chip .mt-bar {
+  margin-top: 0;
+}

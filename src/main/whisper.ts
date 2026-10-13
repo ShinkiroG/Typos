@@ -1,10 +1,10 @@
-import { app, ipcMain, type WebContents } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { promises as fs, existsSync, createWriteStream } from 'fs'
 import { createHash } from 'crypto'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
-import { findFfmpeg, proxyAudio, probe, run, mediaCacheDir } from './media'
+import { findFfmpeg, proxyAudio, proxyPathOf, probe, run, mediaCacheDir } from './media'
 import { loadSettings, saveSettings } from './settings'
 
 /**
@@ -87,24 +87,178 @@ export function initWhisper() {
     }
   })
 
-  ipcMain.handle('whisper:transcribe', (e, path: string, lang: string) => transcribe(e.sender, path, lang))
+  ipcMain.handle('whisper:transcribe', (_e, path: string, lang: string) => transcribe(path, lang))
   ipcMain.handle('media:silences', (_e, path: string) => silences(path))
+
+  // fila em segundo plano: ler (e guardar) o áudio antes de precisar
+  ipcMain.handle('whisper:queue', (_e, paths: string[], lang: string) => {
+    for (const p of paths) void transcribe(p, lang)
+  })
+  ipcMain.handle('whisper:cached', async (_e, paths: string[], lang: string) => {
+    const out: Record<string, boolean> = {}
+    for (const p of paths) out[p] = !!(await cacheFile(p, lang).catch(() => null))?.hit
+    return out
+  })
+  ipcMain.handle('whisper:jobs', () => snapshot())
+  ipcMain.handle('whisper:cancel', (_e, path?: string, lang?: string) => cancel(path, lang))
+  ipcMain.handle('whisper:clear', () => {
+    for (const [k, j] of jobs) if (j.state === 'error') jobs.delete(k)
+    broadcast()
+  })
+  ipcMain.handle('whisper:parallel', async (_e, n?: number) => {
+    if (n) {
+      parallel = Math.max(1, Math.min(4, Math.round(n)))
+      await saveSettings({ whisperParallel: parallel })
+      pump()
+    }
+    return parallel
+  })
+  loadSettings().then((s) => {
+    parallel = s.whisperParallel ?? 2
+  })
 }
 
-/** Palavras com tempo (s) de um arquivo de narração. Fica em cache por arquivo+modelo+idioma. */
-export async function transcribe(sender: WebContents | null, path: string, lang: string, onPct?: (pct: number) => void): Promise<{ words: Word[] } | { error: string }> {
-  const ff = await findFfmpeg()
-  if (!ff) return { error: 'ffmpeg não encontrado' }
+// ---------- fila de transcrição ----------
+type Result = { words: Word[] } | { error: string }
+export interface JobInfo {
+  path: string
+  lang: string
+  state: 'queued' | 'running' | 'done' | 'error'
+  /** 'audio' = extraindo o áudio, 'model' = carregando o modelo, 'listen' = transcrevendo (pct vale) */
+  stage: 'audio' | 'model' | 'listen' | null
+  pct: number
+  /** quando começou a transcrever de fato (pra estimar o tempo que falta) */
+  since?: number
+  error?: string
+}
+interface Job extends JobInfo {
+  promise: Promise<Result>
+  resolve: (r: Result) => void
+  ac: AbortController
+}
+
+const jobs = new Map<string, Job>()
+let parallel = 2
+let running = 0
+const jobKey = (path: string, lang: string) => `${path}|${lang}`
+
+const snapshot = (): JobInfo[] => [...jobs.values()].map(({ path, lang, state, stage, pct, since, error }) => ({ path, lang, state, stage, pct, since, error }))
+
+let timer: NodeJS.Timeout | null = null
+/** manda o estado da fila pra todas as janelas (no máximo ~4x por segundo) */
+function broadcast(now = true) {
+  if (!now) {
+    if (!timer) timer = setTimeout(() => broadcast(), 250)
+    return
+  }
+  if (timer) clearTimeout(timer)
+  timer = null
+  const list = snapshot()
+  for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('whisper:jobs', list)
+}
+
+function pump() {
+  for (const j of jobs.values()) {
+    if (running >= parallel) break
+    if (j.state === 'queued') void start(j)
+  }
+}
+
+async function start(j: Job) {
+  running++
+  j.state = 'running'
+  j.stage = 'audio'
+  broadcast()
+  let r: Result
+  try {
+    r = await transcribeNow(j.path, j.lang, j.ac.signal, (stage, pct) => {
+      if (stage === 'listen' && !j.since) j.since = Date.now()
+      j.stage = stage
+      j.pct = pct
+      broadcast(false)
+    })
+  } catch (err) {
+    r = { error: (err as Error).message }
+  }
+  running--
+  if (j.ac.signal.aborted) r = { error: 'Cancelado.' }
+  if ('error' in r) {
+    j.state = 'error'
+    j.error = r.error
+  } else j.state = 'done'
+  j.pct = 1
+  j.stage = null
+  j.resolve(r)
+  // cancelado some da lista; o resto fica (o renderer sabe que terminou)
+  if (j.ac.signal.aborted) jobs.delete(jobKey(j.path, j.lang))
+  pump()
+  broadcast()
+}
+
+function cancel(path?: string, lang?: string) {
+  for (const [k, j] of jobs) {
+    if (path && (j.path !== path || (lang && j.lang !== lang))) continue
+    if (j.state === 'queued') {
+      jobs.delete(k)
+      j.resolve({ error: 'Cancelado.' })
+    } else if (j.state === 'running') j.ac.abort()
+  }
+  broadcast()
+}
+
+/**
+ * Palavras com tempo (s) de um arquivo de narração. Fica em cache por arquivo+modelo+idioma.
+ * Quem pede o mesmo arquivo enquanto ele está sendo lido espera a mesma leitura; vários arquivos
+ * são lidos em paralelo (até `parallel`), o resto espera na fila.
+ */
+export async function transcribe(path: string, lang: string): Promise<Result> {
+  const c = await cacheFile(path, lang).catch(() => null)
+  if (c?.hit) return { words: JSON.parse(await fs.readFile(c.file, 'utf8')) }
+  const k = jobKey(path, lang)
+  const cur = jobs.get(k)
+  if (cur && (cur.state === 'queued' || cur.state === 'running')) return cur.promise
+  let resolve!: (r: Result) => void
+  const promise = new Promise<Result>((res) => (resolve = res))
+  const j: Job = { path, lang, state: 'queued', stage: null, pct: 0, promise, resolve, ac: new AbortController() }
+  jobs.delete(k) // reentra no fim da fila
+  jobs.set(k, j)
+  pump()
+  broadcast()
+  return promise
+}
+
+async function currentModel() {
   const s = await loadSettings()
-  const m = MODELS.find((x) => x.id === (s.whisperModel ?? 'large-v3')) ?? MODELS[0]
-  const model = join(dir(), m.file)
-  if (!existsSync(model)) return { error: `O modelo ${m.id} ainda não foi baixado.` }
-  const proxy = await proxyAudio(path)
-  if (typeof proxy !== 'string') return proxy
+  return MODELS.find((x) => x.id === (s.whisperModel ?? 'large-v3')) ?? MODELS[0]
+}
+
+/** o arquivo de cache da transcrição (pelo áudio de prévia, que só existe depois de gerado) */
+async function cacheFile(path: string, lang: string, proxy?: string) {
+  const m = await currentModel()
+  proxy ??= await proxyPathOf(path)
+  if (!existsSync(proxy)) return { file: '', hit: false }
   const st = await fs.stat(proxy)
   const key = createHash('sha1').update(`${proxy}|${st.size}|${m.id}|${lang}|v2`).digest('hex').slice(0, 20)
-  const cache = join(mediaCacheDir(), key + '.words.json')
-  if (existsSync(cache)) return { words: JSON.parse(await fs.readFile(cache, 'utf8')) }
+  const file = join(mediaCacheDir(), key + '.words.json')
+  return { file, key, hit: existsSync(file) }
+}
+
+async function transcribeNow(path: string, lang: string, signal: AbortSignal, onStage: (stage: 'audio' | 'model' | 'listen', pct: number) => void): Promise<Result> {
+  const ff = await findFfmpeg()
+  if (!ff) return { error: 'ffmpeg não encontrado' }
+  const m = await currentModel()
+  const model = join(dir(), m.file)
+  if (!existsSync(model)) return { error: `O modelo ${m.id} ainda não foi baixado.` }
+  if (!existsSync(path)) return { error: 'Arquivo não encontrado: ' + path }
+  onStage('audio', 0)
+  const proxy = await proxyAudio(path)
+  if (typeof proxy !== 'string') return proxy
+  if (signal.aborted) return { error: 'Cancelado.' }
+  const c = await cacheFile(path, lang, proxy)
+  const key = c.key!
+  const cache = c.file
+  if (c.hit) return { words: JSON.parse(await fs.readFile(cache, 'utf8')) }
+  onStage('model', 0)
 
   const info = await probe(proxy)
   const total = 'error' in info ? 0 : info.duration
@@ -124,17 +278,17 @@ export async function transcribe(sender: WebContents | null, path: string, lang:
   const runs: { at: number; vs: number; ve: number }[] = []
   let seg = { vs: 0, ve: 0 }
   const r = await run(ff.ffmpeg, ['-hide_banner', '-nostats', '-y', '-i', proxy, '-af', `aresample=16000,whisper=${opts.join(':')}`, '-f', 'null', '-'], {
+    signal,
     onErr: (line) => {
       const v = /VAD detected \d+ segments?, start: (\d+) ms, end: (\d+) ms/.exec(line)
       if (v) seg = { vs: Number(v[1]) / 1000, ve: Number(v[2]) / 1000 }
       const at = /run transcription at (\d+) ms/.exec(line)
       if (at) runs.push({ at: Number(at[1]) / 1000, ...seg })
       if (!at || !total) return
-      const pct = Math.min(0.99, Number(at[1]) / 1000 / total)
-      onPct?.(pct)
-      if (sender && !sender.isDestroyed()) sender.send('whisper:progress', { stage: 'transcribe', path, pct })
+      onStage('listen', Math.min(0.99, Number(at[1]) / 1000 / total))
     }
   })
+  if (signal.aborted) return { error: 'Cancelado.' }
   if (r.code !== 0) return { error: 'O Whisper falhou: ' + r.err.split('\n').slice(-4).join(' ').slice(0, 300) }
   const words: Word[] = []
   // O filtro devolve os tempos de cada rodada a partir do começo dela, "esticando" as primeiras palavras

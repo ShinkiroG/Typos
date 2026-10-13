@@ -27,6 +27,8 @@ export interface AppSettings {
   ytdlpPath?: string
   /** modelo do Whisper pro corte automático */
   whisperModel?: string
+  /** quantos arquivos o Whisper lê ao mesmo tempo (1–4) */
+  whisperParallel?: number
 }
 
 const DEFAULTS: AppSettings = { autoUpdate: true }

@@ -41,7 +41,8 @@ import {
   Type,
   Trash2,
   ListPlus,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Check
 } from 'lucide-react'
 import { api, clipDur, clipEndT, fileUrl, uid, type Attachment, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
@@ -53,6 +54,8 @@ import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
 import { blockDur, blockLabel, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale } from './blocks'
 import { BlockInspector, BlockWindow, type BlockBusy } from './BlockPanel'
+import { AudioReadButton, BlockHeardRow, useBlockHeard } from './AudioRead'
+import { jobPct, recheckRead, runningLabel, watchJobs } from './transcripts'
 
 export const fmtTc = (t: number) => {
   const s = Math.max(0, t)
@@ -100,6 +103,8 @@ interface Props {
   onQueueRender?: () => void
   /** arquivos usados fora desta timeline (recortes do Criar Clipes, vídeo principal): a limpeza não manda pra Lixeira */
   usedElsewhere?: () => Set<string>
+  /** as outras timelines do projeto (pro "Ler todas as timelines" do áudio) */
+  otherTimelines?: () => MontageData[]
 }
 
 const LAYOUT_KEY = 'typos.montageLayout'
@@ -131,7 +136,8 @@ export function Montage({
   toolbarExtra,
   frame,
   onQueueRender,
-  usedElsewhere
+  usedElsewhere,
+  otherTimelines
 }: Props) {
   const engine = useMemo(() => new MontageEngine(), [])
   const [wavesVersion, setWavesVersion] = useState(0)
@@ -282,7 +288,12 @@ export function Montage({
       for (const [i, m] of list.entries()) {
         busyLabel.current = `Transcrevendo ${m.name} (${i + 1}/${list.length})`
         setBusy({ label: busyLabel.current, pct: 0 })
-        const tr = await api.transcribe(m.path, lang)
+        // a leitura vai pra fila do Whisper (se já estava sendo lida em segundo plano, só espera ela)
+        const stop = watchJobs(() => {
+          const j = runningLabel(m.path, lang)
+          setBusy({ label: busyLabel.current + (j ? ': ' + j : ''), pct: jobPct(m.path, lang) })
+        })
+        const tr = await api.transcribe(m.path, lang).finally(stop)
         if ('error' in tr) throw new Error(tr.error)
         setBusy({ label: `Achando os silêncios de ${m.name}`, pct: null })
         const sil = await api.silences(m.path)
@@ -941,12 +952,30 @@ export function Montage({
   useEffect(() => {
     if (active) api.onMotionPreviewProgress((p) => setBlockBusy((b) => (b && b.id === p.block ? { ...b, label: p.stage === 'vídeo' ? 'Montando o vídeo…' : b.label, pct: p.pct } : b)))
   }, [active])
+  const blockHeard = useBlockHeard(data, lang)
+  /** Cancelar da prévia: para de esperar o Whisper (a leitura continua na fila) e para a gravação */
+  const blockAbort = useRef<AbortController | null>(null)
+  const cancelBlock = () => {
+    blockAbort.current?.abort()
+    api.motionPreviewCancel()
+  }
+  /** janela do bloco aberta agora (a prévia continua com ela fechada; aí avisa quando fica pronta) */
+  const blockOpenRef = useRef(blockOpen)
+  blockOpenRef.current = blockOpen
+  const [blockNote, setBlockNote] = useState<{ id: string; text: string } | null>(null)
+  useEffect(() => {
+    if (!blockNote) return
+    const t = setTimeout(() => setBlockNote(null), 12000)
+    return () => clearTimeout(t)
+  }, [blockNote])
   /** prévia do bloco; com `tweak`, pede um ajuste em cima da prévia atual (a conversa fica no bloco) */
   const makePreview = async (id: string, tweak?: { text: string; files: Attachment[] }) => {
     const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
     if (!b || blockBusy) return
     const tweaks = tweak ? [...(b.tweaks ?? []), { id: uid(), at: new Date().toISOString(), ...tweak }] : undefined
     setBlockBusy({ id, label: 'Preparando…', pct: null })
+    const ac = new AbortController()
+    blockAbort.current = ac
     try {
       const preview = await generatePreview({
         block: b,
@@ -958,14 +987,17 @@ export function Montage({
         format,
         dir,
         onStage: (label, pct) => setBlockBusy({ id, label, pct }),
+        signal: ac.signal,
         adjust: tweaks ? { tweaks } : undefined
       })
       // refazer do zero esquece a conversa de ajustes
       patchBlock(id, { preview, approved: false, tweaks })
+      if (blockOpenRef.current !== id) setBlockNote({ id, text: `Prévia de ${blockLabel(b)} pronta` })
     } catch (e) {
       const msg = (e as Error).message
       if (msg !== 'Cancelado.') alert('Não deu pra fazer a prévia: ' + msg)
     } finally {
+      blockAbort.current = null
       setBlockBusy(null)
     }
   }
@@ -1517,6 +1549,7 @@ export function Montage({
               onChange={async (e) => {
                 await api.whisperSetModel(e.target.value)
                 setWstatus(await api.whisperStatus())
+                recheckRead()
               }}
             >
               {wstatus.models.map((m) => (
@@ -1936,8 +1969,9 @@ export function Montage({
             busy={blockBusy}
             onGenerate={() => makePreview(curBlock.id)}
             onAdjust={(t) => makePreview(curBlock.id, t)}
-            onCancel={() => api.motionPreviewCancel()}
+            onCancel={cancelBlock}
             onApprove={() => approveBlock(curBlock.id)}
+            heard={<BlockHeardRow data={data} b={curBlock} lang={lang} />}
             onOpen={() => setBlockOpen(curBlock.id)}
             onRemove={() => removeBlock(curBlock.id)}
           />
@@ -2077,6 +2111,22 @@ export function Montage({
           <Redo2 size={15} />
         </button>
         <span className="mt-grow" />
+        {blockNote && (
+          <button
+            className="btn small mt-block-note"
+            title="Abrir o bloco"
+            onClick={() => {
+              selectBlock(blockNote.id)
+              setBlockOpen(blockNote.id)
+              setBlockNote(null)
+            }}
+          >
+            <Check size={13} /> {blockNote.text} · abrir
+          </button>
+        )}
+        {wstatus && ffmpeg?.whisper && (
+          <AudioReadButton data={data} lang={lang} ready={!!model?.ready} onNeedModel={downloadModel} others={otherTimelines} />
+        )}
         {onSyncScript && (
           <button
             className="btn small"
@@ -2344,8 +2394,9 @@ export function Montage({
           busy={blockBusy}
           onGenerate={() => makePreview(openBlock.id)}
           onAdjust={(t) => makePreview(openBlock.id, t)}
-          onCancel={() => api.motionPreviewCancel()}
+          onCancel={cancelBlock}
           onApprove={() => approveBlock(openBlock.id)}
+          heard={<BlockHeardRow data={data} b={openBlock} lang={lang} />}
           onClose={() => setBlockOpen(null)}
         />
       )}
@@ -2381,6 +2432,7 @@ export function Montage({
           onBlockOpen={setBlockOpen}
           onBlockMenu={(e, id) => setBlockMenu({ x: e.clientX, y: e.clientY, id })}
           blockBusy={blockBusy?.id ?? null}
+          blockHeard={blockHeard}
           gap={gap}
           onGap={setGap}
         />
