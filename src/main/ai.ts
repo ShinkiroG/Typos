@@ -81,6 +81,8 @@ interface TextJob {
   input: string
   /** pasta do roteiro (o Claude Code roda lá e pode ler roteiro.md e anexos) */
   dir?: string
+  /** tempo máximo do Claude Code (pedidos grandes, como achar recortes num vídeo longo); padrão 3 min */
+  timeoutMs?: number
 }
 
 async function textClaudeCode(s: AiSettings, job: TextJob) {
@@ -89,7 +91,7 @@ async function textClaudeCode(s: AiSettings, job: TextJob) {
   const prompt = `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}`
   // prompt vai pela entrada padrão (sem limite de tamanho da linha de comando do Windows)
   // no modo -p só roda ferramenta liberada aqui: busca na web sim, mexer em arquivo não
-  const r = await run(cc.path, ['-p', '--output-format', 'json', '--allowedTools', 'WebSearch,WebFetch'], { cwd: job.dir, input: prompt, timeoutMs: 180000 })
+  const r = await run(cc.path, ['-p', '--output-format', 'json', '--allowedTools', 'WebSearch,WebFetch'], { cwd: job.dir, input: prompt, timeoutMs: Math.min(30 * 60000, job.timeoutMs ?? 180000) })
   let parsed: any = null
   try {
     parsed = JSON.parse(r.out)

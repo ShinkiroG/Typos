@@ -72,6 +72,10 @@ export interface RenderJob {
   letterings: LetteringIn[]
   /** joga fora o que já foi feito e começa do zero */
   fresh?: boolean
+  /** subpasta de render/ (cada recorte do Criar Clipes tem a dele, com as partes e o estado próprios) */
+  sub?: string
+  /** como o vídeo entra no quadro: contain (padrão) ou cover (preenche e corta, pros recortes verticais) */
+  fit?: 'contain' | 'cover'
 }
 
 interface StepState {
@@ -178,7 +182,8 @@ async function start(sender: WebContents, job: RenderJob) {
   const ff = await findFfmpeg()
   if (!ff) throw new Error('O ffmpeg não foi encontrado (Configurações → Mídia).')
   if (!job.parts.length) throw new Error('A timeline de montagem está vazia: é ela que diz como o vídeo é feito.')
-  const out = join(job.dir, 'render')
+  const sub = (job.sub ?? '').replace(/\\/g, '/').split('/').filter((x) => /^[\w.-]+$/.test(x) && !/^\.+$/.test(x))
+  const out = join(job.dir, 'render', ...sub)
   const partsDir = join(out, 'partes')
   const letDir = join(out, 'letterings')
   if (job.fresh) {
@@ -276,6 +281,7 @@ async function start(sender: WebContents, job: RenderJob) {
       fps: job.fps,
       video: [...p.video, ...lets],
       audio: p.audio,
+      fit: job.fit,
       outVideo: join(out, st.file),
       outWav: join(out, st.file.replace(/\.mp4$/i, '.wav'))
     })

@@ -1,0 +1,220 @@
+/* ---------- workspace Criar Clipes ---------- */
+.clips-studio {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.cs-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+  min-width: 0;
+}
+.cs-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cs-cur {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.cs-cur small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+}
+.cs-title {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 1px 5px;
+  margin-left: -6px;
+  min-width: 0;
+}
+.cs-title:hover,
+.cs-title:focus {
+  border-color: var(--line);
+  outline: none;
+}
+.cs-busy,
+.cs-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.cs-note {
+  color: #4ade80;
+}
+.cs-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--muted);
+  text-align: center;
+  padding: 20px;
+}
+.cs-empty b {
+  color: var(--text);
+}
+.cs-error {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 70%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  background: #3a1518;
+  border: 1px solid #7f2a30;
+  color: #ffd6d9;
+}
+.shorts-err {
+  color: #ff8a8a;
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+
+/* pasta Recortes, no topo da mídia */
+.sh-folder {
+  border-bottom: 1px solid var(--line);
+  max-height: 45%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.sh-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.sh-folder-head small {
+  margin-left: auto;
+  color: var(--muted);
+}
+.sh-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 8px;
+  overflow-y: auto;
+}
+.sh-list li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 6px 5px 20px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sh-list li:hover {
+  background: var(--bg-3);
+}
+.sh-list li.on {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.sh-list li small {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.sh-list li small.sh-off {
+  color: #f7b955;
+}
+.sh-list .sh-empty {
+  color: var(--muted);
+  cursor: default;
+}
+.sh-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sh-state {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+.sh-state.ok {
+  background: #22c55e;
+}
+.sh-state.no {
+  background: #dc4a4a;
+}
+.sh-del {
+  opacity: 0;
+}
+.sh-list li:hover .sh-del {
+  opacity: 0.7;
+}
+.btn.sh-approved {
+  background: color-mix(in srgb, #22c55e 22%, transparent);
+  border-color: #22c55e;
+  color: #b9f5cf;
+}
+
+/* janelinha dos tempos */
+.shorts-setup h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shorts-setup p {
+  margin: 0 0 14px;
+  line-height: 1.45;
+}
+.shorts-times {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.shorts-setup select {
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}

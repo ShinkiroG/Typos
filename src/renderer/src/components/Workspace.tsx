@@ -16,6 +16,8 @@ import { TextStyle, Color, FontFamily, FontSize } from '@tiptap/extension-text-s
 import Highlight from '@tiptap/extension-highlight'
 import { FormatBubble } from './FormatBubble'
 import { RenderStudio } from '../render/RenderStudio'
+import { ClipsStudio } from '../shorts/ClipsStudio'
+import { ShortsSetup } from '../shorts/ShortsSetup'
 import { separateAutoCut } from '../montage/autocut'
 import logoUrl from '../assets/logo.png'
 import { FilterBar } from './FilterBar'
@@ -53,6 +55,8 @@ import {
   type LibraryItem,
   type ProjectData,
   type MontageData,
+  type ShortClip,
+  type ShortsData,
   defaultMontage,
   setAiStyle,
   setLetteringDefault,
@@ -162,6 +166,15 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     return r.data
   })
   const [montageVisited, setMontageVisited] = useState(false)
+  // Criar Clipes: some até ser ativado pelo botão da Montagem
+  const [shorts, setShorts] = useState<ShortsData | undefined>(data.shorts)
+  const [shortsSetup, setShortsSetup] = useState(false)
+  const [suggestToken, setSuggestToken] = useState(0)
+  const [clipsVisited, setClipsVisited] = useState(false)
+  const patchShort = useCallback(
+    (id: string, p: Partial<ShortClip>) => setShorts((s) => (s ? { ...s, items: s.items.map((x) => (x.id === id ? { ...x, ...p } : x)) } : s)),
+    []
+  )
   // áudio da Montagem tocando junto na timeline do roteiro (pelas prévias do ffmpeg)
   const [voice, setVoice] = useState<Clip[]>([])
   useEffect(() => {
@@ -243,7 +256,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   )
   const [spell, setSpell] = useState<{ word: string; from: number; to: number; suggestions: string[] | null } | null>(null)
 
-  const [mode, setMode] = useState<'script' | 'montage' | 'style' | 'render'>('script')
+  const [mode, setMode] = useState<'script' | 'montage' | 'style' | 'render' | 'clips'>('script')
   const [styleVisited, setStyleVisited] = useState(false)
   const [renderVisited, setRenderVisited] = useState(false)
   const format = formats.find((f) => f.id === formatId) ?? formats[0]
@@ -257,8 +270,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const editorRef = useRef<Editor | null>(null)
   const libraryRef = useRef(library)
   libraryRef.current = library
-  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering })
-  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering }
+  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts })
+  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts }
 
   // ---------- desfazer/refazer da tela inteira (texto + timeline) ----------
   // O texto usa o histórico do editor; os clipes de áudio guardam cópias. A pilha "ordem"
@@ -702,8 +715,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     return r.changed || 1
   }
 
-  const goMode = (m: 'script' | 'montage' | 'style' | 'render') => {
+  const goMode = (m: 'script' | 'montage' | 'style' | 'render' | 'clips') => {
     setMode(m)
+    if (m === 'clips') setClipsVisited(true)
     if (m === 'montage') setMontageVisited(true)
     if (m === 'style') setStyleVisited(true)
     if (m === 'render') setRenderVisited(true)
@@ -757,6 +771,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         { label: 'Montagem', checked: mode === 'montage', onClick: () => goMode('montage') },
         { label: 'Estilo (treinar motion e formato)', checked: mode === 'style', onClick: () => goMode('style') },
         { label: 'Render (criar o vídeo com o Claude)', checked: mode === 'render', onClick: () => goMode('render') },
+        ...(shorts ? [{ label: 'Criar Clipes (recortes curtos)', checked: mode === 'clips', onClick: () => goMode('clips') }] : []),
         { sep: true },
         { label: 'Painel Inserir', checked: leftOpen, onClick: () => setLeftOpen((o) => !o) },
         { label: 'Painel lateral', checked: panelOpen, onClick: () => setPanelOpen((o) => !o) },
@@ -811,6 +826,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       notes,
       montage,
       chapterLettering: metaRef.current.chapterLettering,
+      shorts: metaRef.current.shorts,
       doc: ed.getJSON(),
       updatedAt: new Date().toISOString()
     }
@@ -850,7 +866,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     setSaveState('dirty')
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => save(), 800)
-  }, [title, formatId, clips, customWpm, tracks, assets, notes, montage, chapterLettering, save])
+  }, [title, formatId, clips, customWpm, tracks, assets, notes, montage, chapterLettering, shorts, save])
 
   useEffect(() => {
     try {
@@ -1089,6 +1105,12 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
               <Palette size={15} />
               <span>Estilo</span>
             </button>
+            {shorts && (
+              <button className={mode === 'clips' ? 'on' : ''} title="Criar Clipes: recortes curtos pra Reels, TikTok e Shorts" onClick={() => goMode('clips')}>
+                <Scissors size={15} />
+                <span>Clipes</span>
+              </button>
+            )}
             <button className={mode === 'render' ? 'on' : ''} title="Render: confere tudo que vai pro Claude e cria o vídeo" onClick={() => goMode('render')}>
               <Clapperboard size={15} />
               <span>Render</span>
@@ -1179,8 +1201,41 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
 
       {renderVisited && (
         <div className="montage-layer" style={mode === 'render' ? undefined : { display: 'none' }}>
-          <RenderStudio active={mode === 'render'} dir={dir} format={format} montage={montage} save={save} />
+          <RenderStudio active={mode === 'render'} dir={dir} format={format} montage={montage} save={save} shorts={shorts} patchShort={patchShort} />
         </div>
+      )}
+      {clipsVisited && shorts && (
+        <div className="montage-layer" style={mode === 'clips' ? undefined : { display: 'none' }}>
+          <ClipsStudio
+            active={mode === 'clips'}
+            dir={dir}
+            main={montage}
+            shorts={shorts}
+            onChange={setShorts}
+            lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
+            wpm={wpm}
+            format={format}
+            onFormatChange={(f) => onFormatsChange(formats.map((x) => (x.id === f.id ? f : x)))}
+            onAudioSettings={() => setAudioOpen(true)}
+            suggestToken={suggestToken}
+            onSetup={() => setShortsSetup(true)}
+            onGoRender={() => goMode('render')}
+          />
+        </div>
+      )}
+      {shortsSetup && (
+        <ShortsSetup
+          target={shorts?.target}
+          aspect={shorts?.aspect}
+          first={!shorts?.items.length}
+          onCancel={() => setShortsSetup(false)}
+          onOk={(target, aspect, suggest) => {
+            setShortsSetup(false)
+            setShorts((s) => ({ items: [], ...s, target, aspect }))
+            goMode('clips')
+            if (suggest) setSuggestToken((n) => n + 1)
+          }}
+        />
       )}
       {styleVisited && (
         <div className="montage-layer" style={mode === 'style' ? undefined : { display: 'none' }}>
@@ -1194,6 +1249,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             data={montage}
             onChange={setMontage}
             onSyncScript={syncFromMontage}
+            onPrepareClips={() => (shorts?.items.length ? goMode('clips') : setShortsSetup(true))}
+            prepareLabel={shorts?.items.length ? 'Abrir Criar Clipes' : 'Preparar Clipes'}
             dir={dir}
             wpm={wpm}
             onAudioSettings={() => setAudioOpen(true)}

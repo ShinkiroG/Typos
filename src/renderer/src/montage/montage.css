@@ -1405,3 +1405,25 @@
   opacity: 1;
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
+
+/* ---------- quadro do recorte (Criar Clipes): o vídeo preenche e corta as sobras, igual ao export ---------- */
+.mt-screen.framed > video:not([controls]),
+.mt-screen.framed > img {
+  aspect-ratio: var(--frame);
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  object-fit: cover;
+}
+.mt-screen.framed::after {
+  content: '';
+  grid-area: 1 / 1;
+  aspect-ratio: var(--frame);
+  height: 100%;
+  max-width: 100%;
+  outline: 1px dashed color-mix(in srgb, var(--text) 25%, transparent);
+  pointer-events: none;
+}
+.mt-clips-btn {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
