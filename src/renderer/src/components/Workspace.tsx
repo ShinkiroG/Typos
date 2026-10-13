@@ -519,6 +519,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
 
   const historyStep = useCallback(
     (dir: 'undo' | 'redo') => {
+      // na Montagem o desfazer é o dela (menu Editar e atalho levam pro mesmo lugar)
+      if (metaRef.current.mode === 'montage') return void window.dispatchEvent(new CustomEvent('typos:montage-history', { detail: dir }))
       if (!editor) return
       const from = dir === 'undo' ? undoOrder : redoOrder
       const to = dir === 'undo' ? redoOrder : undoOrder

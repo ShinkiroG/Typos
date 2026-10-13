@@ -1785,4 +1785,59 @@
 }
 .wj-chip .mt-bar {
   margin-top: 0;
+
+/* ---------- histórico do desfazer ---------- */
+.mt-hist-wrap {
+  position: relative;
+}
+.mt-hist {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  width: 270px;
+  background: var(--panel, #161a22);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  padding: 6px;
+}
+.mt-hist-head {
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 6px 6px;
+}
+.mt-hist-list {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.mt-hist-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 4px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.mt-hist-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.mt-hist-row.cur {
+  background: var(--grad-soft, rgba(124, 140, 255, 0.18));
+  font-weight: 600;
+}
+.mt-hist-row.undone {
+  opacity: 0.45;
+  font-style: italic;
+}
+.mt-hist-empty {
+  padding: 4px 6px;
 }
