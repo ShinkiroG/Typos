@@ -12,6 +12,7 @@ import { initRender } from './render'
 import { initMotionPreview } from './motionPreview'
 import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, framesAt, initDownloads, type FrameWeights } from './media'
 import { initWhisper } from './whisper'
+import { initVersions, snapshotVersion } from './versions'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer.
 // Sem bypassCSP: o CSP de cada página decide o que ela pode ler (a do app libera rs:, a demo da IA não)
@@ -293,6 +294,7 @@ initMotionPreview()
 initMedia()
 initDownloads()
 initWhisper()
+initVersions()
 
 // ---------- configurações e atualizações ----------
 ipcMain.handle('settings:get', async () => {
@@ -443,6 +445,7 @@ function queued<T>(dir: string, job: () => Promise<T>): Promise<T> {
 ipcMain.handle('project:save', (_e, dir: string, data: any, markdown: string): Promise<Result<true>> =>
   queued(dir, async () => {
     try {
+      await snapshotVersion(dir).catch((err) => console.warn('versões:', err))
       await writeJson(join(dir, PROJECT_FILE), data)
       await fs.writeFile(join(dir, MARKDOWN_FILE), markdown, 'utf8')
       await syncProjectFiles(dir, data).catch((err) => console.warn('arquivos do projeto:', err))

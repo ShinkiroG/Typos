@@ -110,9 +110,13 @@ export default function App() {
           onClose={() => setSession(null)}
           onOpenSettings={() => setSettingsOpen(true)}
           registerFlush={registerFlush}
-          onSwitchProject={async (kind, dir) => {
+          onSwitchProject={async (kind, dir, version) => {
             // salva o que está aberto antes de trocar
             await flush.current?.()
+            if (kind === 'restore' && dir && version) {
+              const v = await api.restoreVersion(dir, version)
+              if ('error' in v) return alert(v.error)
+            }
             const r = kind === 'new' ? await api.newProject() : await api.openProject(dir)
             if (!r) return
             if (r.error) return alert(r.error)
