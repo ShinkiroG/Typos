@@ -715,6 +715,18 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     return r.changed || 1
   }
 
+  /** "Enviar pra fila de render" da Montagem: o vídeo principal entra nos exports pendentes do Render */
+  const [renderQueueToken, setRenderQueueToken] = useState(0)
+  const queueMainRender = () => {
+    setRenderVisited(true)
+    setRenderQueueToken((n) => n + 1)
+    setToast('Vídeo principal na fila do Render (exports pendentes). Pode seguir editando: ele sai de lá.')
+  }
+  /** caminhos dos arquivos que cada timeline usa (a limpeza de não usados de uma não manda pra Lixeira o que a outra usa) */
+  const pathsUsed = (d: MontageData) => {
+    const used = new Set(d.clips.map((c) => c.media))
+    return d.media.filter((m) => used.has(m.id)).map((m) => m.path)
+  }
   const goMode = (m: 'script' | 'montage' | 'style' | 'render' | 'clips') => {
     setMode(m)
     if (m === 'clips') setClipsVisited(true)
@@ -1201,7 +1213,16 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
 
       {renderVisited && (
         <div className="montage-layer" style={mode === 'render' ? undefined : { display: 'none' }}>
-          <RenderStudio active={mode === 'render'} dir={dir} format={format} montage={montage} save={save} shorts={shorts} patchShort={patchShort} />
+          <RenderStudio
+            active={mode === 'render'}
+            dir={dir}
+            format={format}
+            montage={montage}
+            save={save}
+            shorts={shorts}
+            patchShort={patchShort}
+            queueMainToken={renderQueueToken}
+          />
         </div>
       )}
       {clipsVisited && shorts && (
@@ -1249,6 +1270,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             data={montage}
             onChange={setMontage}
             onSyncScript={syncFromMontage}
+            onQueueRender={queueMainRender}
+            usedElsewhere={() => new Set((metaRef.current.shorts?.items ?? []).flatMap((x) => pathsUsed(x.montage)))}
             onPrepareClips={() => (shorts?.items.length ? goMode('clips') : setShortsSetup(true))}
             prepareLabel={shorts?.items.length ? 'Abrir Criar Clipes' : 'Preparar Clipes'}
             dir={dir}

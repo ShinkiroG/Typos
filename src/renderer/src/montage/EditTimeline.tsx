@@ -48,6 +48,29 @@ interface Props {
   onBlockMenu: (e: React.MouseEvent, id: string) => void
   /** bloco gerando prévia agora */
   blockBusy: string | null
+  /** vão vazio selecionado (clique no vazio entre cortes; Delete fecha) */
+  gap: GapSel | null
+  onGap: (g: GapSel | null) => void
+}
+
+/** vão selecionado: a faixa e onde foi o clique (o vão é recalculado na hora, a timeline pode ter mudado) */
+export type GapSel = { track: string; t: number }
+
+/**
+ * O vão vazio de uma faixa em volta do tempo t: do fim do que vem antes (ou do zero) até o começo do
+ * que vem depois. Sem nada à direita não é vão (é só o fim da faixa).
+ */
+export function findGap(data: MontageData, track: string, t: number): { start: number; end: number } | null {
+  const spans = [
+    ...data.clips.filter((c) => c.track === track).map((c) => [c.start, clipEndT(c)] as const),
+    ...(data.blocks ?? []).filter((b) => b.track === track).map((b) => [b.start, b.end] as const)
+  ]
+  if (spans.some(([s, e]) => t > s + 0.001 && t < e - 0.001)) return null
+  const start = Math.max(0, ...spans.filter(([, e]) => e <= t + 0.001).map(([, e]) => e))
+  const after = spans.filter(([s]) => s >= t - 0.001).map(([s]) => s)
+  if (!after.length) return null
+  const end = Math.min(...after)
+  return end - start > 0.005 ? { start, end } : null
 }
 
 export const HEAD_W = 132
@@ -141,7 +164,7 @@ export function EditTimeline(p: Props) {
 
   // ---------- seleção por caixa (arrastar no vazio) ----------
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
-  const startMarquee = (e: React.PointerEvent) => {
+  const startMarquee = (e: React.PointerEvent, track?: string) => {
     const x0 = e.clientX
     const y0 = e.clientY
     const add = e.shiftKey || e.ctrlKey || e.metaKey
@@ -169,11 +192,14 @@ export function EditTimeline(p: Props) {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       setBox(null)
-      // clique simples no vazio: tira a seleção e leva o cursor pra lá
+      // clique simples no vazio: tira a seleção e leva o cursor pra lá; se for um vão entre cortes, ele fica
+      // selecionado (Delete fecha o vão puxando o que vem depois)
       if (!moved) {
+        const t = timeAt(ev.clientX)
         if (!add) p.onSelect([])
-        p.seek(timeAt(ev.clientX))
-      }
+        p.onGap(track && !add && findGap(data, track, t) ? { track, t } : null)
+        p.seek(t)
+      } else p.onGap(null)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
@@ -458,7 +484,7 @@ export function EditTimeline(p: Props) {
   }
 
   // ---------- menu de contexto (botão direito numa faixa ou no vazio) ----------
-  const [menu, setMenu] = useState<{ x: number; y: number; kind: 'video' | 'audio'; track: MontageTrack | null; t: number } | null>(null)
+  const [menu, setMenu] = useState<TrackMenuState | null>(null)
   useEffect(() => {
     if (!menu) return
     const close = () => setMenu(null)
@@ -469,11 +495,13 @@ export function EditTimeline(p: Props) {
       window.removeEventListener('blur', close)
     }
   }, [menu])
-  const openMenu = (e: React.MouseEvent, kind: 'video' | 'audio', track: MontageTrack | null) => {
+  /** head: aberto no nome da faixa (só ali aparece "Apagar a faixa") */
+  const openMenu = (e: React.MouseEvent, kind: 'video' | 'audio', track: MontageTrack | null, head = false) => {
     e.preventDefault()
     e.stopPropagation()
-    setMenu({ x: e.clientX, y: e.clientY, kind, track, t: timeAt(e.clientX) })
+    setMenu({ x: e.clientX, y: e.clientY, kind, track, t: timeAt(e.clientX), head })
   }
+  const gap = p.gap ? findGap(data, p.gap.track, p.gap.t) : null
   const DIVIDER_H = 6
 
   return (
@@ -593,7 +621,7 @@ export function EditTimeline(p: Props) {
               .filter((tr) => tr.kind === kind)
               .map((tr) => (
                 <div key={tr.id} className={'mt-track k-' + tr.kind + (tr.muted ? ' muted' : '')} style={{ height: trackHeight(tr) }}>
-                  <div className="mt-head" onContextMenu={(e) => openMenu(e, tr.kind, tr)} title="Botão direito: opções da faixa">
+                  <div className="mt-head" onContextMenu={(e) => openMenu(e, tr.kind, tr, true)} title="Botão direito: opções da faixa">
                     <span>{tr.name}</span>
                     {tr.kind === 'audio' && (
                       <button
@@ -617,10 +645,19 @@ export function EditTimeline(p: Props) {
                     data-track={tr.id}
                     onPointerDown={(e) => {
                       if (e.button !== 0) return
-                      startMarquee(e)
+                      startMarquee(e, tr.id)
                     }}
                     onContextMenu={(e) => openMenu(e, tr.kind, tr)}
                   >
+                    {gap && p.gap?.track === tr.id && (
+                      <div
+                        className="mt-gap"
+                        style={{ left: gap.start * pps, width: (gap.end - gap.start) * pps }}
+                        title={`Vão de ${(gap.end - gap.start).toFixed(2)} s · Delete fecha (puxa o que vem depois)`}
+                      >
+                        {(gap.end - gap.start) * pps > 70 && <span>Delete fecha o vão</span>}
+                      </div>
+                    )}
                     {data.clips
                       .filter((c) => c.track === tr.id)
                       .map((c) => (
@@ -713,7 +750,7 @@ export function EditTimeline(p: Props) {
         {menu && (
           <TrackMenu
             menu={menu}
-            canRemove={!!menu.track && data.tracks.filter((t) => t.kind === menu.kind).length > 1}
+            canRemove={!!menu.track && menu.head && data.tracks.filter((t) => t.kind === menu.kind).length > 1}
             armed={!!menu.track && p.armed === menu.track.id}
             close={() => setMenu(null)}
             addTrack={() => addTrack(menu.kind)}
@@ -744,8 +781,10 @@ function AddHint({ kind, onMenu }: { kind: 'video' | 'audio'; onMenu: (e: React.
   )
 }
 
+type TrackMenuState = { x: number; y: number; kind: 'video' | 'audio'; track: MontageTrack | null; t: number; head: boolean }
+
 function TrackMenu(p: {
-  menu: { x: number; y: number; kind: 'video' | 'audio'; track: MontageTrack | null; t: number }
+  menu: TrackMenuState
   canRemove: boolean
   armed: boolean
   close: () => void
@@ -791,7 +830,7 @@ function TrackMenu(p: {
       )}
       <div className="ctx-sep" />
       <button onClick={act(p.addTrack)}>{video ? 'Nova faixa de vídeo' : 'Nova faixa de áudio'}</button>
-      {menu.track && (
+      {menu.track && menu.head && (
         <button className="danger" disabled={!p.canRemove} title={p.canRemove ? '' : 'Precisa sobrar pelo menos uma faixa desse tipo'} onClick={act(p.removeTrack)}>
           Apagar a faixa "{menu.track.name}"
         </button>
