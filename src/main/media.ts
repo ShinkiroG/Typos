@@ -37,9 +37,10 @@ export async function findFfmpeg(force = false) {
   return (found = { ffmpeg, ffprobe: existsSync(probe) ? probe : null })
 }
 
-export function run(file: string, args: string[], opts: { onErr?: (line: string) => void; timeoutMs?: number } = {}) {
+export function run(file: string, args: string[], opts: { onErr?: (line: string) => void; timeoutMs?: number; signal?: AbortSignal } = {}) {
   return new Promise<{ code: number; out: string; err: string }>((resolve) => {
     const p = spawn(file, args, { windowsHide: true })
+    opts.signal?.addEventListener('abort', () => p.kill(), { once: true })
     let out = ''
     let err = ''
     p.stdout.on('data', (d) => (out += d))
@@ -108,6 +109,9 @@ const keyOf = async (path: string, tag: string) => {
 
 const pending = new Map<string, Promise<string | { error: string }>>()
 
+/** onde fica (ou vai ficar) o áudio de prévia de um arquivo, sem gerar nada */
+export const proxyPathOf = async (path: string) => join(mediaCacheDir(), (await keyOf(path, 'proxy32k')) + '.wav')
+
 /** Áudio de prévia (mono 32 kHz WAV): toca sem travar e com corte exato, mesmo de vídeo enorme. */
 export function proxyAudio(path: string): Promise<string | { error: string }> {
   let p = pending.get(path)
@@ -115,7 +119,7 @@ export function proxyAudio(path: string): Promise<string | { error: string }> {
   p = (async () => {
     const ff = await findFfmpeg()
     if (!ff) return { error: 'ffmpeg não encontrado' }
-    const out = join(mediaCacheDir(), (await keyOf(path, 'proxy32k')) + '.wav')
+    const out = await proxyPathOf(path)
     if (existsSync(out)) return out
     await fs.mkdir(mediaCacheDir(), { recursive: true })
     const tmp = out + '.part.wav'

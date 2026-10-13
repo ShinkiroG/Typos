@@ -16,6 +16,7 @@ import {
 } from '../lib'
 import { envAt, envPoints, spans, type MontageEngine } from './engine'
 import type { ScriptBlock } from './autocut'
+import { jobPct, runningLabel, speechFiles, watchJobs } from './transcripts'
 import { planRender, type VLayer } from '../render/plan'
 
 /**
@@ -79,14 +80,47 @@ export function audioIn(data: MontageData, b: InstructionBlock) {
   return data.clips.filter((c) => !muted.has(c.track) && media.get(c.media)?.hasAudio && c.start < b.end && clipEndT(c) > b.start)
 }
 
-/** transcreve (Whisper, com cache por arquivo) e devolve só as palavras que caem dentro do bloco */
-export async function heardIn(data: MontageData, b: InstructionBlock, lang: string): Promise<{ words: HeardWord[]; error?: string }> {
+/** arquivos com fala que tocam no bloco (o que precisa estar lido pra prévia sair sem esperar o Whisper) */
+export function blockSpeech(data: MontageData, b: InstructionBlock) {
+  const speech = new Set(speechFiles(data).map((f) => f.path))
+  const media = new Map(data.media.map((m) => [m.id, m]))
+  return [...new Set(audioIn(data, b).map((c) => media.get(c.media)!.path))].filter((p) => speech.has(p))
+}
+
+/**
+ * Transcreve (Whisper, na fila com cache por arquivo) e devolve só as palavras que caem dentro do bloco.
+ * `onWait` conta como vai a leitura; `signal` para de esperar (a leitura continua na fila e fica guardada).
+ */
+export async function heardIn(
+  data: MontageData,
+  b: InstructionBlock,
+  lang: string,
+  opts: { signal?: AbortSignal; onWait?: (label: string, pct: number | null) => void } = {}
+): Promise<{ words: HeardWord[]; error?: string }> {
   const clips = audioIn(data, b)
   const media = new Map(data.media.map((m) => [m.id, m]))
   const words: HeardWord[] = []
   let error: string | undefined
-  for (const path of new Set(clips.map((c) => media.get(c.media)!.path))) {
-    const r = await api.transcribe(path, lang)
+  const paths = blockSpeech(data, b)
+  for (const [i, path] of paths.entries()) {
+    const of = paths.length > 1 ? ` (${i + 1}/${paths.length})` : ''
+    const tell = () => {
+      const pct = jobPct(path, lang)
+      const j = runningLabel(path, lang)
+      opts.onWait?.(`Ouvindo o trecho (Whisper)${of}${j ? ': ' + j : '…'}`, pct)
+    }
+    const stop = watchJobs(tell)
+    tell()
+    let r: Awaited<ReturnType<typeof api.transcribe>>
+    try {
+      r = await new Promise((res, rej) => {
+        if (opts.signal?.aborted) return rej(new Error('Cancelado.'))
+        opts.signal?.addEventListener('abort', () => rej(new Error('Cancelado.')), { once: true })
+        api.transcribe(path, lang).then(res, rej)
+      })
+    } finally {
+      stop()
+    }
     if ('error' in r) {
       error = r.error
       continue
@@ -403,6 +437,8 @@ export interface PreviewCtx {
   format?: Format
   dir: string
   onStage: (label: string, pct: number | null) => void
+  /** Cancelar: para de esperar (o que já foi pra fila do Whisper continua e fica guardado) */
+  signal?: AbortSignal
   /** pedir ajuste: parte da prévia atual em vez de criar do zero */
   adjust?: { tweaks: BlockTweak[] }
 }
@@ -424,8 +460,9 @@ export async function generatePreview(c: PreviewCtx) {
   let heard: { words: HeardWord[]; error?: string } = { words: [] }
   if (hasAudio) {
     c.onStage('Ouvindo o trecho (Whisper)…', null)
-    heard = await heardIn(c.data, b, c.lang)
+    heard = await heardIn(c.data, b, c.lang, { signal: c.signal, onWait: c.onStage })
   }
+  if (c.signal?.aborted) throw new Error('Cancelado.')
   const files = b.attachments.filter(isImage).map((a, i) => ({ a, name: attachName(a, i) }))
   const size = previewSize(c.format)
   c.onStage('Olhando o vídeo embaixo do bloco…', null)

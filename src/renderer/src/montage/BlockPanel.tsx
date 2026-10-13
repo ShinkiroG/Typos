@@ -237,6 +237,7 @@ export function BlockPreviewBox({
   onAdjust,
   onCancel,
   onApprove,
+  heard,
   big
 }: {
   b: InstructionBlock
@@ -246,6 +247,8 @@ export function BlockPreviewBox({
   onAdjust: AdjustFn
   onCancel: () => void
   onApprove: () => void
+  /** linha "Som do trecho: lido / não lido" */
+  heard?: React.ReactNode
   big?: boolean
 }) {
   const mine = busy?.id === b.id
@@ -277,6 +280,7 @@ export function BlockPreviewBox({
           <button className="btn small" onClick={onCancel}>
             Cancelar
           </button>
+          {big && <small className="blk-prev-bg">Pode fechar esta janela e continuar usando o Typos: a prévia segue em segundo plano e fica neste bloco.</small>}
         </div>
       ) : (
         <div className="blk-prev-btns">
@@ -310,6 +314,7 @@ export function BlockPreviewBox({
           )}
         </div>
       )}
+      {heard}
       {b.preview && asking && <AdjustBox b={b} dir={dir} busy={!!busy} onAdjust={onAdjust} onClose={() => setAsking(false)} />}
       {b.preview?.transcript && (
         <details className="blk-heard">
@@ -322,7 +327,7 @@ export function BlockPreviewBox({
 }
 
 /** painel da direita (inspetor) com o bloco selecionado */
-export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onOpen: () => void; onRemove: () => void }) {
+export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onOpen: () => void; onRemove: () => void; heard?: React.ReactNode }) {
   return (
     <div className="mt-insp blk-insp">
       <div className="blk-insp-head">
@@ -334,14 +339,14 @@ export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenera
           <Trash2 size={13} />
         </button>
       </div>
-      <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={p.onGenerate} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} />
+      <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={p.onGenerate} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} heard={p.heard} />
       <BlockForm b={p.b} dir={p.dir} patch={p.patch} />
     </div>
   )
 }
 
 /** janela do bloco (duplo clique): todas as propriedades + o player da prévia */
-export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onClose: () => void }) {
+export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onClose: () => void; heard?: React.ReactNode }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && p.onClose()
     window.addEventListener('keydown', k)
@@ -359,7 +364,7 @@ export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate:
           </button>
         </div>
         <div className="blk-window-body">
-          <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={p.onGenerate} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} big />
+          <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={p.onGenerate} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} heard={p.heard} big />
           <BlockForm b={p.b} dir={p.dir} patch={p.patch} big />
         </div>
       </div>

@@ -240,6 +240,7 @@ export function ClipsStudio({ active, dir, main, shorts, onChange, lang, wpm, fo
           toolbarExtra={approveBtn}
           frame={shorts.aspect}
           usedElsewhere={() => new Set([mainRef.current, ...ref.current.items.filter((x) => x.id !== cur.id).map((x) => x.montage)].flatMap(usedPaths))}
+          otherTimelines={() => [mainRef.current, ...ref.current.items.filter((x) => x.id !== cur.id).map((x) => x.montage)]}
         />
       ) : (
         <div className="cs-empty">

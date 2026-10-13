@@ -74,6 +74,7 @@ import { shortKey } from '../shorts/shorts'
 import { LibraryPanel, SNIPPET_MIME } from './LibraryPanel'
 import { StyleStudio } from '../style/StyleStudio'
 import { Montage } from '../montage/Montage'
+import { WhisperJobsChip } from '../montage/AudioRead'
 import { RefModal, RefsPanel } from './References'
 import { MenuBar, type Menu } from './MenuBar'
 import { AudioSettings } from './AudioSettings'
@@ -1334,6 +1335,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             onSyncScript={syncFromMontage}
             onQueueRender={queueMainRender}
             usedElsewhere={() => new Set((metaRef.current.shorts?.items ?? []).flatMap((x) => pathsUsed(x.montage)))}
+            otherTimelines={() => (metaRef.current.shorts?.items ?? []).map((x) => x.montage)}
             onPrepareClips={() => (shorts?.items.length ? goMode('clips') : setShortsSetup(true))}
             prepareLabel={shorts?.items.length ? 'Abrir Criar Clipes' : 'Preparar Clipes'}
             dir={dir}
@@ -1950,6 +1952,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
         </div>
       )}
       {snippet && <SnippetModal draft={snippet} onCancel={() => setSnippet(null)} onSave={(d) => saveSnippet({ ...snippet, ...d })} />}
+      <WhisperJobsChip />
     </div>
   )
 }
