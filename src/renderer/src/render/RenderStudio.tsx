@@ -21,6 +21,8 @@ interface Props {
   /** recortes do Criar Clipes: os aprovados viram exports pendentes */
   shorts?: ShortsData
   patchShort?: (id: string, p: Partial<ShortClip>) => void
+  /** muda = a Montagem mandou o vídeo principal pra fila ("Enviar pra fila de render"): entra pendente, sem começar */
+  queueMainToken?: number
 }
 
 /** um item da fila de exports: o vídeo principal ou um recorte */
@@ -47,7 +49,7 @@ type Progress = { phase: 'letterings' | 'partes' | 'final'; pct: number; eta: nu
 type Resume = Awaited<ReturnType<typeof api.renderStatus>>
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
 
-export function RenderStudio({ active, dir, format, montage, save, shorts, patchShort }: Props) {
+export function RenderStudio({ active, dir, format, montage, save, shorts, patchShort, queueMainToken = 0 }: Props) {
   const [quality, setQuality] = useState(loadQuality)
   const [checks, setChecks] = useState<Record<string, Check>>({})
   const [checking, setChecking] = useState(false)
@@ -244,6 +246,14 @@ export function RenderStudio({ active, dir, format, montage, save, shorts, patch
     runQueue()
   }
 
+  // "Enviar pra fila de render" (Montagem): o vídeo principal fica pendente na fila até mandar exportar
+  const queueSeen = useRef(0)
+  useEffect(() => {
+    if (queueMainToken <= queueSeen.current) return
+    queueSeen.current = queueMainToken
+    setQueue((q) => (q.some((x) => x.id === 'main' && (x.status === 'pendente' || x.status === 'rodando')) ? q : [...q.filter((x) => x.id !== 'main'), { id: 'main', kind: 'main', label: 'Vídeo principal', status: 'pendente' }]))
+  }, [queueMainToken])
+
   const create = async (fresh = false) => {
     if (fresh && !confirm('Recomeçar do zero? As partes já prontas do render anterior são apagadas.')) return
     if (bad.length && !confirm(`${bad.length} arquivo(s) da timeline não estão acessíveis e vão sair pretos ou mudos. Criar mesmo assim?`)) return
@@ -262,6 +272,8 @@ export function RenderStudio({ active, dir, format, montage, save, shorts, patch
   const shortItem = (x: ShortClip) => ({ id: 'short-' + x.id, kind: 'short' as const, shortId: x.id, label: x.title })
   const qOf = (x: ShortClip) => queue.find((q) => q.shortId === x.id)
   const queuedN = queue.filter((q) => q.status === 'pendente' || q.status === 'rodando').length
+  /** vídeo principal mandado pela Montagem, esperando a fila andar */
+  const mainWaiting = queue.some((q) => q.id === 'main' && q.status === 'pendente')
 
   const stateOf = (c: (typeof checklist)[number]): CheckState => {
     if (!c.count) return 'none'
@@ -497,6 +509,11 @@ export function RenderStudio({ active, dir, format, montage, save, shorts, patch
                       <QState s={q.status} />
                       <span className="rn-qname">{q.label}</span>
                       <small>{q.status === 'erro' ? q.error : q.status}</small>
+                      {q.status === 'pendente' && !job?.busy && (
+                        <button className="icon-btn" title="Exportar agora" onClick={() => runQueue()}>
+                          <Play size={13} />
+                        </button>
+                      )}
                     </li>
                   ))}
                 {approved.map((x) => {
@@ -527,10 +544,10 @@ export function RenderStudio({ active, dir, format, montage, save, shorts, patch
               </ul>
               <button
                 className="btn small primary"
-                disabled={!pendingShorts.filter((x) => !qOf(x) || qOf(x)!.status === 'erro').length}
+                disabled={!pendingShorts.filter((x) => !qOf(x) || qOf(x)!.status === 'erro').length && !(mainWaiting && !job?.busy)}
                 onClick={() => enqueue(pendingShorts.filter((x) => !qOf(x) || qOf(x)!.status === 'erro').map(shortItem))}
               >
-                <Sparkles size={13} /> Exportar pendentes ({pendingShorts.filter((x) => !qOf(x) || qOf(x)!.status === 'erro').length})
+                <Sparkles size={13} /> Exportar pendentes ({pendingShorts.filter((x) => !qOf(x) || qOf(x)!.status === 'erro').length + (mainWaiting ? 1 : 0)})
               </button>
               {queuedN > 0 && <span className="muted small"> {queuedN} na fila</span>}
             </section>

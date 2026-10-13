@@ -884,7 +884,7 @@ export function Timeline({
       )}
 
       <div className="tl-body">
-      <div className="tl-heads" style={{ width: HEAD_W }}>
+      <div className="tl-track-heads" style={{ width: HEAD_W }}>
         <div ref={headsRef}>
           <div style={{ height: RULER_H }} />
           <div className="tl-track-head fixed" style={{ height: TEXT_H }}>
