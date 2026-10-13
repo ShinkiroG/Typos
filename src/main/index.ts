@@ -10,7 +10,7 @@ import { initSpell } from './spell'
 import { initAi, initMotionAi, initSfxFinder } from './ai'
 import { initRender } from './render'
 import { initMotionPreview } from './motionPreview'
-import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, initDownloads } from './media'
+import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, framesAt, initDownloads, type FrameWeights } from './media'
 import { initWhisper } from './whisper'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer
@@ -960,6 +960,26 @@ ipcMain.handle('media:trashRecording', async (_e, path: string) => {
     return { error: String(err) }
   }
 })
+/**
+ * Limpeza de arquivos não usados na Montagem: só o que está dentro da pasta do projeto vai pra Lixeira
+ * (gravações, downloads, clipes de motion); arquivos de fora ficam no PC, só saem do projeto.
+ */
+ipcMain.handle('media:trashProjectFiles', async (_e, dir: string, paths: string[]) => {
+  const root = resolve(dir) + sep
+  let trashed = 0
+  const errors: string[] = []
+  for (const p of paths) {
+    const full = resolve(p)
+    if (!full.toLowerCase().startsWith(root.toLowerCase()) || !existsSync(full)) continue
+    try {
+      await shell.trashItem(full)
+      trashed++
+    } catch (err) {
+      errors.push(`${basename(full)}: ${String(err)}`)
+    }
+  }
+  return { trashed, errors }
+})
 ipcMain.handle('shell:showItem', (_e, path: string) => shell.showItemInFolder(path))
 
 // ---------- workspace Estilo (treinar motion) ----------
@@ -1001,7 +1021,12 @@ ipcMain.handle('motion:demoFile', async (_e, html: string) => {
   return file
 })
 
-ipcMain.handle('motion:frames', (_e, path: string, focus: number) => framesForFocus(path, focus, join(formatMedia(), 'frames')))
+ipcMain.handle('motion:frames', (_e, path: string, w: FrameWeights | number) =>
+  framesForFocus(path, typeof w === 'number' ? { aesthetic: 100 - w, motion: w } : w, join(formatMedia(), 'frames'))
+)
+
+/** quadros do vídeo que está embaixo de um bloco de instrução (o Claude olha pra encaixar o motion) */
+ipcMain.handle('motion:framesAt', (_e, path: string, times: number[]) => framesAt(path, times, join(mediaCacheDir(), 'under')))
 
 ipcMain.handle('edit:do', (e, what: 'cut' | 'copy' | 'paste' | 'pasteAndMatchStyle') => {
   if (['cut', 'copy', 'paste', 'pasteAndMatchStyle'].includes(what)) e.sender[what]()

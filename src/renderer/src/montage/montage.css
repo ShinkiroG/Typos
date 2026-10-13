@@ -1256,6 +1256,68 @@
   border-color: #4ade80;
   color: #4ade80;
 }
+.blk-adjust {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.blk-adjust-head,
+.blk-adjust-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.blk-adjust-head {
+  color: var(--accent);
+  font-weight: 600;
+}
+.blk-adjust .st-grow {
+  flex: 1;
+}
+.blk-adjust textarea {
+  width: 100%;
+  resize: vertical;
+  font: 12px/1.4 var(--font-ui);
+}
+.blk-adjust-log {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11px;
+  color: var(--muted);
+  max-height: 120px;
+  overflow: auto;
+}
+.blk-adjust-log li + li {
+  margin-top: 2px;
+}
+.blk-adjust-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.blk-adjust-files span {
+  position: relative;
+}
+.blk-adjust-files img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  display: block;
+}
+.blk-adjust-files svg {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: var(--bg, #000);
+  border-radius: 50%;
+  cursor: pointer;
+}
 .blk-heard summary {
   cursor: pointer;
   font-size: 11px;
@@ -1426,4 +1488,128 @@
 }
 .mt-clips-btn {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+/* vão vazio selecionado entre dois cortes: Delete fecha (puxa o que vem depois) */
+.mt-gap {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 5px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 80%, transparent);
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent) 0 6px, transparent 6px 12px);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.mt-gap span {
+  font-size: 10px;
+  color: var(--text);
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+/* controle de som dedicado de um corte (ou da faixa) */
+.mt-sound {
+  position: fixed;
+  z-index: 50;
+  width: 280px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  font-size: 12px;
+}
+.mt-sound-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mt-sound-head b {
+  flex: 1;
+}
+.mt-sound-scope button {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mt-sound-scope button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.mt-sound-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mt-sound-row.toggle-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.mt-sound-row input[type='range'] {
+  width: 100%;
+}
+.mt-sound-btns {
+  display: flex;
+  gap: 4px;
+}
+.mt-sound-btns .btn {
+  flex: 1;
+  padding-left: 0;
+  padding-right: 0;
+  justify-content: center;
+}
+.mt-sound-wide {
+  justify-content: center;
+}
+.mt-sound-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.mt-sound-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mt-sound-grid input {
+  width: 100%;
+}
+
+/* limpar arquivos que a timeline não usa */
+.mt-bin.mt-clean-all:hover:not(:disabled) {
+  color: #ff9a9a;
+  border-color: color-mix(in srgb, #ff7a7a 60%, transparent);
+}
+.mt-bin.mt-clean-all:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.icon-btn.mt-clean {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.icon-btn.mt-clean small {
+  font-size: 10px;
+}
+.icon-btn.mt-clean:hover:not(:disabled) {
+  color: #ff9a9a;
+}
+.icon-btn.mt-clean:disabled {
+  opacity: 0.35;
+}
+/* arquivo que não está na timeline: um pouco apagado */
+.mt-item.unused .mt-item-name {
+  opacity: 0.6;
 }

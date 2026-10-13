@@ -179,8 +179,14 @@ export interface MotionRef {
   name: string
   /** quadros-chave tirados do vídeo (o que a IA olha) */
   frames?: string[]
-  /** o que a IA tira dessa referência: 0 = só estética (visual), 100 = só motion (movimento); padrão 50 */
+  /** antigo slider único (0 = só estética, 100 = só motion): vale só enquanto os dois pesos abaixo não existem */
   focus?: number
+  /** peso da estética dessa referência (cores, tipografia, composição): 0 = ignora, 100 = segue à risca */
+  aesthetic?: number
+  /** peso do motion dessa referência (câmera, transições, ritmo): 0 = ignora, 100 = segue à risca */
+  motion?: number
+  /** com motion no máximo: manda sequências quadro a quadro (24/s), mais lento e caro */
+  frameByFrame?: boolean
   /** o que observar nessa referência */
   note?: string
 }
@@ -190,6 +196,12 @@ export interface FontCase {
   name: string
   mode: 'dynamic' | 'favorites'
   favorites: string[]
+}
+
+/** os dois pesos de uma referência (referências antigas vêm do slider único) */
+export function refWeights(r: MotionRef) {
+  const f = r.focus ?? 50
+  return { aesthetic: r.aesthetic ?? 100 - f, motion: r.motion ?? f, frameByFrame: !!r.frameByFrame && (r.motion ?? f) >= 100 }
 }
 
 export const DEFAULT_FONT_CASES = (): FontCase[] =>
@@ -745,6 +757,17 @@ export interface InstructionBlock {
   approved?: boolean
   /** quanto o motion acompanha a fala: 0 = não sincroniza, 1 = sincroniza tudo (sem valor = 0,3) */
   sync?: number
+  /** ajustes pedidos sobre a prévia atual (a conversa com o Claude); some quando a prévia é refeita do zero */
+  tweaks?: BlockTweak[]
+}
+
+/** um pedido de ajuste na prévia de um bloco */
+export interface BlockTweak {
+  id: string
+  at: string
+  text: string
+  /** imagens mandadas junto (prints, referências, algo pra pôr no vídeo) */
+  files: Attachment[]
 }
 
 /** memória de motion: o que o autor aprovou (demo do Estilo, prévias de blocos, notas) */

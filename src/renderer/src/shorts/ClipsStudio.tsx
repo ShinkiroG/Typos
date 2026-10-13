@@ -31,6 +31,12 @@ interface Props {
   onGoRender: () => void
 }
 
+/** caminhos dos arquivos que a timeline usa */
+const usedPaths = (d: MontageData) => {
+  const used = new Set(d.clips.map((c) => c.media))
+  return d.media.filter((m) => used.has(m.id)).map((m) => m.path)
+}
+
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 
 export function ClipsStudio({ active, dir, main, shorts, onChange, lang, wpm, format, onFormatChange, onAudioSettings, suggestToken, onSetup, onGoRender }: Props) {
@@ -229,6 +235,7 @@ export function ClipsStudio({ active, dir, main, shorts, onChange, lang, wpm, fo
           poolTop={folder}
           toolbarExtra={approveBtn}
           frame={shorts.aspect}
+          usedElsewhere={() => new Set([mainRef.current, ...ref.current.items.filter((x) => x.id !== cur.id).map((x) => x.montage)].flatMap(usedPaths))}
         />
       ) : (
         <div className="cs-empty">

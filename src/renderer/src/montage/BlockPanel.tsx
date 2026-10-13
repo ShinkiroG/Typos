@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send } from 'lucide-react'
 import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type InstructionBlock } from '../lib'
 import { blockDur, blockLabel, blockSync, isImage, previewStale } from './blocks'
 
@@ -134,24 +134,123 @@ export function BlockForm({ b, dir, patch, big }: FormProps & { big?: boolean })
   )
 }
 
-/** prévia: vídeo, gerar de novo, aprovar (vira clipe na timeline) */
+export type AdjustFn = (t: { text: string; files: Attachment[] }) => void
+
+/** pedir ajustes na prévia atual: o histórico do que já foi pedido + campo de texto com anexos */
+function AdjustBox({ b, dir, busy, onAdjust, onClose }: { b: InstructionBlock; dir: string; busy: boolean; onAdjust: AdjustFn; onClose: () => void }) {
+  const [text, setText] = useState('')
+  const [files, setFiles] = useState<Attachment[]>([])
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => ref.current?.focus(), [])
+  const send = () => {
+    if (busy || (!text.trim() && !files.length)) return
+    onAdjust({ text: text.trim(), files })
+    setText('')
+    setFiles([])
+  }
+  const imgs = (list: Attachment[]) => setFiles((f) => [...f, ...list.filter(isImage)])
+  return (
+    <div
+      className="blk-adjust"
+      onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()}
+      onDrop={async (e) => {
+        const paths = [...e.dataTransfer.files].map((f) => api.pathForFile(f)).filter(Boolean)
+        if (!paths.length) return
+        e.preventDefault()
+        e.stopPropagation()
+        imgs(await api.importPaths(dir, paths))
+      }}
+    >
+      <div className="blk-adjust-head">
+        <MessageSquare size={12} /> Pedir ajustes nesta prévia
+        <span className="st-grow" />
+        <button className="icon-btn" title="Fechar" onClick={onClose}>
+          <X size={12} />
+        </button>
+      </div>
+      {!!b.tweaks?.length && (
+        <ol className="blk-adjust-log" title="O que já foi pedido nesta prévia (some quando você refaz a prévia do zero)">
+          {b.tweaks.map((t) => (
+            <li key={t.id}>
+              {t.text || <i>só imagens</i>}
+              {!!t.files.length && <small> · {t.files.length} imagem(ns)</small>}
+            </li>
+          ))}
+        </ol>
+      )}
+      <textarea
+        ref={ref}
+        rows={3}
+        value={text}
+        placeholder="Ex.: o número entra mais cedo, quando falo “70%”; troca o fundo por um mais escuro; tira a seta da direita…"
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send()
+          e.stopPropagation()
+        }}
+        onPaste={async (e) => {
+          if (![...e.clipboardData.items].some((i) => i.type.startsWith('image/'))) return
+          e.preventDefault()
+          const a = await pasteClipboardImage(dir)
+          if (a) imgs([a])
+        }}
+      />
+      {!!files.length && (
+        <div className="blk-adjust-files">
+          {files.map((a) => (
+            <span key={a.id}>
+              <img src={fileUrl(absPath(a))} alt="" />
+              <X size={11} onClick={() => setFiles((f) => f.filter((x) => x.id !== a.id))} />
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="blk-adjust-btns">
+        <button className="icon-btn" title="Anexar imagem do PC" onClick={async () => imgs(await api.pickAssets(dir))}>
+          <Paperclip size={13} />
+        </button>
+        <button
+          className="icon-btn"
+          title="Colar imagem (print)"
+          onClick={async () => {
+            const a = await pasteClipboardImage(dir)
+            if (a) imgs([a])
+          }}
+        >
+          <ClipboardPaste size={13} />
+        </button>
+        <span className="st-grow" />
+        <button className="btn small primary" disabled={busy || (!text.trim() && !files.length)} title="Ctrl+Enter" onClick={send}>
+          <Send size={12} /> Enviar ajuste
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** prévia: vídeo, gerar de novo, pedir ajustes, aprovar (vira clipe na timeline) */
 export function BlockPreviewBox({
   b,
+  dir,
   busy,
   onGenerate,
+  onAdjust,
   onCancel,
   onApprove,
   big
 }: {
   b: InstructionBlock
+  dir: string
   busy: BlockBusy | null
   onGenerate: () => void
+  onAdjust: AdjustFn
   onCancel: () => void
   onApprove: () => void
   big?: boolean
 }) {
   const mine = busy?.id === b.id
   const stale = previewStale(b)
+  const [asking, setAsking] = useState(false)
   return (
     <div className={'blk-prev' + (big ? ' big' : '')}>
       {b.preview ? (
@@ -181,9 +280,24 @@ export function BlockPreviewBox({
         </div>
       ) : (
         <div className="blk-prev-btns">
-          <button className="btn small primary" disabled={!!busy} title={busy ? 'Outra prévia está sendo feita' : ''} onClick={onGenerate}>
-            <Sparkles size={13} /> {b.preview ? 'Refazer prévia' : 'Gerar prévia'}
+          <button
+            className={'btn small' + (b.preview ? '' : ' primary')}
+            disabled={!!busy}
+            title={busy ? 'Outra prévia está sendo feita' : b.preview ? 'Cria o motion de novo, do zero (esquece os ajustes pedidos)' : ''}
+            onClick={onGenerate}
+          >
+            <Sparkles size={13} /> {b.preview ? 'Refazer do zero' : 'Gerar prévia'}
           </button>
+          {b.preview && (
+            <button
+              className={'btn small' + (asking ? ' on' : ' primary')}
+              disabled={!!busy}
+              title="Conta pro Claude o que mudar: ele parte desta prévia e mantém o resto"
+              onClick={() => setAsking((a) => !a)}
+            >
+              <MessageSquare size={13} /> Pedir ajustes{b.tweaks?.length ? ` (${b.tweaks.length})` : ''}
+            </button>
+          )}
           {b.preview && (
             <button
               className="btn small"
@@ -196,6 +310,7 @@ export function BlockPreviewBox({
           )}
         </div>
       )}
+      {b.preview && asking && <AdjustBox b={b} dir={dir} busy={!!busy} onAdjust={onAdjust} onClose={() => setAsking(false)} />}
       {b.preview?.transcript && (
         <details className="blk-heard">
           <summary>O que foi ouvido no trecho</summary>
@@ -207,7 +322,7 @@ export function BlockPreviewBox({
 }
 
 /** painel da direita (inspetor) com o bloco selecionado */
-export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onCancel: () => void; onApprove: () => void; onOpen: () => void; onRemove: () => void }) {
+export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onOpen: () => void; onRemove: () => void }) {
   return (
     <div className="mt-insp blk-insp">
       <div className="blk-insp-head">
@@ -219,14 +334,14 @@ export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenera
           <Trash2 size={13} />
         </button>
       </div>
-      <BlockPreviewBox b={p.b} busy={p.busy} onGenerate={p.onGenerate} onCancel={p.onCancel} onApprove={p.onApprove} />
+      <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={p.onGenerate} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} />
       <BlockForm b={p.b} dir={p.dir} patch={p.patch} />
     </div>
   )
 }
 
 /** janela do bloco (duplo clique): todas as propriedades + o player da prévia */
-export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onCancel: () => void; onApprove: () => void; onClose: () => void }) {
+export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onClose: () => void }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && p.onClose()
     window.addEventListener('keydown', k)
@@ -244,7 +359,7 @@ export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate:
           </button>
         </div>
         <div className="blk-window-body">
-          <BlockPreviewBox b={p.b} busy={p.busy} onGenerate={p.onGenerate} onCancel={p.onCancel} onApprove={p.onApprove} big />
+          <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={p.onGenerate} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} big />
           <BlockForm b={p.b} dir={p.dir} patch={p.patch} big />
         </div>
       </div>
