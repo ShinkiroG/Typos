@@ -58,6 +58,9 @@ import { BlockInspector, BlockWindow, type BlockBusy } from './BlockPanel'
 import { AudioReadButton, BlockHeardRow, useBlockHeard } from './AudioRead'
 import { jobPct, recheckRead, runningLabel, watchJobs } from './transcripts'
 import { describeChange } from './history'
+import { isKey, keyOf } from '../keys'
+
+const keyHint = (id: string) => keyOf(id) || '—'
 
 export const fmtTc = (t: number) => {
   const s = Math.max(0, t)
@@ -1107,22 +1110,25 @@ export function Montage({
         e.stopPropagation()
         return setSelected(dataRef.current.clips.map((c) => c.id))
       }
-      if (e.ctrlKey || e.metaKey || e.altKey) return
       const run = (fn: () => void) => {
         e.preventDefault()
         e.stopPropagation()
         fn()
       }
-      if (k === ' ') run(recRef.current ? stopRec : rehearseRef.current ? () => setRehearse(false) : toggle)
-      else if (k === 'r') run(startRec)
-      else if ((k === 'arrowup' || k === 'arrowdown') && (recRef.current || rehearseRef.current))
+      // as teclas trocáveis (Ajuda → Atalhos do teclado)
+      if (isKey(e, 'mt.play')) return run(recRef.current ? stopRec : rehearseRef.current ? () => setRehearse(false) : toggle)
+      if (isKey(e, 'mt.record')) return run(startRec)
+      if (isKey(e, 'mt.select')) return run(() => setTool('select'))
+      if (isKey(e, 'mt.blade')) return run(() => setTool((t) => (t === 'blade' ? 'select' : 'blade')))
+      if (isKey(e, 'mt.split')) return run(splitAtPlayhead)
+      if (isKey(e, 'mt.lettering')) return run(addLettering)
+      if (isKey(e, 'mt.splice')) return run(() => applySplice(false))
+      if (isKey(e, 'mt.block')) return run(addBlock)
+      if (isKey(e, 'mt.zoomIn')) return run(() => zoomBy(1.4))
+      if (isKey(e, 'mt.zoomOut')) return run(() => zoomBy(1 / 1.4))
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      if ((k === 'arrowup' || k === 'arrowdown') && (recRef.current || rehearseRef.current))
         run(() => setPrompterWpm(prompterWpmRef.current + (k === 'arrowup' ? 10 : -10)))
-      else if (k === 'v') run(() => setTool('select'))
-      else if (k === 'c') run(() => setTool((t) => (t === 'blade' ? 'select' : 'blade')))
-      else if (k === 's') run(splitAtPlayhead)
-      else if (k === 'l') run(addLettering)
-      else if (k === 'e') run(() => applySplice(false))
-      else if (k === 'b') run(addBlock)
       else if ((k === 'delete' || k === 'backspace') && blockSel) run(() => removeBlock(blockSel))
       else if ((k === 'delete' || k === 'backspace') && gap && !selected.length) run(() => closeGap(gap))
       else if (k === 'escape' && gap) run(() => setGap(null))
@@ -1130,8 +1136,6 @@ export function Montage({
       else if (k === 'arrowleft') run(() => (e.shiftKey ? jumpCut(-1) : seek(posRef.current - 1 / 30)))
       else if (k === 'arrowright') run(() => (e.shiftKey ? jumpCut(1) : seek(posRef.current + 1 / 30)))
       else if (k === 'home') run(() => seek(0))
-      else if (k === '+' || k === '=') run(() => zoomBy(1.4))
-      else if (k === '-') run(() => zoomBy(1 / 1.4))
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
@@ -1999,11 +2003,15 @@ export function Montage({
             {sel.length > 1 ? `${sel.length} cortes selecionados. Delete apaga, Shift+Delete apaga e fecha o buraco, E aplica o crossfade.` : 'Clique num corte da timeline pra ver os detalhes.'}
             <div className="mt-keys">
               <b>Atalhos</b>
-              <span>Espaço tocar · V seleção · C lâmina · S dividir no playhead · R gravar</span>
-              <span>E crossfade · Delete apagar · Shift+Delete apagar e juntar</span>
+              <span>
+                {keyHint('mt.play')} tocar · {keyHint('mt.select')} seleção · {keyHint('mt.blade')} lâmina · {keyHint('mt.split')} dividir no playhead · {keyHint('mt.record')} gravar
+              </span>
+              <span>{keyHint('mt.splice')} crossfade · Delete apagar · Shift+Delete apagar e juntar</span>
               <span>Botão direito na junção: crossfade · arraste a borda de baixo do nome da faixa: altura</span>
-              <span>B bloco de instrução (duplo clique abre)</span>
-              <span>←/→ quadro · Shift+←/→ corte · +/- zoom · Ctrl+Z desfazer</span>
+              <span>{keyHint('mt.block')} bloco de instrução (duplo clique abre)</span>
+              <span>
+                ←/→ quadro · Shift+←/→ corte · {keyHint('mt.zoomIn')}/{keyHint('mt.zoomOut')} zoom · Ctrl+Z desfazer · ? todos os atalhos
+              </span>
             </div>
           </div>
         ) : (

@@ -85,9 +85,9 @@ const api = {
   generateSfx: (dir: string, text: string, seconds: number | null): Promise<{ path: string; name: string } | { error: string }> =>
     ipcRenderer.invoke('sfx:generate', dir, text, seconds),
 
-  getSettings: (): Promise<{ autoUpdate: boolean; hasElevenLabsKey: boolean; version: string; mode: 'installer' | 'portable' | 'dev' }> =>
+  getSettings: (): Promise<{ autoUpdate: boolean; hasElevenLabsKey: boolean; version: string; mode: 'installer' | 'portable' | 'dev'; keys: Record<string, string> }> =>
     ipcRenderer.invoke('settings:get'),
-  setSettings: (patch: { autoUpdate?: boolean; elevenLabsKey?: string }) => ipcRenderer.invoke('settings:set', patch),
+  setSettings: (patch: { autoUpdate?: boolean; elevenLabsKey?: string; keys?: Record<string, string> }) => ipcRenderer.invoke('settings:set', patch),
   checkUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdateNow: () => ipcRenderer.invoke('update:installNow'),
   onUpdate: (cb: (event: string, payload: any) => void) => {

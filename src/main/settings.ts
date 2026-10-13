@@ -29,6 +29,8 @@ export interface AppSettings {
   whisperModel?: string
   /** quantos arquivos o Whisper lê ao mesmo tempo (1–4) */
   whisperParallel?: number
+  /** atalhos trocados pelo usuário (id da ação → tecla); o resto usa o padrão */
+  keys?: Record<string, string>
 }
 
 const DEFAULTS: AppSettings = { autoUpdate: true }

@@ -79,6 +79,7 @@ import { RefModal, RefsPanel } from './References'
 import { MenuBar, type Menu } from './MenuBar'
 import { AudioSettings } from './AudioSettings'
 import { SnippetModal, type SnippetDraft } from './SnippetModal'
+import { KeysEditor } from './KeysEditor'
 
 interface Props {
   dir: string
@@ -550,6 +551,19 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     },
     [editor]
   )
+
+  // ? abre a tela de atalhos (fora de onde se digita)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '?' || e.ctrlKey || e.metaKey || e.altKey) return
+      const el = e.target as HTMLElement
+      if (el?.closest?.('input, textarea, select, [contenteditable="true"], .modal')) return
+      e.preventDefault()
+      setHelpOpen('keys')
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y valem na tela toda (não só com o cursor no texto)
   useEffect(() => {
@@ -1825,26 +1839,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             {helpOpen === 'keys' ? (
               <>
                 <h3>Atalhos do teclado</h3>
-                <div className="keys-grid">
-                  <b>Roteiro</b>
-                  <span>Ctrl+1…6</span><span>Capítulo, Prompt, Fala, Transição, Sobe som, Pausa</span>
-                  <span>Ctrl+P</span><span>tocar a timeline</span>
-                  <span>Ctrl+Z / Ctrl+Shift+Z</span><span>desfazer / refazer</span>
-                  <span>Botão direito</span><span>corretor, referência, IA, biblioteca, trocar tipo</span>
-                  <b>Arquivo</b>
-                  <span>Ctrl+N / Ctrl+O</span><span>novo roteiro / abrir pasta</span>
-                  <span>Ctrl+S / Ctrl+Shift+S</span><span>salvar / salvar como</span>
-                  <span>Ctrl+,</span><span>configurações</span>
-                  <b>Montagem</b>
-                  <span>Espaço</span><span>tocar / parar (e parar a gravação)</span>
-                  <span>R</span><span>gravar na faixa armada</span>
-                  <span>V / C</span><span>seleção / lâmina</span>
-                  <span>S</span><span>dividir no playhead</span>
-                  <span>E</span><span>Crossfade no corte</span>
-                  <span>Delete / Shift+Delete</span><span>apagar / apagar e juntar</span>
-                  <span>← → / Shift+← →</span><span>quadro a quadro / de corte em corte</span>
-                  <span>+ / -</span><span>zoom</span>
-                </div>
+                <KeysEditor />
               </>
             ) : (
               <>

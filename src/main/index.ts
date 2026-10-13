@@ -319,10 +319,16 @@ initLog(async () => {
 // ---------- configurações e atualizações ----------
 ipcMain.handle('settings:get', async () => {
   const s = await loadSettings()
-  return { autoUpdate: s.autoUpdate, hasElevenLabsKey: !!s.elevenLabsKey, version: app.getVersion(), mode: installMode() }
+  return { autoUpdate: s.autoUpdate, hasElevenLabsKey: !!s.elevenLabsKey, version: app.getVersion(), mode: installMode(), keys: s.keys ?? {} }
 })
-ipcMain.handle('settings:set', async (_e, patch: { autoUpdate?: boolean; elevenLabsKey?: string }) => {
+ipcMain.handle('settings:set', async (_e, patch: { autoUpdate?: boolean; elevenLabsKey?: string; keys?: Record<string, string> }) => {
   const clean: Record<string, unknown> = {}
+  if (patch.keys && typeof patch.keys === 'object')
+    clean.keys = Object.fromEntries(
+      Object.entries(patch.keys)
+        .filter(([k, v]) => /^[a-z]+\.[a-zA-Z]+$/.test(k) && typeof v === 'string' && v.length <= 30)
+        .slice(0, 100)
+    )
   if (typeof patch.autoUpdate === 'boolean') clean.autoUpdate = patch.autoUpdate
   if (typeof patch.elevenLabsKey === 'string') clean.elevenLabsKey = patch.elevenLabsKey.trim() || undefined
   await saveSettings(clean)

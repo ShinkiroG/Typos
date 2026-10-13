@@ -1,5 +1,7 @@
 import { Node, Extension, mergeAttributes, InputRule, textblockTypeInputRule, type Editor } from '@tiptap/core'
 import { ReactNodeViewRenderer } from '@tiptap/react'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { isKey } from '../keys'
 import { PromptView, TransitionView, SoundUpView, SonoraView } from './views'
 
 /** Backspace no começo de um bloco especial volta ele pra fala comum. */
@@ -204,18 +206,35 @@ export const SpeechTiming = Extension.create({
   }
 })
 
+// mesma ordem do painel Inserir: Capítulo, Prompt, Fala, Transição, Sobe som, Pausa
+const TYPE_KEYS: [string, string][] = [
+  ['script.chapter', 'chapter'],
+  ['script.prompt', 'prompt'],
+  ['script.speech', 'paragraph'],
+  ['script.transition', 'transition'],
+  ['script.soundUp', 'soundUp'],
+  ['script.pause', 'sonora']
+]
+
+/** trocar o tipo do bloco pelo teclado (as teclas vêm de keys.ts e o usuário pode mudar) */
 export const ScriptKeys = Extension.create({
   name: 'scriptKeys',
-  addKeyboardShortcuts() {
-    return {
-      // mesma ordem do painel Inserir: Capítulo, Prompt, Fala, Transição, Sobe som, Pausa
-      'Mod-1': () => this.editor.commands.setNode('chapter'),
-      'Mod-2': () => this.editor.commands.setNode('prompt'),
-      'Mod-3': () => this.editor.commands.setNode('paragraph'),
-      'Mod-4': () => this.editor.commands.setNode('transition'),
-      'Mod-5': () => this.editor.commands.setNode('soundUp'),
-      'Mod-6': () => this.editor.commands.setNode('sonora')
-    }
+  addProseMirrorPlugins() {
+    const editor = this.editor
+    return [
+      new Plugin({
+        key: new PluginKey('scriptKeys'),
+        props: {
+          handleKeyDown: (_view, e) => {
+            const hit = TYPE_KEYS.find(([id]) => isKey(e, id))
+            if (!hit) return false
+            e.preventDefault()
+            editor.commands.setNode(hit[1])
+            return true
+          }
+        }
+      })
+    ]
   }
 })
 
