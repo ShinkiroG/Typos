@@ -9,6 +9,9 @@ const api = {
   saveProjectAs: (dir: string, data: unknown, markdown: string): Promise<{ dir: string } | { error: string } | null> =>
     ipcRenderer.invoke('project:saveAs', dir, data, markdown),
   recentProjects: () => ipcRenderer.invoke('project:recent'),
+  /** Ajuda → Gerar relatório de erro (.txt com versão, ffmpeg e os últimos erros; sem chaves) */
+  errorReport: (): Promise<{ path: string; lines: number } | null> => ipcRenderer.invoke('log:report'),
+  logError: (text: string) => ipcRenderer.send('log:renderer', text),
   /** cópias automáticas do roteiro (as 10 mais novas, uma a cada 3 min no máximo) */
   listVersions: (dir: string): Promise<{ name: string; at: number; words: number; title: string }[]> => ipcRenderer.invoke('versions:list', dir),
   restoreVersion: (dir: string, name: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('versions:restore', dir, name),

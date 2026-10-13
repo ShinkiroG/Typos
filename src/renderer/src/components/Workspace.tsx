@@ -835,6 +835,14 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       items: [
         { label: 'Atalhos do teclado', onClick: () => setHelpOpen('keys') },
         { label: 'Checar atualizações', onClick: () => api.checkUpdates() },
+        {
+          label: 'Gerar relatório de erro…',
+          onClick: async () => {
+            await save()
+            const r = await api.errorReport()
+            if (r) setToast(`Relatório salvo (${r.lines} mensagens). Mande esse arquivo pro Claude.`)
+          }
+        },
         { sep: true },
         { label: 'Sobre o Typos', onClick: () => setHelpOpen('about') }
       ]
