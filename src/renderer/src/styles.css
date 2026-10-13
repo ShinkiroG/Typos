@@ -34,6 +34,19 @@ body {
   font-family: var(--font-ui);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  /* interface de app: arrastar na timeline, réguas, faixas e botões não seleciona texto */
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* onde texto é conteúdo: campos, editor do Roteiro, respostas da IA, transcrições */
+input,
+textarea,
+[contenteditable='true'],
+.ProseMirror,
+.ai-answer-text,
+pre {
+  -webkit-user-select: text;
+  user-select: text;
 }
 button,
 input,
