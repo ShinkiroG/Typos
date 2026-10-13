@@ -16,8 +16,9 @@ import type { ScriptBlock } from './autocut'
 
 /**
  * Blocos de instrução: pedaços de tempo na faixa de vídeo com instruções de motion.
- * Aqui fica o modelo (criar, mexer), a prévia (ouvir o trecho, pedir o HTML à IA, virar MP4)
- * e o texto que vai pro render e pra memória de motion.
+ * Aqui fica o modelo (criar, mexer), a prévia (ouvir o trecho, pedir o HTML à IA, virar MP4),
+ * o clipe final (a prévia aprovada gravada na resolução do projeto, que entra na timeline)
+ * e o texto que vai pra memória de motion.
  */
 
 export const BLOCK_MIN = 0.5
@@ -117,7 +118,7 @@ export async function rangeWav(engine: MontageEngine, data: MontageData, dur: (i
   const ctx = new OfflineAudioContext(1, len, rate)
   let any = false
   for (const s of spans(data, dur)) {
-    if (s.t1 <= t0 || s.t0 >= t1) continue
+    if (s.t1 <= t0 || s.t0 >= t1 || s.clip.audioOff) continue
     const loaded = engine.get(s.clip.media)
     if (!loaded) continue
     const rel0 = Math.max(0, t0 - s.t0)
@@ -160,7 +161,7 @@ function wav16(ch: Float32Array, rate: number) {
   return new Uint8Array(out.buffer)
 }
 
-// ---------- direção de motion (vale pra prévia e pro render) ----------
+// ---------- direção de motion (vale pras prévias) ----------
 export const MOTION_DIRECTION = [
   '- Pense como motion designer, não como apresentador de slides: nada de lista de tópicos surgindo um embaixo do outro, nada de "cartão com título + bullets".',
   '- Antes de animar, imagine de 3 a 7 ideias de apresentação bem diferentes pro trecho (gráfico que se monta, objeto isométrico, mapa, linha do tempo, comparação lado a lado, tipografia gigante em close, colagem, interface recriada, câmera viajando por um cenário, contador, metáfora visual…) e escolha a mais forte. Em trechos longos, encadeie 2 ou 3 composições diferentes.',
@@ -195,6 +196,15 @@ export function previewSize(format?: Format) {
   const k = 480 / Math.max(w, h)
   return { w: Math.round((w * k) / 2) * 2, h: Math.round((h * k) / 2) * 2 }
 }
+
+/** tamanho final do vídeo: o formato com o lado menor em 1080 (o mesmo do render em Full HD) */
+export function projectSize(format?: Format) {
+  const [w, h] = (RESOLUTIONS[format?.aspect ?? '16:9'] ?? '1920×1080').split('×').map(Number)
+  const k = 1080 / Math.min(w, h)
+  return { w: Math.round((w * k) / 2) * 2, h: Math.round((h * k) / 2) * 2 }
+}
+
+export const CLIP_FPS = 30
 
 export function blockPrompt(o: {
   block: InstructionBlock
@@ -261,39 +271,6 @@ export function parseDemo(text: string) {
 
 /** nome do arquivo de anexo dentro da pasta da prévia */
 export const attachName = (a: BlockAttachment, i: number) => `anexo-${i + 1}${a.path.match(/\.\w+$/)?.[0]?.toLowerCase() ?? '.png'}`
-
-// ---------- render: o que vai no pedido ----------
-export function blocksBriefSection(blocks: InstructionBlock[] | undefined, memory: MotionMemoryItem[] | undefined, tracks: MontageData['tracks']) {
-  const list = [...(blocks ?? [])].sort((a, b) => a.start - b.start)
-  const out: string[] = []
-  if (list.length) {
-    out.push(
-      '## Blocos de instrução de motion (o autor marcou na timeline: siga à risca)',
-      'Cada bloco é um trecho do vídeo com motion próprio. `modo: escrito` = siga as instruções; `modo: dinâmico` = deduza o motion da fala do trecho. Anexos `insert` entram no vídeo (anotados com setas, zoom, destaques); `referencia` NÃO aparece: recrie em motion com design bonito. Quando há `previa_aprovada`, o autor aprovou aquela animação (HTML): reaproveite a ideia e a composição, em resolução cheia.',
-      '```json',
-      JSON.stringify(
-        list.map((b) => ({
-          faixa: tracks.find((t) => t.id === b.track)?.name ?? b.track,
-          nome: b.name || undefined,
-          inicio: +b.start.toFixed(2),
-          fim: +b.end.toFixed(2),
-          modo: b.dynamic ? 'dinâmico' : 'escrito',
-          instrucoes: b.text.trim() || undefined,
-          anexos: b.attachments.length ? b.attachments.map((a) => ({ arquivo: absPath(a), uso: a.use === 'insert' ? 'insert' : 'referencia', nota: a.note || undefined })) : undefined,
-          previa_aprovada: b.approved && b.preview ? b.preview.html : undefined
-        })),
-        null,
-        1
-      ),
-      '```',
-      ''
-    )
-  }
-  out.push('## Direção de motion', MOTION_DIRECTION, '')
-  const mem = memorySection(memory)
-  if (mem) out.push(mem, '')
-  return out
-}
 
 /** item da memória a partir de um bloco aprovado (lê o HTML da prévia) */
 export async function memoryFromBlock(b: InstructionBlock, html: string): Promise<MotionMemoryItem> {
@@ -372,4 +349,36 @@ export async function generatePreview(c: PreviewCtx) {
     transcript: phrases(heard.words),
     key: blockKey(b)
   }
+}
+
+/**
+ * Clipe final do bloco: o HTML da prévia aprovada gravado de novo na resolução do projeto (30 fps),
+ * ampliado com zoom (a composição fica igual à que foi aprovada), com o áudio do trecho.
+ */
+export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
+  const b = c.block
+  if (!b.preview) throw new Error('Gere a prévia antes de aprovar.')
+  const files = b.attachments.filter(isImage).map((a, i) => ({ a, name: attachName(a, i) }))
+  const small = previewSize(c.format)
+  const size = projectSize(c.format)
+  const hasAudio = audioIn(c.data, b).length > 0
+  c.onStage('Mixando o áudio do trecho…', null)
+  const wav = hasAudio ? await rangeWav(c.engine, c.data, c.dur, b.start, b.end).catch(() => undefined) : undefined
+  c.onStage(`Gravando o clipe em ${size.w}×${size.h}…`, 0)
+  const v = await api.motionPreview({
+    dir: c.dir,
+    block: b.id,
+    html: '',
+    htmlPath: b.preview.html,
+    seconds: blockDur(b),
+    width: size.w,
+    height: size.h,
+    fps: CLIP_FPS,
+    zoom: size.w / small.w,
+    final: true,
+    wav,
+    files: files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name }))
+  })
+  if ('error' in v) throw new Error(v.error)
+  return v.video
 }

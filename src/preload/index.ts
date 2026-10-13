@@ -150,25 +150,33 @@ const api = {
   renderCheck: (paths: string[]): Promise<{ path: string; ok: boolean; files?: number; size?: number; error?: string }[]> => ipcRenderer.invoke('render:check', paths),
   renderStart: (job: {
     dir: string
-    brief: string
-    readDirs: string[]
-    styleGuide?: string
-    script: string
-    narration: { path: string; in: number; out: number; start: number }[]
-    lang: string
-    steps: { id: string; label: string; file: string; weight: number; expect?: number; key: string; from?: number; to?: number }[]
+    width: number
+    height: number
+    fps: number
+    finalFile: string
+    parts: {
+      id: string
+      label: string
+      from: number
+      to: number
+      key: string
+      video: { path: string; image: boolean; t0: number; t1: number; src0: number; fadeIn: number; fadeOut: number }[]
+      audio: { path: string; t0: number; t1: number; src0: number; env: [number, number][] }[]
+      letterings: string[]
+    }[]
+    letterings: { id: string; label: string; t: number; dur: number; html: string }[]
     fresh?: boolean
   }): Promise<{ path?: string; summary: string; seconds: number } | { error: string }> => ipcRenderer.invoke('render:start', job),
   renderStatus: (dir: string): Promise<{ status: 'rodando' | 'interrompido' | 'pronto'; reason?: string; done: number; total: number; pct: number; updated: number } | null> =>
     ipcRenderer.invoke('render:status', dir),
   onRenderState: (
-    cb: (p: { phase: 'transcrevendo' | 'claude'; pct: number; eta: number | null; steps: { id: string; label: string; done: boolean }[]; resumed: number }) => void
+    cb: (p: { phase: 'letterings' | 'partes' | 'final'; pct: number; eta: number | null; steps: { id: string; label: string; done: boolean }[]; resumed: number }) => void
   ) => {
     ipcRenderer.removeAllListeners('render:state')
     ipcRenderer.on('render:state', (_e, p) => cb(p))
   },
   renderCancel: () => ipcRenderer.invoke('render:cancel'),
-  onRenderProgress: (cb: (ev: { kind: 'tool' | 'say' | 'info'; text: string }) => void) => {
+  onRenderProgress: (cb: (ev: { kind: 'say' | 'info'; text: string }) => void) => {
     ipcRenderer.removeAllListeners('render:progress')
     ipcRenderer.on('render:progress', (_e, ev) => cb(ev))
   },
@@ -183,6 +191,10 @@ const api = {
     fps: number
     wav?: Uint8Array
     files: { src: string; name: string }[]
+    /** clipe final (resolução do projeto) a partir do HTML aprovado */
+    final?: boolean
+    zoom?: number
+    htmlPath?: string
   }): Promise<{ video: string; html: string } | { error: string }> => ipcRenderer.invoke('motion:preview', job),
   motionPreviewCancel: () => ipcRenderer.invoke('motion:previewCancel'),
   onMotionPreviewProgress: (cb: (p: { block: string; stage: string; pct: number }) => void) => {

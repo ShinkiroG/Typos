@@ -6,7 +6,8 @@ import { findFfmpeg, run } from './media'
 /**
  * Prévia de um bloco de instrução: o HTML de motion que a IA escreveu é tocado numa janela
  * invisível com um relógio de mentira (quadro a quadro, sem pressa) e vira um MP4 leve
- * (12 fps, baixa resolução) com o áudio do trecho.
+ * (12 fps, baixa resolução) com o áudio do trecho. Aprovada, a mesma animação é gravada de novo
+ * na resolução do projeto e vira um clipe na timeline. O render usa o mesmo motor pros letterings.
  */
 
 export interface PreviewJob {
@@ -22,6 +23,12 @@ export interface PreviewJob {
   wav?: Uint8Array
   /** arquivos que o HTML usa pelo nome (anexos de insert) */
   files: { src: string; name: string }[]
+  /** clipe final (qualidade do projeto) em vez da prévia leve */
+  final?: boolean
+  /** zoom da página (HTML escrito pro tamanho da prévia, gravado maior) */
+  zoom?: number
+  /** HTML já salvo (o da prévia aprovada): lê dele em vez de `html` */
+  htmlPath?: string
 }
 
 /**
@@ -61,23 +68,41 @@ const safeName = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 60) || 'arq
 
 let busy: { cancel: boolean } | null = null
 
-export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed' | 'send'>, job: PreviewJob) {
+export interface HtmlVideoJob {
+  /** pasta de trabalho (quadros, HTML tocável e anexos ficam aqui) */
+  out: string
+  html: string
+  seconds: number
+  /** tamanho do vídeo (px) */
+  width: number
+  height: number
+  fps: number
+  /** zoom da página: o HTML foi escrito pra um tamanho menor e é ampliado sem perder nitidez */
+  zoom?: number
+  wav?: Uint8Array
+  files: { src: string; name: string }[]
+  /** arquivo de saída (.mp4) */
+  video: string
+  crf: number
+  onPct?: (pct: number) => void
+  cancelled?: () => boolean
+}
+
+/** toca o HTML com o relógio virtual numa janela invisível e grava quadro a quadro num MP4 (com o áudio, se tiver) */
+export async function htmlToVideo(job: HtmlVideoJob) {
   const ff = await findFfmpeg()
   if (!ff) throw new Error('O ffmpeg não foi encontrado (Configurações → Mídia).')
-  const send = (stage: string, pct: number) => !sender.isDestroyed() && sender.send('motion:previewProgress', { block: job.block, stage, pct })
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  const out = join(job.dir, 'previas', safeName(job.block))
-  const frames = join(out, 'quadros')
+  const out = job.out
+  const frames = join(out, 'quadros-' + Math.random().toString(36).slice(2, 8))
   await fs.rm(frames, { recursive: true, force: true })
   await fs.mkdir(frames, { recursive: true })
   for (const f of job.files) await fs.copyFile(f.src, join(out, safeName(f.name))).catch(() => null)
-  const htmlPath = join(out, `motion-${stamp}.html`)
-  await fs.writeFile(htmlPath, job.html, 'utf8')
-  const playPath = join(out, '_tocar.html')
+  const playPath = join(out, `_tocar-${Math.random().toString(36).slice(2, 8)}.html`)
   await fs.writeFile(playPath, withClock(job.html), 'utf8')
 
   const W = Math.max(16, Math.round(job.width / 2) * 2)
   const H = Math.max(16, Math.round(job.height / 2) * 2)
+  const zoom = job.zoom && job.zoom > 0 ? job.zoom : 1
   // sessão própria, sem internet: a animação tem que ser autocontida (e não vaza nada)
   const ses = session.fromPartition('typos-motion-preview')
   ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|blob|about|devtools):/i.test(d.url) }))
@@ -87,9 +112,10 @@ export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed
     height: H,
     useContentSize: true,
     frame: false,
-    webPreferences: { offscreen: true, session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
+    enableLargerThanScreen: true,
+    webPreferences: { offscreen: true, session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, zoomFactor: zoom }
   })
-  win.webContents.setZoomFactor(1)
+  win.setContentSize(W, H)
   let lastImg: NativeImage | null = null
   let waiting: ((img: NativeImage) => void) | null = null
   win.webContents.on('paint', (_e, _dirty, img) => {
@@ -115,37 +141,76 @@ export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed
   win.webContents.setFrameRate(60)
   try {
     await win.loadFile(playPath)
+    win.webContents.setZoomFactor(zoom)
     // fontes e imagens carregadas antes do primeiro quadro
     await win.webContents.executeJavaScript('(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => true)').catch(() => null)
     // espera a página aparecer de verdade antes do quadro 0
     for (let k = 0; k < 10 && !lastImg; k++) await nextPaint(300)
     const n = Math.max(1, Math.round(job.seconds * job.fps))
     for (let i = 0; i < n; i++) {
-      if (busy?.cancel) throw new Error('Cancelado.')
+      if (job.cancelled?.()) throw new Error('Cancelado.')
       await win.webContents.executeJavaScript(`window.__typosStep && window.__typosStep(${((i * 1000) / job.fps).toFixed(3)})`).catch(() => null)
       const img = await nextPaint(400)
       if (!img) throw new Error('A animação não desenhou nada (o HTML veio vazio ou quebrado).')
       await fs.writeFile(join(frames, `q${String(i).padStart(5, '0')}.png`), img.toPNG())
-      if (i % 3 === 0) send('quadros', (i + 1) / n)
+      if (i % 3 === 0) job.onPct?.((i + 1) / n)
     }
+  } catch (e) {
+    await fs.rm(frames, { recursive: true, force: true }).catch(() => null)
+    throw e
   } finally {
     win.destroy()
+    await fs.rm(playPath, { force: true }).catch(() => null)
   }
-  send('vídeo', 1)
-  const video = join(out, `previa-${stamp}.mp4`)
+  job.onPct?.(1)
   const args = ['-hide_banner', '-y', '-framerate', String(job.fps), '-i', join(frames, 'q%05d.png')]
+  let wav = ''
   if (job.wav?.length) {
-    const wav = join(out, 'audio.wav')
+    wav = join(out, `audio-${Math.random().toString(36).slice(2, 8)}.wav`)
     await fs.writeFile(wav, job.wav)
     args.push('-i', wav)
   }
-  args.push('-vf', `scale=${W}:${H}:flags=bicubic,format=yuv420p`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-r', String(job.fps))
-  if (job.wav?.length) args.push('-c:a', 'aac', '-b:a', '96k', '-shortest')
-  args.push('-movflags', '+faststart', video)
+  args.push('-vf', `scale=${W}:${H}:flags=bicubic,format=yuv420p`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(job.crf), '-r', String(job.fps))
+  if (wav) args.push('-c:a', 'aac', '-b:a', job.crf <= 20 ? '192k' : '96k', '-shortest')
+  args.push('-movflags', '+faststart', job.video)
   const r = await run(ff.ffmpeg, args)
-  if (r.code !== 0) throw new Error('O ffmpeg falhou ao montar a prévia: ' + r.err.split('\n').slice(-3).join(' ').slice(0, 300))
   await fs.rm(frames, { recursive: true, force: true }).catch(() => null)
-  await fs.rm(playPath, { force: true }).catch(() => null)
+  if (wav) await fs.rm(wav, { force: true }).catch(() => null)
+  if (r.code !== 0) throw new Error('O ffmpeg falhou ao montar o vídeo: ' + r.err.split('\n').slice(-3).join(' ').slice(0, 300))
+  return job.video
+}
+
+/**
+ * Prévia (12 fps, baixa resolução) ou clipe final (resolução do projeto) de um bloco.
+ * O clipe final toca o mesmo HTML da prévia aprovada, ampliado com zoom (a composição fica igual).
+ */
+export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed' | 'send'>, job: PreviewJob) {
+  const send = (stage: string, pct: number) => !sender.isDestroyed() && sender.send('motion:previewProgress', { block: job.block, stage, pct })
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const out = join(job.dir, 'previas', safeName(job.block))
+  await fs.mkdir(out, { recursive: true })
+  let htmlPath = job.htmlPath ?? ''
+  if (!htmlPath) {
+    htmlPath = join(out, `motion-${stamp}.html`)
+    await fs.writeFile(htmlPath, job.html, 'utf8')
+  }
+  const html = job.htmlPath ? await fs.readFile(job.htmlPath, 'utf8') : job.html
+  const video = await htmlToVideo({
+    out,
+    html,
+    seconds: job.seconds,
+    width: job.width,
+    height: job.height,
+    fps: job.fps,
+    zoom: job.zoom,
+    wav: job.wav,
+    files: job.files,
+    video: join(out, `${job.final ? 'clipe' : 'previa'}-${stamp}.mp4`),
+    crf: job.final ? 18 : 26,
+    onPct: (p) => send(p >= 1 ? 'vídeo' : 'quadros', p),
+    cancelled: () => !!busy?.cancel
+  })
+  send('vídeo', 1)
   return { video, html: htmlPath }
 }
 

@@ -1,190 +1,182 @@
-import type { JSONContent } from '@tiptap/core'
-import { absPath, type RenderBlock, type MontageData, type MontageBin } from '../lib'
+import { clipEndT, type Format, type MontageData, type MontageMarker } from '../lib'
+import { envAt, envPoints, spans } from '../montage/engine'
 
 /**
- * Plano do render: a timeline vira uma lista de etapas com arquivo de saída conhecido
- * (partes de vídeo, áudio, final). O Typos confere os arquivos pra medir o progresso e,
- * se o Claude parar no meio (token acabou, PC desligou), a próxima rodada pula o que já está pronto.
+ * Plano do render local: a timeline de montagem vira partes de ~20 s, cada uma com as camadas de
+ * vídeo (de baixo pra cima, com fades e crossfades), os trechos de áudio (com o mesmo envelope que
+ * a Montagem toca) e os letterings. O Typos compila cada parte com o ffmpeg e junta no fim; se parar
+ * no meio, a próxima rodada pula as partes que não mudaram.
  */
 
-export interface RenderStep {
+export interface VLayer {
+  path: string
+  image: boolean
+  t0: number
+  t1: number
+  src0: number
+  fadeIn: number
+  fadeOut: number
+}
+
+export interface ALayer {
+  path: string
+  t0: number
+  t1: number
+  src0: number
+  env: [number, number][]
+}
+
+export interface LetteringSpec {
   id: string
   label: string
-  /** relativo à pasta render/ */
-  file: string
-  /** peso no progresso (~ segundos de trabalho) */
-  weight: number
-  /** duração esperada do arquivo (s): arquivo mais curto = incompleto */
-  expect?: number
-  /** tudo que define essa etapa: mudou = refaz */
+  t: number
+  dur: number
+  /** animação (HTML), gravada pelo mesmo motor das prévias de motion */
+  html: string
+}
+
+export interface RenderPart {
+  id: string
+  label: string
+  from: number
+  to: number
+  /** tudo que define a parte: mudou = refaz */
   key: string
-  /** trecho da timeline (s), pras partes */
-  from?: number
-  to?: number
+  video: VLayer[]
+  audio: ALayer[]
+  /** ids dos letterings que aparecem nela (ficam por cima de tudo) */
+  letterings: string[]
 }
 
-export interface NarrationPiece {
-  path: string
-  in: number
-  out: number
-  start: number
+export interface RenderPlan {
+  parts: RenderPart[]
+  letterings: LetteringSpec[]
+  /** blocos de instrução que ainda não viraram clipe (não entram no vídeo) */
+  pendingBlocks: number
+  total: number
 }
 
-const r2 = (n: number) => Math.round(n * 100) / 100
-
-/** papel (narração, bruto, sfx…) da categoria raiz de cada bin */
-export function roleResolver(montage: MontageData) {
-  const binById = new Map(montage.bins.map((b) => [b.id, b]))
-  return (binId: string | undefined) => {
-    let cur: MontageBin | undefined = binId ? binById.get(binId) : undefined
-    for (let i = 0; cur?.parent && i < 20; i++) cur = binById.get(cur.parent)
-    return cur?.role
-  }
-}
-
-/** blocos de instrução da timeline, lidos com tolerância (end ou duration) */
-export function instructionBlocks(montage: MontageData): RenderBlock[] {
-  const raw = ((montage as any).blocks ?? []) as any[]
-  if (!Array.isArray(raw)) return []
-  return raw
-    .map((b) => {
-      const start = Number(b?.start) || 0
-      const end = Number(b?.end ?? start + (Number(b?.duration) || 0))
-      return {
-        id: String(b?.id ?? ''),
-        track: String(b?.track ?? ''),
-        start,
-        end,
-        text: String(b?.text ?? b?.instructions ?? ''),
-        dynamic: !!b?.dynamic,
-        attachments: (Array.isArray(b?.attachments) ? b.attachments : [])
-          .filter((a: any) => a?.path)
-          .map((a: any) => ({
-            // anexos seguem a regra do Attachment: relativo à pasta do projeto, a não ser que external
-            path: /^([a-z]:[\\/]|[\\/])/i.test(String(a.path)) ? String(a.path) : absPath(a),
-            name: String(a.name ?? String(a.path).split(/[\\/]/).pop()),
-            use: a.use === 'insert' ? 'insert' : 'ref',
-            note: a.note ? String(a.note) : undefined
-          })),
-        approved: !!b?.approved,
-        preview: b?.preview?.html || b?.preview?.video ? { html: b.preview.html, video: b.preview.video } : undefined
-      } as RenderBlock
-    })
-    .filter((b) => b.end > b.start)
-    .sort((a, b) => a.start - b.start)
-}
-
-/** só as falas do roteiro (sem prompts, transições etc.), com os capítulos como títulos */
-export function scriptText(doc: JSONContent | undefined): string {
-  const text = (n: JSONContent): string =>
-    n.type === 'text' ? n.text ?? '' : n.type === 'hardBreak' ? '\n' : (n.content ?? []).map(text).join('')
-  const out: string[] = []
-  for (const n of doc?.content ?? []) {
-    if (n.type === 'chapter') {
-      const t = text(n).trim() || String(n.attrs?.title ?? '').trim()
-      if (t) out.push('', '## ' + t, '')
-    } else if (n.type === 'paragraph') {
-      const t = text(n).trim()
-      if (t) out.push(t)
-    }
-  }
-  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim()
-}
-
-/** trechos de narração ouvidos na timeline (faixas de áudio não mudas, mídia de narração) */
-export function narrationPieces(montage: MontageData): NarrationPiece[] {
-  const roleOf = roleResolver(montage)
-  const media = new Map(montage.media.map((m) => [m.id, m]))
-  const muted = new Set(montage.tracks.filter((t) => t.muted).map((t) => t.id))
-  return montage.clips
-    .filter((c) => !muted.has(c.track))
-    .map((c) => ({ c, m: media.get(c.media) }))
-    .filter(({ m }) => m && m.hasAudio && roleOf(m.bin) === 'narration')
-    .map(({ c, m }) => ({ path: m!.path, in: c.in, out: c.out, start: c.start }))
-    .sort((a, b) => a.start - b.start)
-}
+const r3 = (n: number) => Math.round(n * 1000) / 1000
+const pad = (n: number) => String(n).padStart(2, '0')
+const fmt = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`
+const mediaLen = (m?: MontageData['media'][number]) => (!m ? 0 : m.kind === 'image' ? 3600 : m.duration)
 
 /** fim do que entra no vídeo (faixas mudas, como a narração original do corte automático, não contam) */
 export function timelineEnd(montage: MontageData) {
   const muted = new Set(montage.tracks.filter((t) => t.muted).map((t) => t.id))
   return Math.max(
-    montage.clips.filter((c) => !muted.has(c.track)).reduce((s, c) => Math.max(s, c.start + c.out - c.in), 0),
-    instructionBlocks(montage).reduce((s, b) => Math.max(s, b.end), 0)
+    0,
+    ...montage.clips.filter((c) => !muted.has(c.track)).map(clipEndT),
+    ...(montage.markers ?? []).map((m) => m.t + m.dur),
+    ...(montage.blocks ?? []).map((b) => b.end)
   )
 }
 
-/** corta a timeline em partes de ~10–30 s, de preferência nos cortes de vídeo, sem partir um bloco de instrução */
-export function segments(montage: MontageData): [number, number][] {
-  const total = timelineEnd(montage)
-  if (total <= 0) return []
-  const blocks = instructionBlocks(montage)
-  const videoTracks = new Set(montage.tracks.filter((t) => t.kind === 'video').map((t) => t.id))
-  const inside = (p: number) => blocks.find((b) => p > b.start + 0.01 && p < b.end - 0.01)
-  const cand = [
-    ...montage.clips.filter((c) => videoTracks.has(c.track)).flatMap((c) => [c.start, c.start + c.out - c.in]),
-    ...blocks.flatMap((b) => [b.start, b.end])
-  ]
-    .filter((p) => p > 0.5 && p < total - 0.5 && !inside(p))
-    .sort((a, b) => a - b)
-  const MIN = 8
-  const MAX = 30
+/** corta [a, b] em partes de até ~20 s, de preferência num corte de vídeo */
+function segments(montage: MontageData, a: number, b: number): [number, number][] {
+  const video = new Set(montage.tracks.filter((t) => t.kind === 'video').map((t) => t.id))
+  const cuts = montage.clips
+    .filter((c) => video.has(c.track))
+    .flatMap((c) => [c.start, clipEndT(c)])
+    .sort((x, y) => x - y)
   const out: [number, number][] = []
-  let t = 0
-  while (t < total - 0.01) {
-    let next = cand.filter((p) => p >= t + MIN && p <= t + MAX).pop()
-    if (next === undefined) {
-      next = t + MAX
-      const b = inside(next)
-      if (b) next = b.end
-    }
-    if (total - next < 4) next = total
-    out.push([r2(t), r2(next)])
+  let t = a
+  while (t < b - 0.01) {
+    let next = cuts.filter((p) => p >= t + 10 && p <= t + 25).pop() ?? t + 20
+    if (b - next < 4) next = b
+    out.push([r3(t), r3(next)])
     t = next
   }
   return out
 }
 
-const pad = (n: number) => String(n).padStart(2, '0')
-const fmt = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`
+/** cor CSS válida? (o fundo do estilo às vezes é uma descrição em texto) */
+const isColor = (s?: string) => !!s && /^(#[0-9a-f]{3,8}|rgba?\(|hsla?\()/i.test(s.trim())
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
 
-/** etapas do render: parte-NN.mp4 (só vídeo), audio.m4a (mix da timeline) e o arquivo final */
-export function planSteps(montage: MontageData, o: { outW: number; outH: number; fps: number; style: string; finalFile: string }): RenderStep[] {
+/** lettering capitular: título do capítulo entrando com as fontes e cores do formato */
+export function letteringHtml(label: string, dur: number, format?: Format) {
+  const m = format?.motion
+  const colors = (m?.colors ?? []).filter(isColor)
+  const bg = isColor(m?.background) ? m!.background!.trim() : '#0d0f14'
+  const accent = colors[0] ?? '#f5c542'
+  const ink = colors[1] ?? '#ffffff'
+  const font = m?.fonts?.title || m?.fonts?.accent || 'Segoe UI'
+  const d = Math.max(0.8, dur)
+  const inT = Math.min(0.9, d * 0.35)
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:${bg}}
+.wrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2.2vh}
+.bar{height:.9vh;width:0;background:${accent};border-radius:1vh;animation:bar ${inT}s cubic-bezier(.2,.8,.2,1) forwards}
+h1{margin:0;padding:0 8vw;text-align:center;font-family:"${esc(font)}",sans-serif;font-weight:800;font-size:11vh;line-height:1.05;color:${ink};
+  letter-spacing:.35em;opacity:0;filter:blur(1.2vh);transform:translateY(4vh);animation:title ${inT}s cubic-bezier(.2,.8,.2,1) ${inT * 0.25}s forwards}
+.glow{position:absolute;inset:-20%;background:radial-gradient(circle at 50% 50%,${accent}22,transparent 55%);animation:glow ${d}s linear forwards}
+@keyframes bar{to{width:22vw}}
+@keyframes title{to{opacity:1;filter:blur(0);transform:none;letter-spacing:.04em}}
+@keyframes glow{from{transform:scale(.9)}to{transform:scale(1.15)}}
+</style></head><body><div class="glow"></div><div class="wrap"><div class="bar"></div><h1>${esc(label)}</h1></div></body></html>`
+}
+
+/**
+ * Plano do render: [from, to] da timeline (o vídeo inteiro ou só um pedaço) em partes.
+ * Faixa de vídeo de cima cobre as de baixo; faixa muda não entra; som de clipe desligado não entra.
+ */
+export function planRender(montage: MontageData, o: { from: number; to: number; width: number; height: number; fps: number; format?: Format }): RenderPlan {
   const media = new Map(montage.media.map((m) => [m.id, m]))
-  const kindOf = new Map(montage.tracks.map((t) => [t.id, t]))
-  const blocks = instructionBlocks(montage)
-  const video = o.outW + 'x' + o.outH + '@' + o.fps
-  const clipKey = (c: MontageData['clips'][number]) => [c.track, media.get(c.media)?.path, r2(c.start), r2(c.in), r2(c.out), c.gainDb, c.fadeIn, c.fadeOut, c.fadeInCurve, c.fadeOutCurve, c.splice]
-  const steps: RenderStep[] = segments(montage).map(([from, to], i) => {
-    const clips = montage.clips.filter((c) => kindOf.get(c.track)?.kind === 'video' && !kindOf.get(c.track)?.muted && c.start < to && c.start + c.out - c.in > from)
-    const bl = blocks.filter((b) => b.start < to && b.end > from)
+  const mediaDur = (id: string) => mediaLen(media.get(id))
+  const total = timelineEnd(montage)
+  const a = Math.max(0, Math.min(o.from, total))
+  const b = Math.max(a, Math.min(o.to, total))
+  const all = spans(montage, mediaDur)
+
+  // vídeo: a primeira faixa da lista é a de cima, então desenha de trás pra frente
+  const vTracks = montage.tracks.filter((t) => t.kind === 'video' && !t.muted)
+  const z = new Map(vTracks.map((t, i) => [t.id, vTracks.length - i]))
+  const video = all
+    .filter((s) => z.has(s.clip.track))
+    .map((s) => ({ s, m: media.get(s.clip.media) }))
+    .filter(({ m }) => m && (m.kind === 'image' || (m.kind === 'video' && m.hasVideo)))
+    .sort((x, y) => z.get(x.s.clip.track)! - z.get(y.s.clip.track)! || x.s.t0 - y.s.t0)
+    .map(({ s, m }) => ({
+      path: m!.path,
+      image: m!.kind === 'image',
+      t0: r3(s.t0),
+      t1: r3(s.t1),
+      src0: r3(s.src0),
+      // crossfade: o corte de cima aparece por cima do anterior (que segue inteiro por baixo)
+      fadeIn: r3(s.xIn ? 2 * s.xIn : (s.clip.fadeIn ?? 0)),
+      fadeOut: r3(s.xOut ? 0 : (s.clip.fadeOut ?? 0))
+    }))
+
+  // áudio: tudo que a Montagem toca, com o mesmo envelope (ganho, fades com curva, crossfades)
+  const audio = all
+    .filter((s) => media.get(s.clip.media)?.hasAudio && !s.clip.audioOff)
+    .map((s) => ({
+      path: media.get(s.clip.media)!.path,
+      t0: r3(s.t0),
+      t1: r3(s.t1),
+      src0: r3(s.src0),
+      env: envPoints(s).map((p) => [r3(p), Math.round(s.gain * envAt(s, p) * 1e5) / 1e5] as [number, number])
+    }))
+
+  const marks = (montage.markers ?? []).filter((m): m is MontageMarker => m.kind === 'lettering' && m.dur > 0)
+  const letterings: LetteringSpec[] = marks.map((m) => ({ id: m.id, label: m.label, t: r3(m.t), dur: r3(m.dur), html: letteringHtml(m.label, m.dur, o.format) }))
+
+  const parts = segments(montage, a, b).map(([from, to], i) => {
+    const hit = <T extends { t0: number; t1: number }>(x: T) => x.t0 < to && x.t1 > from
+    const v = video.filter(hit)
+    const au = audio.filter(hit)
+    const lt = letterings.filter((l) => l.t < to && l.t + l.dur > from)
     return {
       id: 'parte-' + pad(i + 1),
       label: `Parte ${i + 1} (${fmt(from)} → ${fmt(to)})`,
-      file: `partes/parte-${pad(i + 1)}.mp4`,
-      weight: to - from,
-      expect: to - from,
-      key: JSON.stringify({ from, to, video, style: o.style, clips: clips.map(clipKey), blocks: bl }),
       from,
-      to
+      to,
+      key: JSON.stringify({ from, to, w: o.width, h: o.height, fps: o.fps, v, au, lt }),
+      video: v,
+      audio: au,
+      letterings: lt.map((l) => l.id)
     }
   })
-  const total = steps.length ? steps[steps.length - 1].to! : 0
-  const audioClips = montage.clips.filter((c) => kindOf.get(c.track)?.kind === 'audio' && !kindOf.get(c.track)?.muted)
-  steps.push({
-    id: 'audio',
-    label: 'Áudio (mix da timeline)',
-    file: 'audio.m4a',
-    weight: Math.max(5, total * 0.15),
-    expect: total,
-    key: JSON.stringify({ total, norm: montage.norm, clips: audioClips.map(clipKey) })
-  })
-  steps.push({
-    id: 'final',
-    label: 'Vídeo final',
-    file: o.finalFile,
-    weight: Math.max(5, total * 0.1),
-    expect: total,
-    key: JSON.stringify(steps.map((s) => s.key))
-  })
-  return steps
+  return { parts, letterings, pendingBlocks: (montage.blocks ?? []).length, total }
 }
