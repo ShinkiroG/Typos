@@ -63,8 +63,13 @@ import {
   letteringOn,
   letteringAttr,
   inlineMd,
-  mdToJson
+  mdToJson,
+  queueRenderItems,
+  shortRenderId,
+  type RenderItemId,
+  type RenderSettings
 } from '../lib'
+import { shortKey } from '../shorts/shorts'
 import { LibraryPanel, SNIPPET_MIME } from './LibraryPanel'
 import { StyleStudio } from '../style/StyleStudio'
 import { Montage } from '../montage/Montage'
@@ -169,6 +174,12 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   // Criar Clipes: some até ser ativado pelo botão da Montagem
   const [shorts, setShorts] = useState<ShortsData | undefined>(data.shorts)
   const [shortsSetup, setShortsSetup] = useState(false)
+  // Render: a fila e a pasta de export (projetos de antes da 2.3: os recortes aprovados que ainda não saíram entram na fila)
+  const [renderSettings, setRenderSettings] = useState<RenderSettings>(
+    () => data.render ?? { queue: (data.shorts?.items ?? []).filter((x) => x.approved && x.exported?.key !== shortKey(x)).map((x) => shortRenderId(x.id)) }
+  )
+  /** põe (ou tira) itens na fila de render; a Montagem usa queueRender(['main']) pro "Enviar pra fila de render" */
+  const queueRender = useCallback((ids: RenderItemId[], on = true) => setRenderSettings((r) => queueRenderItems(r, ids, on)), [])
   const [suggestToken, setSuggestToken] = useState(0)
   const [clipsVisited, setClipsVisited] = useState(false)
   const patchShort = useCallback(
@@ -260,6 +271,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const [styleVisited, setStyleVisited] = useState(false)
   const [renderVisited, setRenderVisited] = useState(false)
   const format = formats.find((f) => f.id === formatId) ?? formats[0]
+  /** formato dos Clipes: o próprio (ex.: Shorts/Vertical) ou, sem escolha, o mesmo da Montagem */
+  const clipsFormat = formats.find((f) => f.id === shorts?.formatId) ?? format
   const wpm = customWpm ?? format?.wpm ?? 150
   useEffect(() => {
     const guide = format?.motion?.learned?.guide
@@ -270,8 +283,8 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
   const editorRef = useRef<Editor | null>(null)
   const libraryRef = useRef(library)
   libraryRef.current = library
-  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts })
-  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts }
+  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts, renderSettings })
+  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts, renderSettings }
 
   // ---------- desfazer/refazer da tela inteira (texto + timeline) ----------
   // O texto usa o histórico do editor; os clipes de áudio guardam cópias. A pilha "ordem"
@@ -715,12 +728,10 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     return r.changed || 1
   }
 
-  /** "Enviar pra fila de render" da Montagem: o vídeo principal entra nos exports pendentes do Render */
-  const [renderQueueToken, setRenderQueueToken] = useState(0)
+  /** "Enviar pra fila de render" da Montagem: o vídeo principal entra na fila do Render (salva no projeto), sem começar */
   const queueMainRender = () => {
-    setRenderVisited(true)
-    setRenderQueueToken((n) => n + 1)
-    setToast('Vídeo principal na fila do Render (exports pendentes). Pode seguir editando: ele sai de lá.')
+    queueRender(['main'])
+    setToast('Vídeo principal na fila de render. Pode seguir editando: ele sai de lá quando você mandar renderizar.')
   }
   /** caminhos dos arquivos que cada timeline usa (a limpeza de não usados de uma não manda pra Lixeira o que a outra usa) */
   const pathsUsed = (d: MontageData) => {
@@ -839,6 +850,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       montage,
       chapterLettering: metaRef.current.chapterLettering,
       shorts: metaRef.current.shorts,
+      render: metaRef.current.renderSettings,
       doc: ed.getJSON(),
       updatedAt: new Date().toISOString()
     }
@@ -878,7 +890,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     setSaveState('dirty')
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => save(), 800)
-  }, [title, formatId, clips, customWpm, tracks, assets, notes, montage, chapterLettering, shorts, save])
+  }, [title, formatId, clips, customWpm, tracks, assets, notes, montage, chapterLettering, shorts, renderSettings, save])
 
   useEffect(() => {
     try {
@@ -1123,7 +1135,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
                 <span>Clipes</span>
               </button>
             )}
-            <button className={mode === 'render' ? 'on' : ''} title="Render: confere tudo que vai pro Claude e cria o vídeo" onClick={() => goMode('render')}>
+            <button className={mode === 'render' ? 'on' : ''} title="Render: a fila de vídeos (o principal e os clipes), prévia e export" onClick={() => goMode('render')}>
               <Clapperboard size={15} />
               <span>Render</span>
             </button>
@@ -1149,16 +1161,38 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           </div>
 
           <div className="tb-right">
-            <label className="tb-group tb-format" title={`Formato: ${format?.name} · ${format?.aspect} · corretor ${langLabel(lang)} (muda no workspace Estilo)`}>
-              <span className="tb-group-label">Formato</span>
-              <select className="format-select" value={formatId} onChange={(e) => setFormatId(e.target.value)}>
-                {formats.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {mode === 'clips' && shorts ? (
+              <label className="tb-group tb-format" title={`Formato dos clipes: ${clipsFormat?.name} · quadro ${shorts.aspect}. É só dos recortes: a Montagem continua em ${format?.name}.`}>
+                <span className="tb-group-label">Formato dos clipes</span>
+                <select
+                  className="format-select"
+                  value={shorts.formatId && formats.some((f) => f.id === shorts.formatId) ? shorts.formatId : ''}
+                  onChange={(e) => {
+                    const f = formats.find((x) => x.id === e.target.value)
+                    // o quadro dos recortes acompanha o formato escolhido
+                    setShorts((s) => (s ? { ...s, formatId: f?.id, aspect: f?.aspect ?? s.aspect } : s))
+                  }}
+                >
+                  <option value="">Mesmo da Montagem ({format?.name})</option>
+                  {formats.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="tb-group tb-format" title={`Formato: ${format?.name} · ${format?.aspect} · corretor ${langLabel(lang)} (muda no workspace Estilo)`}>
+                <span className="tb-group-label">Formato</span>
+                <select className="format-select" value={formatId} onChange={(e) => setFormatId(e.target.value)}>
+                  {formats.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="tb-group save-group">
               {draft ? (
                 <button className="btn small primary" title="Escolher onde salvar (Ctrl+S)" onClick={saveAs}>
@@ -1216,12 +1250,15 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           <RenderStudio
             active={mode === 'render'}
             dir={dir}
+            title={title}
             format={format}
+            shortsFormat={clipsFormat}
             montage={montage}
             save={save}
             shorts={shorts}
             patchShort={patchShort}
-            queueMainToken={renderQueueToken}
+            render={renderSettings}
+            onRender={setRenderSettings}
           />
         </div>
       )}
@@ -1235,9 +1272,10 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             onChange={setShorts}
             lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
             wpm={wpm}
-            format={format}
+            format={clipsFormat}
             onFormatChange={(f) => onFormatsChange(formats.map((x) => (x.id === f.id ? f : x)))}
             onAudioSettings={() => setAudioOpen(true)}
+            onApprove={(id, on) => queueRender([shortRenderId(id)], on)}
             suggestToken={suggestToken}
             onSetup={() => setShortsSetup(true)}
             onGoRender={() => goMode('render')}

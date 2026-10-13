@@ -254,6 +254,8 @@ export interface ProjectData {
   chapterLettering?: boolean
   /** workspace Criar Clipes (recortes curtos pra Reels/TikTok/Shorts); some até ser ativado */
   shorts?: ShortsData
+  /** workspace Render: a fila e a pasta de export */
+  render?: RenderSettings
   createdAt: string
   updatedAt: string
 }
@@ -797,7 +799,7 @@ export interface ShortClip {
   to: number
   /** a timeline própria do recorte (começa em 0) */
   montage: MontageData
-  /** aprovado: entra nos exports pendentes do Render */
+  /** aprovado: entra na fila de render */
   approved?: boolean
   /** último export: arquivo e a impressão digital da timeline quando saiu (mudou = exporta de novo) */
   exported?: { path: string; key: string; at: string }
@@ -807,7 +809,27 @@ export interface ShortsData {
   /** proporção dos recortes ("9:16" pra Reels/TikTok/Shorts) */
   aspect: string
   items: ShortClip[]
+  /** formato (estilo) dos recortes; vazio = o mesmo da Montagem */
+  formatId?: string
   analyzedAt?: string
   provider?: string
 }
 export const SHORT_TARGET_DEFAULT: ShortTarget = { min: 25, ideal: 45, max: 60 }
+
+// ---------- Render: fila e pasta de export ----------
+/** item da fila: "main" (o vídeo da Montagem) ou "short-<id>" (um recorte do Criar Clipes) */
+export type RenderItemId = 'main' | `short-${string}`
+export const shortRenderId = (shortId: string): RenderItemId => `short-${shortId}`
+export interface RenderSettings {
+  /** o que está esperando pra renderizar, na ordem */
+  queue?: RenderItemId[]
+  /** pasta onde os vídeos prontos são copiados; vazio = só fica em render/ dentro do projeto */
+  exportDir?: string
+  /** último render do vídeo principal (pra prévia) */
+  mainExport?: { path: string; at: string }
+}
+/** põe (ou tira) itens na fila de render, sem repetir */
+export function queueRenderItems(r: RenderSettings, ids: RenderItemId[], on = true): RenderSettings {
+  const q = r.queue ?? []
+  return { ...r, queue: on ? [...q, ...ids.filter((id, i) => !q.includes(id) && ids.indexOf(id) === i)] : q.filter((x) => !ids.includes(x)) }
+}

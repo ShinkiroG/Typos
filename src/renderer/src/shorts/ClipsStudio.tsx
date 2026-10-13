@@ -8,8 +8,8 @@ import './shorts.css'
 
 /**
  * Workspace Criar Clipes: o Claude sugere os melhores trechos do vídeo pra recortes curtos; cada um
- * tem a timeline dele (a mesma Montagem, só que no quadro vertical). Aprovar o recorte põe ele nos
- * exports pendentes do Render.
+ * tem a timeline dele (a mesma Montagem, no quadro e no formato próprios dos clipes). Aprovar o recorte põe ele nos
+ * fila de render.
  */
 
 interface Props {
@@ -29,6 +29,8 @@ interface Props {
   /** abre a janelinha dos tempos */
   onSetup: () => void
   onGoRender: () => void
+  /** aprovou (ou voltou pra edição): entra (ou sai) da fila de render */
+  onApprove?: (id: string, approved: boolean) => void
 }
 
 /** caminhos dos arquivos que a timeline usa */
@@ -39,7 +41,7 @@ const usedPaths = (d: MontageData) => {
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 
-export function ClipsStudio({ active, dir, main, shorts, onChange, lang, wpm, format, onFormatChange, onAudioSettings, suggestToken, onSetup, onGoRender }: Props) {
+export function ClipsStudio({ active, dir, main, shorts, onChange, lang, wpm, format, onFormatChange, onAudioSettings, suggestToken, onSetup, onGoRender, onApprove }: Props) {
   const ref = useRef(shorts)
   ref.current = shorts
   const mainRef = useRef(main)
@@ -120,11 +122,13 @@ export function ClipsStudio({ active, dir, main, shorts, onChange, lang, wpm, fo
     if (!cur) return
     if (cur.approved) {
       patch(cur.id, { approved: false })
-      return setNote('Recorte voltou pra edição: saiu dos exports pendentes.')
+      onApprove?.(cur.id, false)
+      return setNote('Recorte voltou pra edição: saiu da fila de render.')
     }
     if (!cur.montage.clips.length) return setNote('A timeline desse recorte está vazia.')
     patch(cur.id, { approved: true })
-    setNote('Aprovado: está nos exports pendentes do Render.')
+    onApprove?.(cur.id, true)
+    setNote('Aprovado: entrou na fila de render.')
   }
 
   const t = shorts.target
@@ -149,7 +153,7 @@ export function ClipsStudio({ active, dir, main, shorts, onChange, lang, wpm, fo
             const off = d < t.min - 0.5 || d > t.max + 0.5
             return (
               <li key={s.id} className={s.id === sel ? 'on' : ''} onClick={() => setSel(s.id)} title={s.reason || s.title}>
-                <span className={'sh-state ' + (s.approved ? 'ok' : 'no')} title={s.approved ? 'Aprovado: pronto pra exportar' : 'Ainda não aprovado'}>
+                <span className={'sh-state ' + (s.approved ? 'ok' : 'no')} title={s.approved ? 'Aprovado: está na fila de render' : 'Ainda não aprovado'}>
                   {s.approved ? <Check size={11} strokeWidth={3} /> : <X size={11} strokeWidth={3} />}
                 </span>
                 <span className="sh-name">{s.title}</span>
@@ -179,7 +183,7 @@ export function ClipsStudio({ active, dir, main, shorts, onChange, lang, wpm, fo
     <button
       className={'btn small ' + (cur.approved ? 'sh-approved' : 'primary')}
       onClick={approve}
-      title={cur.approved ? 'Aprovado (está nos exports pendentes). Clique pra voltar pra edição.' : 'Aprovar: o recorte vai pros exports pendentes do Render'}
+      title={cur.approved ? 'Aprovado (está na fila de render). Clique pra voltar pra edição.' : 'Aprovar: o recorte entra na fila de render'}
     >
       {cur.approved ? <CheckCircle2 size={13} /> : <Check size={13} />} {cur.approved ? 'Short aprovado' : 'Aprovar short'}
     </button>
@@ -214,7 +218,7 @@ export function ClipsStudio({ active, dir, main, shorts, onChange, lang, wpm, fo
         <button className="btn small" disabled={!!busy || !main.clips.length} onClick={suggest} title="O Claude sugere de novo (os recortes aprovados ficam)">
           <RefreshCw size={13} /> Sugerir de novo
         </button>
-        <button className="btn small" onClick={onGoRender} title="Exports pendentes no Render">
+        <button className="btn small" onClick={onGoRender} title="Fila de render">
           <Clapperboard size={13} /> Render{pendingN ? ` (${pendingN} pendente${pendingN > 1 ? 's' : ''})` : ''}
         </button>
       </header>

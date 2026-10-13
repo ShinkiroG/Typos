@@ -626,3 +626,63 @@
 .rn-q-bad {
   color: #ff6b6b;
 }
+
+/* ---------- fila de render (embaixo da prévia) ---------- */
+.rn-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.rn-queue-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rn-q {
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.rn-q:hover {
+  background: var(--bg-3);
+}
+.rn-q.sel {
+  border-color: #6d7cff;
+  background: color-mix(in srgb, #6d7cff 10%, transparent);
+}
+.rn-q.fora .rn-qname {
+  color: var(--muted);
+}
+.rn-q input[type='checkbox'] {
+  margin: 0;
+  accent-color: #6d7cff;
+  cursor: pointer;
+}
+.rn-q-off {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--muted);
+  flex: none;
+}
+.rn-export {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.rn-export-path,
+.rn-path {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rn-one {
+  align-self: stretch;
+  justify-content: center;
+}
