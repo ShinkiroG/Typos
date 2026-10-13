@@ -208,51 +208,81 @@ export async function systemFonts(): Promise<string[]> {
   return fontCache
 }
 
-/** quantos quadros o foco pede: estética = poucos espalhados; motion = + sequências rápidas (8 q/s) */
-export function framePlan(focus = 50) {
-  const even = Math.round(3 + (Math.max(0, Math.min(100, focus)) / 100) * 6) // 3..9
-  const bursts = focus >= 40 ? Math.min(3, 1 + Math.round((focus - 40) / 30)) : 0 // 40→1 · 70→2 · 100→3
-  return { even, bursts, perBurst: 6 }
+export interface FrameWeights {
+  /** 0..100: quanto aprender da estética (mais quadros soltos) */
+  aesthetic: number
+  /** 0..100: quanto aprender do motion (sequências rápidas) */
+  motion: number
+  /** motion no máximo + checagem quadro a quadro: sequências longas a 24 q/s */
+  frameByFrame?: boolean
 }
 
-/** quadros pro treino de estilo, conforme o foco da referência (cache por arquivo + plano) */
+/** quantos quadros os pesos pedem: estética = quadros soltos espalhados; motion = sequências rápidas */
+export function framePlan(w: FrameWeights) {
+  const a = Math.max(0, Math.min(100, w.aesthetic))
+  const m = Math.max(0, Math.min(100, w.motion))
+  const even = Math.round(2 + (a / 100) * 7) // 2..9
+  if (w.frameByFrame && m >= 100) return { even, bursts: 4, perBurst: 12, fps: 24 }
+  const bursts = m >= 25 ? Math.min(3, 1 + Math.round((m - 25) / 35)) : 0 // 25→1 · 60→2 · 95→3
+  return { even, bursts, perBurst: 6, fps: 8 }
+}
+
+/** quadros pro treino de estilo, conforme os pesos da referência (cache por arquivo + plano) */
 export async function framesForFocus(
   path: string,
-  focus: number,
+  weights: FrameWeights,
   outRoot: string
-): Promise<{ path: string; kind: 'even' | 'burst'; group: number; index: number; t: number }[] | { error: string }> {
+): Promise<{ path: string; kind: 'even' | 'burst'; group: number; index: number; t: number; fps: number }[] | { error: string }> {
   const ff = await findFfmpeg()
   if (!ff) return { error: 'ffmpeg não encontrado' }
   const info = await probe(path)
   if ('error' in info) return info
   if (!info.hasVideo || !info.duration) return { error: 'esse arquivo não tem vídeo' }
-  const plan = framePlan(focus)
+  const plan = framePlan(weights)
   const st = await fs.stat(path)
-  const key = createHash('sha1').update(`${path}|${st.size}|${st.mtimeMs}|${plan.even}|${plan.bursts}`).digest('hex').slice(0, 16)
+  const key = createHash('sha1').update(`${path}|${st.size}|${st.mtimeMs}|${plan.even}|${plan.bursts}|${plan.perBurst}|${plan.fps}`).digest('hex').slice(0, 16)
   const dir = join(outRoot, key)
   await fs.mkdir(dir, { recursive: true })
-  const out: { path: string; kind: 'even' | 'burst'; group: number; index: number; t: number }[] = []
+  const out: { path: string; kind: 'even' | 'burst'; group: number; index: number; t: number; fps: number }[] = []
   const d = info.duration
   for (let i = 0; i < plan.even; i++) {
     const t = d * ((i + 0.5) / plan.even)
     const f = join(dir, `e${String(i + 1).padStart(2, '0')}.jpg`)
     if (!existsSync(f)) await run(ff.ffmpeg, ['-hide_banner', '-y', '-ss', t.toFixed(2), '-i', path, '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', f], { timeoutMs: 60000 })
-    if (existsSync(f)) out.push({ path: f, kind: 'even', group: 0, index: i, t })
+    if (existsSync(f)) out.push({ path: f, kind: 'even', group: 0, index: i, t, fps: plan.fps })
   }
-  // sequências: 6 quadros seguidos a 8 q/s em pontos diferentes do vídeo (dá pra "ver" o movimento)
+  // sequências: quadros seguidos (8 q/s, ou 24 q/s no quadro a quadro) em pontos diferentes do vídeo (dá pra "ver" o movimento)
+  const span = plan.perBurst / plan.fps
   for (let b = 0; b < plan.bursts; b++) {
     const center = d * ((b + 1) / (plan.bursts + 1))
-    const start = Math.max(0, Math.min(d - plan.perBurst / 8, center - plan.perBurst / 16))
+    const start = Math.max(0, Math.min(d - span, center - span / 2))
     const pattern = join(dir, `b${b + 1}_%02d.jpg`)
     const firstFile = join(dir, `b${b + 1}_01.jpg`)
     if (!existsSync(firstFile))
-      await run(ff.ffmpeg, ['-hide_banner', '-y', '-ss', start.toFixed(2), '-i', path, '-t', (plan.perBurst / 8 + 0.05).toFixed(2), '-vf', 'fps=8,scale=480:-2', '-q:v', '5', '-frames:v', String(plan.perBurst), pattern], { timeoutMs: 60000 })
+      await run(ff.ffmpeg, ['-hide_banner', '-y', '-ss', start.toFixed(2), '-i', path, '-t', (span + 0.05).toFixed(2), '-vf', `fps=${plan.fps},scale=480:-2`, '-q:v', '5', '-frames:v', String(plan.perBurst), pattern], { timeoutMs: 60000 })
     for (let k = 1; k <= plan.perBurst; k++) {
       const f = join(dir, `b${b + 1}_${String(k).padStart(2, '0')}.jpg`)
-      if (existsSync(f)) out.push({ path: f, kind: 'burst', group: b + 1, index: k - 1, t: start + (k - 1) / 8 })
+      if (existsSync(f)) out.push({ path: f, kind: 'burst', group: b + 1, index: k - 1, t: start + (k - 1) / plan.fps, fps: plan.fps })
     }
   }
   return out.length ? out : { error: 'não deu pra tirar quadros desse vídeo' }
+}
+
+/** um quadro em cada tempo pedido (s do arquivo), em cache: o que está embaixo de um bloco de instrução */
+export async function framesAt(path: string, times: number[], outRoot: string): Promise<(string | null)[]> {
+  const ff = await findFfmpeg()
+  if (!ff) return times.map(() => null)
+  const st = await fs.stat(path).catch(() => null)
+  if (!st) return times.map(() => null)
+  const dir = join(outRoot, createHash('sha1').update(`${path}|${st.size}|${st.mtimeMs}`).digest('hex').slice(0, 16))
+  await fs.mkdir(dir, { recursive: true })
+  const out: (string | null)[] = []
+  for (const t of times) {
+    const f = join(dir, `t${Math.max(0, t).toFixed(2)}.jpg`)
+    if (!existsSync(f)) await run(ff.ffmpeg, ['-hide_banner', '-y', '-ss', Math.max(0, t).toFixed(2), '-i', path, '-frames:v', '1', '-vf', 'scale=480:-2', '-q:v', '5', f], { timeoutMs: 60000 })
+    out.push(existsSync(f) ? f : null)
+  }
+  return out
 }
 
 // ---------- baixar vídeo (YouTube etc.) com o yt-dlp ----------

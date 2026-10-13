@@ -1256,6 +1256,68 @@
   border-color: #4ade80;
   color: #4ade80;
 }
+.blk-adjust {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.blk-adjust-head,
+.blk-adjust-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.blk-adjust-head {
+  color: var(--accent);
+  font-weight: 600;
+}
+.blk-adjust .st-grow {
+  flex: 1;
+}
+.blk-adjust textarea {
+  width: 100%;
+  resize: vertical;
+  font: 12px/1.4 var(--font-ui);
+}
+.blk-adjust-log {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11px;
+  color: var(--muted);
+  max-height: 120px;
+  overflow: auto;
+}
+.blk-adjust-log li + li {
+  margin-top: 2px;
+}
+.blk-adjust-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.blk-adjust-files span {
+  position: relative;
+}
+.blk-adjust-files img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  display: block;
+}
+.blk-adjust-files svg {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: var(--bg, #000);
+  border-radius: 50%;
+  cursor: pointer;
+}
 .blk-heard summary {
   cursor: pointer;
   font-size: 11px;

@@ -24,7 +24,7 @@ import {
   BookmarkPlus,
   Brain
 } from 'lucide-react'
-import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type MotionMemoryItem, type FontCase, DEFAULT_FONT_CASES } from '../lib'
+import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type MotionMemoryItem, type FontCase, DEFAULT_FONT_CASES, refWeights } from '../lib'
 import { FontPicker } from './FontPicker'
 import { YoutubeDownload } from '../components/YoutubeDownload'
 import { askText } from '../components/AskDialog'
@@ -65,7 +65,10 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
     'Imagens marcadas como SEQUÊNCIA são quadros seguidos do vídeo (8 por segundo): compare quadro a quadro pra entender direção, velocidade e curva (easing) dos movimentos de câmera, transições e animações.'
   )
   lines.push(
-    'Cada referência tem um FOCO de 0 a 100: perto de 0 = aprenda dela a ESTÉTICA (cores, tipografia, composição, fundo, textura); perto de 100 = aprenda o MOTION (movimento de câmera, transições, ritmo, como os elementos entram e saem). No meio, os dois. Pese o que tirar de cada uma por esse número.'
+    'Imagens marcadas como QUADRO A QUADRO são quadros seguidos a 24 por segundo: o autor quer o motion dessa referência com precisão. Leia quadro a quadro a curva de cada movimento (aceleração, overshoot, quantos quadros dura cada entrada e saída, motion blur, defasagem entre elementos) e descreva isso no guia em quadros e milissegundos.'
+  )
+  lines.push(
+    'Cada referência tem DOIS pesos independentes, de 0 a 100: ESTÉTICA (cores, tipografia, composição, fundo, textura) e MOTION (movimento de câmera, transições, ritmo, como os elementos entram e saem). 0 = ignore esse aspecto dela; 100 = siga à risca. Uma referência pode ter os dois altos, os dois baixos ou um de cada. Pese o que tirar de cada uma por esses números.'
   )
   lines.push('')
   lines.push('## Escolhas do autor')
@@ -97,7 +100,7 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
   if (links.length) {
     lines.push('')
     lines.push('## Links de referência (contexto; abra a página se ajudar)')
-    for (const l of links) lines.push(`- ${l.url} ${focusLabel(l.focus)}${l.note ? ` — ${l.note}` : ''}`)
+    for (const l of links) lines.push(`- ${l.url} ${focusLabel(l)}${l.note ? ` — ${l.note}` : ''}`)
   }
   if (needList && installed.length) {
     lines.push('')
@@ -113,7 +116,7 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
   lines.push('## Responda EXATAMENTE neste formato (nada fora das tags)')
   lines.push('<guia>')
   lines.push(
-    'Guia do estilo em português, markdown curto e prático, pra ser seguido em todo prompt de motion deste formato: identidade em 1 frase; de qual referência veio o quê (respeitando o foco de cada uma); fundo; paleta com hex e função de cada cor; tipografia e hierarquia (as 4 fontes principais com tamanhos, peso, caixa, espaçamento) e uma tabela "Fontes por situação" com a fonte escolhida pra cada situação (nas dinâmicas, a que você escolheu e por quê, em poucas palavras); movimentos de câmera com duração e easing; transições (quando usar cada uma); ritmo de cortes; elementos gráficos recorrentes (molduras, lower thirds, setas, marcadores); o que NUNCA fazer; checklist final.'
+    'Guia do estilo em português, markdown curto e prático, pra ser seguido em todo prompt de motion deste formato: identidade em 1 frase; de qual referência veio o quê (respeitando os pesos de estética e motion de cada uma); fundo; paleta com hex e função de cada cor; tipografia e hierarquia (as 4 fontes principais com tamanhos, peso, caixa, espaçamento) e uma tabela "Fontes por situação" com a fonte escolhida pra cada situação (nas dinâmicas, a que você escolheu e por quê, em poucas palavras); movimentos de câmera com duração e easing; transições (quando usar cada uma); ritmo de cortes; elementos gráficos recorrentes (molduras, lower thirds, setas, marcadores); o que NUNCA fazer; checklist final.'
   )
   lines.push('</guia>')
   lines.push('<demo>')
@@ -124,21 +127,24 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
   return lines.join('\n')
 }
 
-/** mesmo plano do main: estética = poucos quadros espalhados; motion = + sequências rápidas */
-export function framePlan(focus = 50) {
-  const even = Math.round(3 + (Math.max(0, Math.min(100, focus)) / 100) * 6)
-  const bursts = focus >= 40 ? Math.min(3, 1 + Math.round((focus - 40) / 30)) : 0 // 40→1 · 70→2 · 100→3
-  return { even, bursts, perBurst: 6 }
+/** mesmo plano do main: estética = quadros soltos espalhados; motion = sequências rápidas; quadro a quadro = sequências longas a 24/s */
+export function framePlan(r: MotionRef) {
+  const w = refWeights(r)
+  const even = Math.round(2 + (Math.max(0, Math.min(100, w.aesthetic)) / 100) * 7)
+  if (w.frameByFrame) return { even, bursts: 4, perBurst: 12, fps: 24 }
+  const m = Math.max(0, Math.min(100, w.motion))
+  const bursts = m >= 25 ? Math.min(3, 1 + Math.round((m - 25) / 35)) : 0 // 25→1 · 60→2 · 95→3
+  return { even, bursts, perBurst: 6, fps: 8 }
 }
-const framesOf = (focus = 50) => {
-  const p = framePlan(focus)
+const framesOf = (r: MotionRef) => {
+  const p = framePlan(r)
   return p.even + p.bursts * p.perBurst
 }
 
-/** "[foco 70: mais motion]" — o mesmo texto vai em cada imagem/link no pedido */
-export function focusLabel(v = 50) {
-  const what = v <= 20 ? 'só estética' : v < 45 ? 'mais estética' : v <= 55 ? 'estética e motion' : v < 80 ? 'mais motion' : 'só motion'
-  return `[foco ${v}: ${what}]`
+/** "[estética 70 · motion 30]" — o mesmo texto vai em cada imagem/link no pedido */
+export function focusLabel(r: MotionRef) {
+  const w = refWeights(r)
+  return `[estética ${w.aesthetic} · motion ${w.motion}${w.frameByFrame ? ' · quadro a quadro' : ''}]`
 }
 
 function parseAnswer(text: string) {
@@ -296,18 +302,18 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
 
   // ---------- treino ----------
   // quantas imagens vão (estimativa pelo foco de cada referência)
-  const MAX_IMAGES = 60
-  const estimate = useMemo(() => Math.min(MAX_IMAGES, m.refs.reduce((s, r) => s + (r.kind === 'image' ? 1 : r.kind === 'video' ? framesOf(r.focus) : 0), 0)), [m.refs])
+  const MAX_IMAGES = 100
+  const estimate = useMemo(() => Math.min(MAX_IMAGES, m.refs.reduce((s, r) => s + (r.kind === 'image' ? 1 : r.kind === 'video' ? framesOf(r) : 0), 0)), [m.refs])
 
   /** junta as imagens na hora do treino: de vídeo, tira os quadros que o foco pede */
   const collectImages = async () => {
     const out: { path: string; desc: string }[] = []
     for (const [i, r] of m.refs.entries()) {
-      const note = ` ${focusLabel(r.focus)}` + (r.note ? ` — nota do autor: ${r.note}` : '')
+      const note = ` ${focusLabel(r)}` + (r.note ? ` — nota do autor: ${r.note}` : '')
       if (r.kind === 'image' && r.path) out.push({ path: r.path, desc: `referência ${i + 1} (imagem "${r.name}")${note}` })
       if (r.kind !== 'video' || !r.path) continue
       setBusy(`Tirando quadros de "${r.name}"…`)
-      const fr = await api.motionFrames(r.path, r.focus ?? 50)
+      const fr = await api.motionFrames(r.path, refWeights(r))
       if ('error' in fr) {
         // o vídeo sumiu do lugar: usa os quadros que já estavam guardados
         ;(r.frames ?? []).forEach((p, k) => out.push({ path: p, desc: `referência ${i + 1} (vídeo "${r.name}", quadro ${k + 1})${k === 0 ? note : ''}` }))
@@ -320,7 +326,9 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
           desc:
             x.kind === 'even'
               ? `referência ${i + 1} (vídeo "${r.name}", quadro solto ${x.index + 1}/${even.length}, em ${x.t.toFixed(1)}s)${k === 0 ? note : ''}`
-              : `referência ${i + 1} (vídeo "${r.name}", SEQUÊNCIA ${x.group}, quadro ${x.index + 1}/6 — quadros seguidos a 8 por segundo, a partir de ${x.t.toFixed(2)}s: compare com o anterior pra ler o movimento)`
+              : x.fps >= 24
+                ? `referência ${i + 1} (vídeo "${r.name}", QUADRO A QUADRO ${x.group}, quadro ${x.index + 1}/${fr.filter((y) => y.group === x.group).length} — quadros seguidos a ${x.fps} por segundo, a partir de ${x.t.toFixed(2)}s: compare com o anterior pra medir a curva do movimento)`
+                : `referência ${i + 1} (vídeo "${r.name}", SEQUÊNCIA ${x.group}, quadro ${x.index + 1}/${fr.filter((y) => y.group === x.group).length} — quadros seguidos a ${x.fps} por segundo, a partir de ${x.t.toFixed(2)}s: compare com o anterior pra ler o movimento)`
         })
       )
     }
@@ -442,6 +450,19 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
               </button>
             </>
           )}
+          <button
+            className="icon-btn"
+            title="Duplicar estilo (cria uma cópia pra você mudar só o que quiser, ex.: a versão Shorts)"
+            onClick={() => {
+              const id = uid()
+              const copy: Format = structuredClone({ ...clean(f), id, name: `${f.name} (cópia)` })
+              if (copy.motion) copy.motion.refs = copy.motion.refs.map((r) => ({ ...r, id: uid() }))
+              setDrafts((d) => ({ ...d, [id]: copy }))
+              setEditId(id)
+            }}
+          >
+            <Copy size={15} />
+          </button>
           {formats.length > 1 && !isNew && (
             <button
               className="icon-btn danger"
@@ -576,19 +597,43 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
                   {r.kind === 'video' && <Film size={11} />} {r.name}
                 </div>
                 <input className="st-ref-note" value={r.note ?? ''} placeholder="o que observar aqui…" onChange={(e) => patchRef(r.id, { note: e.target.value })} />
-                <label className="st-focus" title="O que o Claude aprende dessa referência">
-                  <span className={(r.focus ?? 50) < 45 ? 'on' : ''}>estética</span>
-                  <input type="range" min={0} max={100} step={5} value={r.focus ?? 50} onChange={(e) => patchRef(r.id, { focus: Number(e.target.value) })} onDoubleClick={() => patchRef(r.id, { focus: 50 })} />
-                  <span className={(r.focus ?? 50) > 55 ? 'on' : ''}>motion</span>
-                </label>
-                {r.kind === 'video' && (
-                  <div className="st-focus-info">
-                    {(() => {
-                      const p = framePlan(r.focus)
-                      return `${p.even + p.bursts * p.perBurst} quadros${p.bursts ? ` · ${p.bursts} sequência(s) rápida(s) pra ler o movimento` : ' espalhados'}`
-                    })()}
-                  </div>
-                )}
+                {(() => {
+                  const w = refWeights(r)
+                  // mexer num slider grava os dois (a referência deixa de usar o slider único antigo)
+                  const setW = (p: Partial<MotionRef>) => patchRef(r.id, { aesthetic: w.aesthetic, motion: w.motion, ...p })
+                  return (
+                    <>
+                      <label className="st-focus" title="Quanto o Claude aprende da estética desta referência: cores, tipografia, composição, fundo (duplo clique volta pra 50)">
+                        <span className={w.aesthetic >= 50 ? 'on' : ''}>estética</span>
+                        <input type="range" min={0} max={100} step={5} value={w.aesthetic} onChange={(e) => setW({ aesthetic: Number(e.target.value) })} onDoubleClick={() => setW({ aesthetic: 50 })} />
+                        <b>{w.aesthetic}</b>
+                      </label>
+                      <label className="st-focus" title="Quanto o Claude aprende do motion desta referência: câmera, transições, ritmo (duplo clique volta pra 50)">
+                        <span className={w.motion >= 50 ? 'on' : ''}>motion</span>
+                        <input type="range" min={0} max={100} step={5} value={w.motion} onChange={(e) => setW({ motion: Number(e.target.value) })} onDoubleClick={() => setW({ motion: 50 })} />
+                        <b>{w.motion}</b>
+                      </label>
+                      {r.kind === 'video' && w.motion >= 100 && (
+                        <label className={'st-fbf' + (w.frameByFrame ? ' on' : '')} title="Manda 4 sequências de 12 quadros seguidos (24 por segundo) pro Claude medir cada movimento">
+                          <input type="checkbox" checked={!!r.frameByFrame} onChange={(e) => setW({ frameByFrame: e.target.checked })} />
+                          <span>
+                            <b>Checagem frame a frame</b>
+                            <small>mais lento/caro</small>
+                          </span>
+                        </label>
+                      )}
+                      {r.kind === 'video' && (
+                        <div className="st-focus-info">
+                          {(() => {
+                            const p = framePlan(r)
+                            const what = p.fps >= 24 ? `${p.bursts} sequências quadro a quadro` : `${p.bursts} sequência(s) rápida(s) pra ler o movimento`
+                            return `${p.even + p.bursts * p.perBurst} quadros${p.bursts ? ` · ${what}` : ' espalhados'}`
+                          })()}
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
                 <button className="icon-btn danger st-ref-x" title="Tirar" onClick={() => patchM((mm) => ({ refs: mm.refs.filter((x) => x.id !== r.id) }))}>
                   <X size={12} />
                 </button>

@@ -43,7 +43,7 @@ import {
   ListPlus,
   SlidersHorizontal
 } from 'lucide-react'
-import { api, clipDur, clipEndT, fileUrl, uid, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
+import { api, clipDur, clipEndT, fileUrl, uid, type Attachment, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
 import { SILENCE_DEFAULT, silenceCut, type SilenceOpts } from './silence'
 import { Recorder } from '../audio'
@@ -931,9 +931,11 @@ export function Montage({
   useEffect(() => {
     if (active) api.onMotionPreviewProgress((p) => setBlockBusy((b) => (b && b.id === p.block ? { ...b, label: p.stage === 'vídeo' ? 'Montando o vídeo…' : b.label, pct: p.pct } : b)))
   }, [active])
-  const makePreview = async (id: string) => {
+  /** prévia do bloco; com `tweak`, pede um ajuste em cima da prévia atual (a conversa fica no bloco) */
+  const makePreview = async (id: string, tweak?: { text: string; files: Attachment[] }) => {
     const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
     if (!b || blockBusy) return
+    const tweaks = tweak ? [...(b.tweaks ?? []), { id: uid(), at: new Date().toISOString(), ...tweak }] : undefined
     setBlockBusy({ id, label: 'Preparando…', pct: null })
     try {
       const preview = await generatePreview({
@@ -945,9 +947,11 @@ export function Montage({
         lang,
         format,
         dir,
-        onStage: (label, pct) => setBlockBusy({ id, label, pct })
+        onStage: (label, pct) => setBlockBusy({ id, label, pct }),
+        adjust: tweaks ? { tweaks } : undefined
       })
-      patchBlock(id, { preview, approved: false })
+      // refazer do zero esquece a conversa de ajustes
+      patchBlock(id, { preview, approved: false, tweaks })
     } catch (e) {
       const msg = (e as Error).message
       if (msg !== 'Cancelado.') alert('Não deu pra fazer a prévia: ' + msg)
@@ -1921,6 +1925,7 @@ export function Montage({
             patch={(p, g) => patchBlock(curBlock.id, p, g)}
             busy={blockBusy}
             onGenerate={() => makePreview(curBlock.id)}
+            onAdjust={(t) => makePreview(curBlock.id, t)}
             onCancel={() => api.motionPreviewCancel()}
             onApprove={() => approveBlock(curBlock.id)}
             onOpen={() => setBlockOpen(curBlock.id)}
@@ -2328,6 +2333,7 @@ export function Montage({
           patch={(p, g) => patchBlock(openBlock.id, p, g)}
           busy={blockBusy}
           onGenerate={() => makePreview(openBlock.id)}
+          onAdjust={(t) => makePreview(openBlock.id, t)}
           onCancel={() => api.motionPreviewCancel()}
           onApprove={() => approveBlock(openBlock.id)}
           onClose={() => setBlockOpen(null)}
