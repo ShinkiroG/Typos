@@ -26,6 +26,7 @@ import {
 import { Boxes, Plus, Link2, X as XIcon } from 'lucide-react'
 import { FILE_MIME } from './FoldersPanel'
 import type { Transaction } from '@tiptap/pm/state'
+import { isKey } from '../keys'
 
 const RULER_H = 22
 const TEXT_H = 44
@@ -756,7 +757,7 @@ export function Timeline({
     const onKey = (e: KeyboardEvent) => {
       const inTimeline = (e.target as HTMLElement)?.closest?.('.timeline')
       const typing = (e.target as HTMLElement)?.matches?.('input, textarea, select')
-      if (e.ctrlKey && e.key.toLowerCase() === 'p') {
+      if (isKey(e, 'script.play')) {
         e.preventDefault()
         togglePlay()
       } else if (inTimeline && !typing) {
