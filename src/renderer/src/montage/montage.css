@@ -1282,6 +1282,7 @@
   gap: 16px;
   overflow: auto;
   min-height: 0;
+}
 
 /* corte por silêncio */
 .mt-sil {
