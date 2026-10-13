@@ -318,7 +318,7 @@ async function motionAnthropic(s: AiSettings, job: MotionTrainJob) {
   if (!s.anthropicKey) throw new Error('Coloque a chave da API da Anthropic em Configurações → IA.')
   const client = new Anthropic({ apiKey: s.anthropicKey })
   const imgs = await Promise.all(
-    job.images.slice(0, 40).map(async (p) => ({
+    job.images.slice(0, 100).map(async (p) => ({
       type: 'image' as const,
       source: { type: 'base64' as const, media_type: mimeOf(p) as 'image/jpeg', data: (await fs.readFile(p)).toString('base64') }
     }))

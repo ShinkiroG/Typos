@@ -1,7 +1,9 @@
 import { BrowserWindow, ipcMain, session, type NativeImage, type WebContents } from 'electron'
 import { join } from 'path'
-import { promises as fs } from 'fs'
+import { promises as fs, existsSync } from 'fs'
+import { createHash } from 'crypto'
 import { findFfmpeg, run } from './media'
+import { partArgs, type VLayer } from './compose'
 
 /**
  * Prévia de um bloco de instrução: o HTML de motion que a IA escreveu é tocado numa janela
@@ -37,7 +39,7 @@ export interface PreviewJob {
  * certo mesmo que a captura seja lenta.
  */
 const CLOCK = `<script>(function(){
-var vt=0,last=0,seq=0,raf=[],timers=[],seen=new WeakMap(),T0=Date.now(),realRaf=window.requestAnimationFrame.bind(window);
+var vt=0,last=0,seq=0,raf=[],timers=[],seen=new WeakMap(),T0=Date.now(),realRaf=window.requestAnimationFrame.bind(window),realST=window.setTimeout.bind(window);
 performance.now=function(){return vt};
 Date.now=function(){return T0+vt};
 window.requestAnimationFrame=function(cb){var id=++seq;raf.push({id:id,cb:cb});return id};
@@ -55,7 +57,14 @@ window.__typosStep=function(ms){
     try{a.pause();a.currentTime=Math.max(0,ms-seen.get(a))}catch(e){}
   });
   last=ms;
-  return new Promise(function(r){realRaf(function(){realRaf(function(){r(true)})})})};
+  return seekVideos(ms).then(function(){return new Promise(function(r){realRaf(function(){realRaf(function(){r(true)})})})})};
+// todo <video> (ex.: embaixo.mp4, o vídeo que está embaixo do bloco) anda junto com o relógio do bloco
+function seekVideos(ms){return Promise.all([].slice.call(document.querySelectorAll('video')).map(function(v){return new Promise(function(r){
+  var ok=false,to,done=function(){if(ok)return;ok=true;clearTimeout(to);r(true)};to=realST(done,2000);
+  try{v.muted=true;v.autoplay=false;v.loop=false;v.pause();
+    var go=function(){var t=ms/1000;if(v.duration&&t>v.duration-0.02)t=Math.max(0,v.duration-0.02);if(Math.abs(v.currentTime-t)<0.0005&&v.readyState>=2)return done();v.addEventListener('seeked',done,{once:true});v.currentTime=t};
+    if(v.readyState<1){v.preload='auto';v.addEventListener('loadedmetadata',go,{once:true});v.load&&v.readyState===0&&!v.currentSrc&&v.load()}else go()
+  }catch(e){done()}})}))}
 })();</script>`
 
 function withClock(html: string) {
@@ -214,7 +223,52 @@ export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed
   return { video, html: htmlPath }
 }
 
+export interface UnderJob {
+  /** pasta do projeto: fica em <projeto>/previas/<bloco>/embaixo */
+  dir: string
+  block: string
+  from: number
+  to: number
+  width: number
+  height: number
+  /** camadas de vídeo de baixo pra cima (tempos da timeline), como no render */
+  video: VLayer[]
+}
+
+/**
+ * O que está embaixo de um bloco de instrução, num MP4 sem som do tamanho do bloco (o segundo 0 é o
+ * começo do bloco). A animação põe ele num <video> e o relógio virtual mantém os dois em sincronia.
+ */
+export async function underVideo(job: UnderJob) {
+  const ff = await findFfmpeg()
+  if (!ff) throw new Error('O ffmpeg não foi encontrado (Configurações → Mídia).')
+  const out = join(job.dir, 'previas', safeName(job.block), 'embaixo')
+  await fs.mkdir(out, { recursive: true })
+  const key = createHash('sha1').update(JSON.stringify(job)).digest('hex').slice(0, 12)
+  const video = join(out, `embaixo-${job.width}-${key}.mp4`)
+  if (existsSync(video)) return video
+  const wav = join(out, `_${key}.wav`)
+  const r = await run(
+    ff.ffmpeg,
+    partArgs({ from: job.from, to: job.to, width: job.width, height: job.height, fps: 30, video: job.video, audio: [], fit: 'contain', outVideo: video, outWav: wav }),
+    { timeoutMs: 10 * 60000 }
+  )
+  await fs.rm(wav, { force: true }).catch(() => null)
+  if (r.code !== 0) {
+    await fs.rm(video, { force: true }).catch(() => null)
+    throw new Error('O ffmpeg falhou ao recortar o vídeo de baixo: ' + r.err.split('\n').slice(-3).join(' ').slice(0, 300))
+  }
+  return video
+}
+
 export function initMotionPreview() {
+  ipcMain.handle('motion:underVideo', async (_e, job: UnderJob) => {
+    try {
+      return { video: await underVideo(job) }
+    } catch (err: any) {
+      return { error: String(err?.message ?? err) }
+    }
+  })
   ipcMain.handle('motion:preview', async (e, job: PreviewJob) => {
     if (busy) return { error: 'Já tem uma prévia sendo feita. Espere ela terminar.' }
     busy = { cancel: false }

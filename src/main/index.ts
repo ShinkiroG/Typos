@@ -10,7 +10,7 @@ import { initSpell } from './spell'
 import { initAi, initMotionAi, initSfxFinder } from './ai'
 import { initRender } from './render'
 import { initMotionPreview } from './motionPreview'
-import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, initDownloads } from './media'
+import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, framesAt, initDownloads, type FrameWeights } from './media'
 import { initWhisper } from './whisper'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer
@@ -985,7 +985,12 @@ ipcMain.handle('motion:demoFile', async (_e, html: string) => {
   return file
 })
 
-ipcMain.handle('motion:frames', (_e, path: string, focus: number) => framesForFocus(path, focus, join(formatMedia(), 'frames')))
+ipcMain.handle('motion:frames', (_e, path: string, w: FrameWeights | number) =>
+  framesForFocus(path, typeof w === 'number' ? { aesthetic: 100 - w, motion: w } : w, join(formatMedia(), 'frames'))
+)
+
+/** quadros do vídeo que está embaixo de um bloco de instrução (o Claude olha pra encaixar o motion) */
+ipcMain.handle('motion:framesAt', (_e, path: string, times: number[]) => framesAt(path, times, join(mediaCacheDir(), 'under')))
 
 ipcMain.handle('edit:do', (e, what: 'cut' | 'copy' | 'paste' | 'pasteAndMatchStyle') => {
   if (['cut', 'copy', 'paste', 'pasteAndMatchStyle'].includes(what)) e.sender[what]()
