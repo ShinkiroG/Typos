@@ -143,8 +143,11 @@ const api = {
   motionPickFiles: (): Promise<string[]> => ipcRenderer.invoke('motion:pickFiles'),
   motionFrames: (
     path: string,
-    focus: number
-  ): Promise<{ path: string; kind: 'even' | 'burst'; group: number; index: number; t: number }[] | { error: string }> => ipcRenderer.invoke('motion:frames', path, focus),
+    weights: { aesthetic: number; motion: number; frameByFrame?: boolean }
+  ): Promise<{ path: string; kind: 'even' | 'burst'; group: number; index: number; t: number; fps: number }[] | { error: string }> =>
+    ipcRenderer.invoke('motion:frames', path, weights),
+  /** um quadro do vídeo em cada tempo (s do arquivo); null onde não deu */
+  motionFramesAt: (path: string, times: number[]): Promise<(string | null)[]> => ipcRenderer.invoke('motion:framesAt', path, times),
   motionPasteImage: (bytes: Uint8Array, name: string): Promise<string> => ipcRenderer.invoke('motion:pasteImage', bytes, name),
   systemFonts: (): Promise<string[]> => ipcRenderer.invoke('sys:fonts'),
   motionDemoFile: (html: string): Promise<string> => ipcRenderer.invoke('motion:demoFile', html),
@@ -206,6 +209,16 @@ const api = {
     htmlPath?: string
   }): Promise<{ video: string; html: string } | { error: string }> => ipcRenderer.invoke('motion:preview', job),
   motionPreviewCancel: () => ipcRenderer.invoke('motion:previewCancel'),
+  /** o que está nas faixas de vídeo embaixo de um bloco, recortado num MP4 sem som (0 s = começo do bloco) */
+  motionUnderVideo: (job: {
+    dir: string
+    block: string
+    from: number
+    to: number
+    width: number
+    height: number
+    video: { path: string; image: boolean; t0: number; t1: number; src0: number; fadeIn: number; fadeOut: number }[]
+  }): Promise<{ video: string } | { error: string }> => ipcRenderer.invoke('motion:underVideo', job),
   onMotionPreviewProgress: (cb: (p: { block: string; stage: string; pct: number }) => void) => {
     ipcRenderer.removeAllListeners('motion:previewProgress')
     ipcRenderer.on('motion:previewProgress', (_e, p) => cb(p))

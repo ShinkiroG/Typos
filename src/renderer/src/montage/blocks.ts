@@ -1,11 +1,14 @@
 import {
   absPath,
   api,
+  fileUrl,
   clipEndT,
   formatTime,
   RESOLUTIONS,
   uid,
+  type Attachment,
   type BlockAttachment,
+  type BlockTweak,
   type Format,
   type InstructionBlock,
   type MontageData,
@@ -13,6 +16,7 @@ import {
 } from '../lib'
 import { envAt, envPoints, spans, type MontageEngine } from './engine'
 import type { ScriptBlock } from './autocut'
+import { planRender, type VLayer } from '../render/plan'
 
 /**
  * Blocos de instrução: pedaços de tempo na faixa de vídeo com instruções de motion.
@@ -59,7 +63,7 @@ export function syncDirection(v: number) {
 
 export const previewStale = (b: InstructionBlock) => !!b.preview && b.preview.key !== blockKey(b)
 
-export const isImage = (a: BlockAttachment) => (a.kind ?? 'image') === 'image' || /\.(png|jpe?g|webp|gif|bmp)$/i.test(a.path)
+export const isImage = (a: Attachment) => (a.kind ?? 'image') === 'image' || /\.(png|jpe?g|webp|gif|bmp)$/i.test(a.path)
 
 // ---------- o que se fala no trecho ----------
 export interface HeardWord {
@@ -127,6 +131,63 @@ export const scriptFalas = (script: ScriptBlock[]) =>
     .filter((s) => s.type === 'paragraph' && s.text.trim())
     .map((s) => s.text.trim())
     .join('\n')
+
+// ---------- o vídeo que está embaixo do bloco ----------
+/** a timeline só com as faixas de vídeo do bloco pra baixo (a primeira faixa da lista é a de cima) */
+function belowMontage(data: MontageData, b: InstructionBlock): MontageData {
+  const vids = data.tracks.filter((t) => t.kind === 'video')
+  const at = vids.findIndex((t) => t.id === b.track)
+  const keep = new Set(vids.slice(Math.max(0, at)).map((t) => t.id))
+  const tracks = data.tracks.filter((t) => t.kind === 'video' && keep.has(t.id))
+  const ids = new Set(tracks.map((t) => t.id))
+  return { ...data, tracks, clips: data.clips.filter((c) => ids.has(c.track)), markers: [], blocks: [] }
+}
+
+/** o que aparece nas faixas de vídeo embaixo do bloco (de baixo pra cima, como no render), e de que arquivos vem */
+export function videoUnder(data: MontageData, b: InstructionBlock) {
+  const below = belowMontage(data, b)
+  const plan = planRender(below, { from: b.start, to: b.end, width: 2, height: 2, fps: 30 })
+  const seen = new Set<string>()
+  const layers: VLayer[] = []
+  for (const p of plan.parts)
+    for (const v of p.video) {
+      const k = JSON.stringify(v)
+      if (!seen.has(k) && v.t0 < b.end && v.t1 > b.start) (seen.add(k), layers.push(v))
+    }
+  // de que arquivos vem (pra contar pro Claude), em ordem de tempo
+  const names = new Map(data.media.map((m) => [m.path, m.name]))
+  const parts = [...layers]
+    .sort((x, y) => x.t0 - y.t0)
+    .map((v) => ({ name: names.get(v.path) ?? v.path.split(/[\\/]/).pop() ?? v.path, image: v.image, t0: Math.max(0, v.t0 - b.start), t1: Math.min(blockDur(b), v.t1 - b.start) }))
+  return { layers, parts }
+}
+
+export interface UnderInfo {
+  /** MP4 sem som do tamanho do bloco (0 s = começo do bloco) */
+  video: string
+  parts: { name: string; image: boolean; t0: number; t1: number }[]
+  /** quadros dele que vão como imagem pro Claude */
+  frames: { t: number; path: string }[]
+}
+
+/** recorta o vídeo de baixo no tamanho pedido e tira uns quadros pra mostrar ao Claude */
+export async function underFor(data: MontageData, b: InstructionBlock, dir: string, size: { w: number; h: number }, withFrames: boolean): Promise<UnderInfo | null> {
+  const u = videoUnder(data, b)
+  if (!u.layers.length) return null
+  const r = await api.motionUnderVideo({ dir, block: b.id, from: b.start, to: b.end, width: size.w, height: size.h, video: u.layers })
+  if ('error' in r) throw new Error(r.error)
+  const frames: { t: number; path: string }[] = []
+  if (withFrames) {
+    const d = blockDur(b)
+    const n = Math.max(3, Math.min(10, Math.round(d)))
+    const times = Array.from({ length: n }, (_, i) => +((d * (i + 0.5)) / n).toFixed(2))
+    const got = await api.motionFramesAt(r.video, times)
+    got.forEach((p, i) => p && frames.push({ t: times[i], path: p }))
+  }
+  return { video: r.video, parts: u.parts, frames }
+}
+
+export const UNDER_NAME = 'embaixo.mp4'
 
 // ---------- áudio do trecho (mixado como a Montagem toca) ----------
 export async function rangeWav(engine: MontageEngine, data: MontageData, dur: (id: string) => number, t0: number, t1: number): Promise<Uint8Array | undefined> {
@@ -233,6 +294,9 @@ export function blockPrompt(o: {
   falas: string
   files: { a: BlockAttachment; name: string }[]
   size: { w: number; h: number }
+  under?: UnderInfo | null
+  /** ajuste em cima da prévia atual: o HTML dela e os pedidos (o último é o novo) */
+  adjust?: { html: string; tweaks: { text: string; names: string[] }[] }
 }) {
   const b = o.block
   const d = blockDur(b)
@@ -256,6 +320,19 @@ export function blockPrompt(o: {
     })
     L.push('')
   }
+  if (o.under) {
+    const first = o.files.length + 1
+    L.push(
+      '## O vídeo que está embaixo deste bloco na timeline',
+      ...o.under.parts.map((p) => `- de ${p.t0.toFixed(1)}s a ${p.t1.toFixed(1)}s: ${p.image ? 'imagem' : 'vídeo'} "${p.name}"`),
+      `O arquivo ${UNDER_NAME}, na mesma pasta do HTML, é exatamente esse vídeo já recortado: o segundo 0 dele é o começo do bloco, e ele tem a mesma duração. O clipe do motion vai POR CIMA e cobre o que está embaixo, então, pra ele aparecer, ponha no HTML <video src="${UNDER_NAME}" muted playsinline></video>. O Typos sincroniza o tempo do vídeo com o do bloco sozinho: não use autoplay, loop nem mexa em currentTime, e não repita ou corte o vídeo (ele é o insert e tem que bater com o tempo da timeline).`,
+      'Use esse vídeo pra encaixar o motion no momento certo: o que acontece nele (ex.: um lance da gameplay) dita quando os elementos entram. Se as instruções não disserem outra coisa, mantenha ele visível (tela cheia, ou enquadrado numa moldura, com destaques, setas, zoom ou textos por cima, no estilo do formato).',
+      o.under.frames.length
+        ? `As imagens ${first} a ${first + o.under.frames.length - 1} são quadros dele, nesta ordem: ${o.under.frames.map((f) => f.t.toFixed(1) + 's').join(', ')} (a partir do começo do bloco).`
+        : '',
+      ''
+    )
+  }
   L.push('## O que é falado neste trecho (tempos a partir do começo do bloco)')
   if (!o.hasAudio) L.push('(não há áudio neste trecho: o motion carrega o momento sozinho)')
   else if (o.heard.length) L.push(phrases(o.heard))
@@ -271,6 +348,21 @@ export function blockPrompt(o: {
   if (m?.fonts) L.push(`Fontes: título ${m.fonts.title ?? '-'}, subtítulo ${m.fonts.subtitle ?? '-'}, texto ${m.fonts.body ?? '-'}, destaque ${m.fonts.accent ?? '-'}`)
   const mem = memorySection(m?.memory)
   if (mem) L.push('', mem, '')
+  if (o.adjust) {
+    L.push(
+      '## AJUSTE na prévia atual (o principal deste pedido)',
+      'Você já fez a animação abaixo pra este bloco e o autor viu a prévia. NÃO recomece do zero: parta deste HTML, mantenha tudo que o autor não pediu pra mudar e aplique os ajustes. Os pedidos anteriores já estão nele; o último é o novo.',
+      '```html',
+      o.adjust.html.slice(0, 60000),
+      '```',
+      '',
+      'Ajustes pedidos (em ordem):'
+    )
+    o.adjust.tweaks.forEach((t, i) =>
+      L.push(`${i + 1}. ${t.text.trim() || '(só imagens)'}${t.names.length ? ` [imagens: ${t.names.join(', ')}; estão na pasta do HTML com esses nomes e chegam pra você depois das outras, nessa ordem. Use no vídeo com <img src="nome"> se o pedido for pra mostrar; senão, são referência]` : ''}`)
+    )
+    L.push('')
+  }
   L.push(
     '## Responda EXATAMENTE neste formato (nada fora das tags)',
     '<demo>',
@@ -311,6 +403,15 @@ export interface PreviewCtx {
   format?: Format
   dir: string
   onStage: (label: string, pct: number | null) => void
+  /** pedir ajuste: parte da prévia atual em vez de criar do zero */
+  adjust?: { tweaks: BlockTweak[] }
+}
+
+/** imagens dos ajustes: o nome com que vão pra pasta da prévia */
+function tweakFiles(tweaks: BlockTweak[] | undefined) {
+  return (tweaks ?? []).map((t, i) =>
+    t.files.filter(isImage).map((a, j) => ({ a, name: `ajuste-${i + 1}-${j + 1}${a.path.match(/\.\w+$/)?.[0]?.toLowerCase() ?? '.png'}` }))
+  )
 }
 
 /**
@@ -327,6 +428,18 @@ export async function generatePreview(c: PreviewCtx) {
   }
   const files = b.attachments.filter(isImage).map((a, i) => ({ a, name: attachName(a, i) }))
   const size = previewSize(c.format)
+  c.onStage('Olhando o vídeo embaixo do bloco…', null)
+  const under = await underFor(c.data, b, c.dir, size, true)
+  let adjust: { html: string; tweaks: { text: string; names: string[] }[] } | undefined
+  const tf = tweakFiles(c.adjust?.tweaks)
+  if (c.adjust) {
+    if (!b.preview) throw new Error('Gere a prévia antes de pedir ajustes.')
+    const html = await fetch(fileUrl(b.preview.html))
+      .then((r) => (r.ok ? r.text() : ''))
+      .catch(() => '')
+    if (!html) throw new Error('Não achei o HTML da prévia atual. Gere a prévia de novo.')
+    adjust = { html, tweaks: c.adjust.tweaks.map((t, i) => ({ text: t.text, names: tf[i].map((f) => f.name) })) }
+  }
   const prompt = blockPrompt({
     block: b,
     format: c.format,
@@ -336,10 +449,12 @@ export async function generatePreview(c: PreviewCtx) {
     scriptHere: scriptIn(c.data, b, c.script),
     falas: scriptFalas(c.script),
     files,
-    size
+    size,
+    under,
+    adjust
   })
-  c.onStage('Claude criando o motion…', null)
-  const r = await api.motionTrain({ prompt, images: files.map((f) => absPath(f.a)) })
+  c.onStage(adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', null)
+  const r = await api.motionTrain({ prompt, images: [...files.map((f) => absPath(f.a)), ...(under?.frames.map((f) => f.path) ?? []), ...tf.flat().map((f) => absPath(f.a))] })
   if ('error' in r) throw new Error(r.error)
   const html = parseDemo(r.text)
   if (!html) throw new Error('A IA respondeu fora do formato (sem o HTML da animação). Tente de novo.')
@@ -355,7 +470,11 @@ export async function generatePreview(c: PreviewCtx) {
     height: size.h,
     fps: PREVIEW_FPS,
     wav,
-    files: files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name }))
+    files: [
+      ...files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
+      ...tf.flat().map((f) => ({ src: absPath(f.a), name: f.name })),
+      ...(under ? [{ src: under.video, name: UNDER_NAME }] : [])
+    ]
   })
   if ('error' in v) throw new Error(v.error)
   return {
@@ -379,6 +498,15 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
   const small = previewSize(c.format)
   const size = projectSize(c.format)
   const hasAudio = audioIn(c.data, b).length > 0
+  // o vídeo de baixo de novo, agora na resolução do clipe (a animação usa ele pelo nome)
+  const html = await fetch(fileUrl(b.preview.html))
+    .then((r) => (r.ok ? r.text() : ''))
+    .catch(() => '')
+  let under: UnderInfo | null = null
+  if (html.includes(UNDER_NAME)) {
+    c.onStage('Recortando o vídeo de baixo…', null)
+    under = await underFor(c.data, b, c.dir, size, false)
+  }
   c.onStage('Mixando o áudio do trecho…', null)
   const wav = hasAudio ? await rangeWav(c.engine, c.data, c.dur, b.start, b.end).catch(() => undefined) : undefined
   c.onStage(`Gravando o clipe em ${size.w}×${size.h}…`, 0)
@@ -394,7 +522,11 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
     zoom: size.w / small.w,
     final: true,
     wav,
-    files: files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name }))
+    files: [
+      ...files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
+      ...tweakFiles(b.tweaks).flat().map((f) => ({ src: absPath(f.a), name: f.name })),
+      ...(under ? [{ src: under.video, name: UNDER_NAME }] : [])
+    ]
   })
   if ('error' in v) throw new Error(v.error)
   return v.video

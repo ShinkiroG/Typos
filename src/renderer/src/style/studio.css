@@ -697,6 +697,39 @@
   min-width: 0;
   accent-color: var(--accent);
 }
+.st-focus span {
+  min-width: 44px;
+}
+.st-focus b {
+  min-width: 22px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+/* motion no máximo: checagem quadro a quadro */
+.st-fbf {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.st-fbf.on {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.st-fbf span {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.st-fbf small {
+  color: var(--muted);
+}
 .st-focus-info {
   font-size: 10px;
   color: var(--muted);
