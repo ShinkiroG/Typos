@@ -18,6 +18,7 @@ import {
   Loader2,
   AlertTriangle,
   Undo2,
+  History,
   Redo2,
   ChevronLeft,
   ChevronRight,
@@ -56,6 +57,7 @@ import { blockDur, blockLabel, generateClip, generatePreview, memoryFromBlock, n
 import { BlockInspector, BlockWindow, type BlockBusy } from './BlockPanel'
 import { AudioReadButton, BlockHeardRow, useBlockHeard } from './AudioRead'
 import { jobPct, recheckRead, runningLabel, watchJobs } from './transcripts'
+import { describeChange } from './history'
 
 export const fmtTc = (t: number) => {
   const s = Math.max(0, t)
@@ -392,9 +394,13 @@ export function Montage({
   const past = useRef<MontageData[]>([])
   const future = useRef<MontageData[]>([])
   const lastGesture = useRef<string | null>(null)
+  /** quando cada passo aconteceu (chave: o estado de antes dele) */
+  const stamps = useRef(new WeakMap<MontageData, number>())
+  const [histOpen, setHistOpen] = useState(false)
   const change = useCallback(
     (next: MontageData, gesture?: string) => {
       if (!gesture || gesture !== lastGesture.current) {
+        stamps.current.set(dataRef.current, Date.now())
         past.current.push(dataRef.current)
         if (past.current.length > 200) past.current.shift()
         future.current = []
@@ -411,6 +417,7 @@ export function Montage({
     if (!prev) return
     future.current.push(dataRef.current)
     lastGesture.current = null
+    dataRef.current = prev
     onChange(prev)
   }
   const redo = () => {
@@ -418,8 +425,20 @@ export function Montage({
     if (!next) return
     past.current.push(dataRef.current)
     lastGesture.current = null
+    dataRef.current = next
     onChange(next)
   }
+  /** pula vários passos de uma vez (clique no histórico): >0 refaz, <0 desfaz */
+  const jump = (steps: number) => {
+    for (let i = 0; i < Math.abs(steps); i++) steps < 0 ? undo() : redo()
+  }
+  // Editar → Desfazer/Refazer do menu do topo, com a Montagem na frente
+  useEffect(() => {
+    if (!active) return
+    const on = (e: Event) => ((e as CustomEvent).detail === 'redo' ? redo() : undo())
+    window.addEventListener('typos:montage-history', on)
+    return () => window.removeEventListener('typos:montage-history', on)
+  })
 
   // mexeu na timeline tocando: reagenda o áudio
   useEffect(() => {
@@ -2110,6 +2129,12 @@ export function Montage({
         <button className="icon-btn" title="Refazer (Ctrl+Shift+Z)" onClick={redo}>
           <Redo2 size={15} />
         </button>
+        <div className="mt-hist-wrap">
+          <button className={'icon-btn' + (histOpen ? ' on' : '')} title="Histórico: tudo que você fez na Montagem; clique num passo pra voltar até ele" onClick={() => setHistOpen((o) => !o)}>
+            <History size={15} />
+          </button>
+          {histOpen && <HistoryList past={past.current} future={future.current} now={data} stamps={stamps.current} onJump={jump} onClose={() => setHistOpen(false)} />}
+        </div>
         <span className="mt-grow" />
         {blockNote && (
           <button
@@ -2735,6 +2760,50 @@ function CategoriesModal({ data, onClose, onSave }: { data: MontageData; onClose
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** lista do desfazer: cada passo com nome e hora; clicar volta (ou avança) até ele */
+function HistoryList(p: {
+  past: MontageData[]
+  future: MontageData[]
+  now: MontageData
+  stamps: WeakMap<MontageData, number>
+  onJump: (steps: number) => void
+  onClose: () => void
+}) {
+  useEffect(() => {
+    const close = (e: MouseEvent) => !(e.target as HTMLElement).closest?.('.mt-hist-wrap') && p.onClose()
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  })
+  const hour = (t?: number) => (t ? new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '')
+  // passos feitos (o mais antigo primeiro): o estado depois do passo i é past[i+1] (ou o de agora)
+  const done = p.past.map((before, i) => ({ label: describeChange(before, p.past[i + 1] ?? p.now), at: p.stamps.get(before), steps: -(p.past.length - 1 - i) }))
+  // passos desfeitos, na ordem em que seriam refeitos
+  const ahead = [...p.future].reverse()
+  const undone = ahead.map((after, j) => ({ label: describeChange(ahead[j - 1] ?? p.now, after), at: undefined as number | undefined, steps: j + 1 }))
+  return (
+    <div className="mt-hist" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="mt-hist-head">Histórico da Montagem</div>
+      <div className="mt-hist-list">
+        <button className={'mt-hist-row' + (p.past.length ? '' : ' cur')} onClick={() => p.onJump(-p.past.length)}>
+          <span>Início</span>
+        </button>
+        {done.map((h, i) => (
+          <button key={'d' + i} className={'mt-hist-row' + (h.steps === 0 ? ' cur' : '')} onClick={() => p.onJump(h.steps)}>
+            <span>{h.label}</span>
+            <span className="muted">{hour(h.at)}</span>
+          </button>
+        ))}
+        {undone.map((h, j) => (
+          <button key={'u' + j} className="mt-hist-row undone" title="Desfeito: clique pra refazer até aqui" onClick={() => p.onJump(h.steps)}>
+            <span>{h.label}</span>
+          </button>
+        ))}
+      </div>
+      {!p.past.length && !p.future.length && <div className="muted small mt-hist-empty">Nada feito ainda nesta Montagem.</div>}
     </div>
   )
 }
