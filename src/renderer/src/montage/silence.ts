@@ -13,9 +13,11 @@ export interface SilenceOpts {
   minSilence: number
   /** folga antes/depois de cada trecho falado (s) */
   pad: number
+  /** som mais curto que isso entre silêncios é ruído (estalo, clique) e sai junto (s) */
+  minVoice?: number
 }
 
-export const SILENCE_DEFAULT: SilenceOpts = { threshold: -40, minSilence: 0.35, pad: 0.12 }
+export const SILENCE_DEFAULT: SilenceOpts = { threshold: -40, minSilence: 0.35, pad: 0.12, minVoice: 0.05 }
 
 /** trechos com som [início, fim] (s, no arquivo) dentro de in→out */
 export function voicedRanges(peaks: Float32Array, from: number, to: number, o: SilenceOpts): [number, number][] {
@@ -47,7 +49,7 @@ export function voicedRanges(peaks: Float32Array, from: number, to: number, o: S
     const e = Math.min(to, b + o.pad)
     const last = padded[padded.length - 1]
     if (last && s <= last[1]) last[1] = Math.max(last[1], e)
-    else if (e - s >= 0.05) padded.push([s, e])
+    else if (e - s >= Math.max(0.05, o.minVoice ?? 0.05)) padded.push([s, e])
   }
   return padded
 }
@@ -92,3 +94,44 @@ export function silenceCut(
   return { clips: out, removed }
 }
 
+
+type Src = Pick<MontageClip, 'media' | 'in' | 'out'>
+
+/** quanto o corte tiraria com esses ajustes (pra calibrar antes de cortar) */
+export function silenceStats(sources: Src[], peaksOf: (mediaId: string) => Float32Array | undefined, o: SilenceOpts) {
+  let total = 0
+  let kept = 0
+  let pieces = 0
+  for (const c of sources) {
+    const peaks = peaksOf(c.media)
+    if (!peaks) continue
+    total += c.out - c.in
+    for (const [a, b] of voicedRanges(peaks, c.in, c.out, o)) {
+      kept += b - a
+      pieces++
+    }
+  }
+  return { total, kept, removed: total - kept, pieces }
+}
+
+/**
+ * Limiar sugerido: mede o chão de ruído (os 15% mais baixos) e o nível da fala (os 10% mais altos)
+ * e põe o corte a um terço do caminho entre os dois, acima do ruído.
+ */
+export function suggestThreshold(sources: Src[], peaksOf: (mediaId: string) => Float32Array | undefined): number | null {
+  const db: number[] = []
+  for (const c of sources) {
+    const peaks = peaksOf(c.media)
+    if (!peaks) continue
+    const i0 = Math.max(0, Math.floor(c.in * PEAKS_PER_SEC))
+    const i1 = Math.min(peaks.length, Math.ceil(c.out * PEAKS_PER_SEC))
+    const step = Math.max(1, Math.floor((i1 - i0) / 20000))
+    for (let i = i0; i < i1; i += step) db.push(20 * Math.log10(Math.max(1e-5, peaks[i])))
+  }
+  if (db.length < 20) return null
+  db.sort((a, b) => a - b)
+  const noise = db[Math.floor(db.length * 0.15)]
+  const speech = db[Math.floor(db.length * 0.9)]
+  const t = noise + (speech - noise) / 3
+  return Math.round(Math.max(-60, Math.min(-20, t)))
+}

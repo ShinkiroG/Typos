@@ -741,6 +741,8 @@ export interface BlockPreview {
   key: string
   /** o que continuou fora da safe zone depois da correção automática */
   safeIssues?: string[]
+  /** tamanho (px) em que o HTML foi escrito; o clipe final amplia a partir dele */
+  size?: { w: number; h: number }
 }
 
 /** Bloco de instrução: um pedaço de tempo da faixa de vídeo com instruções de motion pro Claude. */

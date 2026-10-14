@@ -402,7 +402,7 @@ export function blockPrompt(o: {
   L.push(
     '## Responda EXATAMENTE neste formato (nada fora das tags)',
     '<demo>',
-    `Um arquivo HTML completo e autocontido (CSS e JS inline, sem internet), em ${o.size.w}x${o.size.h} px preenchendo a página (body sem margem, overflow hidden), que toca o motion deste bloco UMA vez, começando em 0 s e durando exatamente ${d.toFixed(2)} s (sem loop; segure o último quadro). Anime com CSS keyframes, Web Animations ou requestAnimationFrame com performance.now(): o Typos controla o relógio e grava quadro a quadro. Use as fontes pelo nome (font-family) e as cores do estilo.${o.files.some((f) => f.a.use === 'insert') ? ' As imagens de insert estão na mesma pasta do HTML, pelo nome indicado.' : ''}`,
+    `Um arquivo HTML completo e autocontido (CSS e JS inline, sem internet), em ${o.size.w}x${o.size.h} px preenchendo a página (body sem margem, overflow hidden), que toca o motion deste bloco UMA vez, começando em 0 s e durando exatamente ${d.toFixed(2)} s (sem loop; segure o último quadro). Anime com CSS keyframes, Web Animations ou requestAnimationFrame com performance.now(): o Typos controla o relógio e grava quadro a quadro. Use as fontes pelo nome (font-family) e as cores do estilo. O clipe final é gravado ampliado (mesma composição, mais pixels): prefira texto, SVG e CSS, que ficam nítidos; se usar <canvas>, crie ele em largura×devicePixelRatio por altura×devicePixelRatio (com o tamanho CSS normal) e dê ctx.scale(devicePixelRatio, devicePixelRatio), senão ele sai borrado.${o.files.some((f) => f.a.use === 'insert') ? ' As imagens de insert estão na mesma pasta do HTML, pelo nome indicado.' : ''}`,
     '</demo>'
   )
   return L.join('\n')
@@ -561,6 +561,7 @@ export async function generatePreview(c: PreviewCtx) {
     provider: r.provider,
     transcript: phrases(heard.words),
     key: blockKey(b),
+    size,
     safeIssues: issues.length ? issuesTweak(issues, zones).split('\n').slice(1) : undefined
   }
 }
@@ -573,8 +574,19 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
   const b = c.block
   if (!b.preview) throw new Error('Gere a prévia antes de aprovar.')
   const files = b.attachments.filter(isImage).map((a, i) => ({ a, name: attachName(a, i) }))
-  const small = previewSize(c.format)
   const size = projectSize(c.format)
+  // o tamanho em que o HTML foi escrito (prévias antigas: o do próprio vídeo da prévia)
+  let small = b.preview.size
+  if (!small) {
+    const info = await api.probeMedia(b.preview.video)
+    small = !('error' in info) && info.width && info.height ? { w: info.width, h: info.height } : previewSize(c.format)
+  }
+  if (Math.abs(small.w / small.h - size.w / size.h) > 0.02) {
+    const kind = (s: { w: number; h: number }) => (s.w > s.h ? 'horizontal' : s.w < s.h ? 'vertical' : 'quadrada')
+    throw new Error(
+      `esta prévia foi feita ${kind(small)} (${small.w}×${small.h}) e a timeline está em ${c.format?.aspect ?? '16:9'} (${kind(size)}). Gere a prévia de novo pra ela sair no formato da timeline.`
+    )
+  }
   const hasAudio = audioIn(c.data, b).length > 0
   // o vídeo de baixo de novo, agora na resolução do clipe (a animação usa ele pelo nome)
   const html = await fetch(fileUrl(b.preview.html))

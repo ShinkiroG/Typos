@@ -1420,8 +1420,54 @@
 .mt-sil-pop b {
   color: var(--text);
 }
-.mt-sil-pop .btn {
-  align-self: flex-start;
+.mt-sil-pop {
+  width: 330px;
+}
+.mt-sil-pop header,
+.mt-sil-pop footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mt-sil-pop header b {
+  flex: 1;
+  font-size: 13px;
+}
+.mt-sil-pop label > span {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.mt-sil-pop .link-btn {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 11px;
+  color: var(--c-prompt);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.mt-sil-est {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--bg);
+  line-height: 1.4;
+}
+.mt-sil-help summary {
+  cursor: pointer;
+  color: var(--text);
+}
+.mt-sil-help ol {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .ctx-menu button.on {
   color: var(--c-prompt);
@@ -1872,4 +1918,48 @@
 }
 .mt-hist-empty {
   padding: 4px 6px;
+}
+
+/* ---------- zoom do visualizador (Ajustar / %) ---------- */
+.mt-screen.zoomed {
+  overflow: auto;
+  place-items: safe center;
+}
+.mt-screen.zoomed > video:not([controls]),
+.mt-screen.zoomed > img,
+.mt-screen.zoomed.framed::after {
+  height: var(--zh);
+  width: auto;
+  max-width: none;
+  max-height: none;
+  aspect-ratio: var(--frame, var(--seq));
+}
+.mt-screen.zoomed:not(.framed) > video:not([controls]),
+.mt-screen.zoomed:not(.framed) > img {
+  object-fit: contain;
+}
+.mt-view-zoom {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 5px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* barra de ferramentas: nada quebra em duas linhas; sem espaço, os rótulos secundários viram só ícone (o título explica) */
+.mt-toolbar {
+  min-width: 0;
+}
+.mt-toolbar .btn,
+.mt-toolbar label,
+.mt-toolbar select {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.mt-toolbar .btn.small {
+  font-size: 12px;
+}
+.mt-toolbar.compact .lbl {
+  display: none;
 }

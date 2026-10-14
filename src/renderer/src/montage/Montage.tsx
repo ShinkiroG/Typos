@@ -45,9 +45,9 @@ import {
   SlidersHorizontal,
   Check
 } from 'lucide-react'
-import { api, clipDur, clipEndT, fileUrl, uid, type Attachment, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
+import { api, clipDur, clipEndT, fileUrl, RESOLUTIONS, uid, type Attachment, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
-import { SILENCE_DEFAULT, silenceCut, type SilenceOpts } from './silence'
+import { SILENCE_DEFAULT, silenceCut, silenceStats, suggestThreshold, type SilenceOpts } from './silence'
 import { Recorder } from '../audio'
 import { askText } from '../components/AskDialog'
 import { YoutubeDownload } from '../components/YoutubeDownload'
@@ -111,6 +111,9 @@ interface Props {
   /** as outras timelines do projeto (pro "Ler todas as timelines" do áudio) */
   otherTimelines?: () => MontageData[]
 }
+
+/** zooms do visualizador (fração do tamanho real do vídeo final) */
+const VIEW_ZOOMS = [0.1, 0.25, 0.33, 0.5, 0.75, 1, 1.5, 2]
 
 const LAYOUT_KEY = 'typos.montageLayout'
 const loadLayout = () => {
@@ -202,6 +205,63 @@ export function Montage({
   const recClipRef = useRef<HTMLDivElement>(null)
   const meterRef = useRef<HTMLDivElement>(null)
   const [prompter, setPrompter] = useState(() => localStorage.getItem('typos.prompter') !== '0')
+  // zoom do visualizador (igual ao do Premiere): "Ajustar" cabe na tela; a % é do tamanho real do vídeo final
+  const [view, setViewState] = useState<number | 'fit'>(() => {
+    const v = Number(localStorage.getItem('typos.viewerZoom'))
+    return v > 0 ? v : 'fit'
+  })
+  const setView = (v: number | 'fit') => {
+    setViewState(v)
+    try {
+      localStorage.setItem('typos.viewerZoom', String(v === 'fit' ? 0 : v))
+    } catch {
+      /* sem storage */
+    }
+  }
+  const seqAspect = frame ?? format?.aspect ?? '16:9'
+  const [seqW, seqH] = (RESOLUTIONS[seqAspect] ?? '1920×1080').split('×').map(Number)
+  const screenRef = useRef<HTMLDivElement>(null)
+  // barra de ferramentas: se não cabe numa linha, os rótulos secundários somem (fica o ícone com o título)
+  const barRef = useRef<HTMLDivElement>(null)
+  const [barCompact, setBarCompact] = useState(false)
+  const barFull = useRef(0)
+  const fitBar = useRef(() => {})
+  fitBar.current = () => {
+    const el = barRef.current
+    if (!el) return
+    if (!barCompact) {
+      if (el.scrollWidth > el.clientWidth + 1) {
+        barFull.current = el.scrollWidth
+        setBarCompact(true)
+      }
+    } else if (el.clientWidth >= barFull.current) setBarCompact(false)
+  }
+  useLayoutEffect(() => fitBar.current())
+  useEffect(() => {
+    const el = barRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => fitBar.current())
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const viewWheel = useRef<(e: WheelEvent) => void>(() => {})
+  viewWheel.current = (e) => {
+    // Ctrl+roda: aproxima/afasta o vídeo (sem Ctrl a roda rola a tela ampliada)
+    if (!e.ctrlKey) return
+    e.preventDefault()
+    const box = screenRef.current!.getBoundingClientRect()
+    const dpr = window.devicePixelRatio || 1
+    const cur = view === 'fit' ? Math.min(box.width / seqW, box.height / seqH) * dpr : view
+    const next = e.deltaY < 0 ? VIEW_ZOOMS.find((z) => z > cur + 0.001) : [...VIEW_ZOOMS].reverse().find((z) => z < cur - 0.001)
+    if (next) setView(next)
+  }
+  useEffect(() => {
+    const el = screenRef.current
+    if (!el) return
+    const on = (e: WheelEvent) => viewWheel.current(e)
+    el.addEventListener('wheel', on, { passive: false })
+    return () => el.removeEventListener('wheel', on)
+  }, [])
   const prompterRef = useRef<HTMLDivElement>(null)
   // velocidade própria do teleprompter (palavras/min); começa no ppm do formato
   const [prompterWpm, setPrompterWpmState] = useState(() => Number(localStorage.getItem('typos.prompterWpm')) || wpm)
@@ -379,6 +439,14 @@ export function Montage({
     }
   }, [data.media])
   const dur = useCallback((id: string) => mediaLen(mediaRef.current.get(id)), [])
+  /**
+   * formato dos blocos de instrução: o do quadro desta timeline. Numa timeline de Clipes em 9:16 o motion
+   * sai vertical mesmo que o formato escolhido (estilo, memória) seja o horizontal da Montagem.
+   */
+  const blockFormat = useMemo<Format | undefined>(
+    () => (frame ? { ...(format ?? { id: '', name: 'Clipes', wpm, maxSeconds: null }), aspect: frame } : format),
+    [format, frame, wpm]
+  )
 
   useEffect(() => {
     api.ffmpegInfo().then(setFfmpeg)
@@ -814,15 +882,19 @@ export function Montage({
    * Narração vai pra faixa "Corte automático" (a original fica silenciada pra comparar);
    * o que já está nela (ou é vídeo) é cortado no lugar, puxando o resto da faixa.
    */
-  const cutSilence = async () => {
+  /** o que o corte por silêncio atinge: a seleção, a narração da timeline ou os arquivos da pasta Narração */
+  const silenceSources = () => {
     const d = dataRef.current
     const isAuto = (id: string) => !!d.tracks.find((t) => t.id === id)?.auto
     const narrBins = new Set(d.bins.filter((b) => b.role === 'narration').flatMap((b) => [...subtree(b.id)]))
     const hasAudio = (c: MontageClip) => !!mediaRef.current.get(c.media)?.hasAudio
     let sources = d.clips.filter((c) => selected.includes(c.id) && hasAudio(c))
+    let scope = `${sources.length} corte${sources.length > 1 ? 's' : ''} selecionado${sources.length > 1 ? 's' : ''}`
     if (!sources.length) {
+      scope = 'a narração toda da timeline'
       sources = d.clips.filter((c) => hasAudio(c) && !isAuto(c.track) && narrBins.has(mediaRef.current.get(c.media)?.bin ?? ''))
       if (!sources.length) {
+        scope = 'os arquivos da pasta Narração'
         let t = 0
         sources = d.media
           .filter((m) => narrBins.has(m.bin) && m.hasAudio)
@@ -833,9 +905,10 @@ export function Montage({
           })
       }
     }
-    if (!sources.length) return setNormMsg('Nada pra cortar: selecione cortes com áudio ou ponha a narração na pasta Narração.')
-    engine.pause()
-    setPlaying(false)
+    return { sources, scope, isAuto }
+  }
+  /** carrega as ondas (o corte e a calibração olham pra elas) */
+  const loadWaves = async (sources: MontageClip[]) => {
     setBusy({ label: 'Lendo as ondas…', pct: null })
     try {
       for (const id of new Set(sources.map((c) => c.media))) {
@@ -845,6 +918,29 @@ export function Montage({
     } finally {
       setBusy(null)
     }
+  }
+  // painel de calibração: carrega as ondas ao abrir e mostra quanto sairia com os ajustes atuais
+  const [silWaves, setSilWaves] = useState(0)
+  useEffect(() => {
+    if (!silOpen) return
+    const { sources } = silenceSources()
+    if (!sources.length || sources.every((c) => engine.get(c.media)?.peaks)) return
+    loadWaves(sources).then(() => setSilWaves((v) => v + 1))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [silOpen])
+  /** calibração ao vivo (chamada no desenho do painel; silWaves muda quando as ondas chegam) */
+  const silenceInfo = () => {
+    const { sources, scope } = silenceSources()
+    const peaksOf = (id: string) => engine.get(id)?.peaks
+    return { scope, n: sources.length, waves: silWaves, stats: silenceStats(sources, peaksOf, silOpts), suggest: suggestThreshold(sources, peaksOf) }
+  }
+
+  const cutSilence = async () => {
+    const { sources, isAuto } = silenceSources()
+    if (!sources.length) return setNormMsg('Nada pra cortar: selecione cortes com áudio ou ponha a narração na pasta Narração.')
+    engine.pause()
+    setPlaying(false)
+    await loadWaves(sources)
     const peaksOf = (id: string) => engine.get(id)?.peaks
     if (!sources.some((c) => peaksOf(c.media))) return setNormMsg('As ondas ainda não carregaram (o ffmpeg está instalado?).')
     const cur = dataRef.current
@@ -1006,7 +1102,7 @@ export function Montage({
         dur,
         script: getBlocks(),
         lang,
-        format,
+        format: blockFormat,
         dir,
         onStage: (label, pct) => setBlockBusy({ id, label, pct }),
         signal: ac.signal,
@@ -1033,7 +1129,7 @@ export function Montage({
     if (previewStale(b) && !confirm('O bloco mudou depois desta prévia. Importar a prévia assim mesmo, com o tempo atual do bloco?')) return
     setBlockBusy({ id, label: 'Preparando o clipe…', pct: null })
     try {
-      const video = await generateClip({ block: b, data: dataRef.current, engine, dur, format, dir, onStage: (label, pct) => setBlockBusy({ id, label, pct }) })
+      const video = await generateClip({ block: b, data: dataRef.current, engine, dur, format: blockFormat, dir, onStage: (label, pct) => setBlockBusy({ id, label, pct }) })
       const info = await api.probeMedia(video)
       if ('error' in info) throw new Error(info.error)
       const d = dataRef.current
@@ -1847,7 +1943,17 @@ export function Montage({
 
       {/* ---------- visualizador ---------- */}
       <section className="mt-viewer">
-        <div className={'mt-screen' + (frame ? ' framed' : '')} style={frame ? ({ ['--frame' as any]: frame.replace(':', ' / ') } as React.CSSProperties) : undefined}>
+        <div
+          className={'mt-screen' + (frame ? ' framed' : '') + (view !== 'fit' ? ' zoomed' : '')}
+          style={
+            {
+              ...(frame ? { ['--frame' as any]: frame.replace(':', ' / ') } : {}),
+              ['--seq' as any]: `${seqW} / ${seqH}`,
+              ['--zh' as any]: view === 'fit' ? undefined : `${Math.round((seqH * view) / (window.devicePixelRatio || 1))}px`
+            } as React.CSSProperties
+          }
+          ref={screenRef}
+        >
           {source ? (
             source.kind === 'image' ? (
               <img src={fileUrl(source.path)} />
@@ -1976,6 +2082,19 @@ export function Montage({
               </label>
             </>
           )}
+          <select
+            className="mt-view-zoom"
+            value={String(view)}
+            title={`Tamanho do vídeo no visualizador (${seqW}×${seqH}). Ajustar cabe na tela; 100% é o tamanho real. Ctrl+roda do mouse em cima do vídeo também muda.`}
+            onChange={(e) => setView(e.target.value === 'fit' ? 'fit' : Number(e.target.value))}
+          >
+            <option value="fit">Ajustar</option>
+            {VIEW_ZOOMS.map((z) => (
+              <option key={z} value={String(z)}>
+                {Math.round(z * 100)}%
+              </option>
+            ))}
+          </select>
           <button className="icon-btn" title="Áudio: microfone, saída e níveis" onClick={onAudioSettings}>
             <Settings2 size={15} />
           </button>
@@ -2026,7 +2145,7 @@ export function Montage({
       </section>
 
       {/* ---------- barra de ferramentas ---------- */}
-      <div className="mt-toolbar">
+      <div className={'mt-toolbar' + (barCompact ? ' compact' : '')} ref={barRef}>
         <div className="seg">
           <button className={tool === 'select' ? 'on' : ''} title="Seleção (V)" onClick={() => setTool('select')}>
             <MousePointer2 size={14} />
@@ -2036,14 +2155,14 @@ export function Montage({
           </button>
         </div>
         <button className="btn small" title="Dividir no playhead (S)" onClick={splitAtPlayhead}>
-          <Scissors size={13} /> Dividir
+          <Scissors size={13} /> <span className="lbl">Dividir</span>
         </button>
         <span className="mt-sep" />
         <button className="btn small emenda" title="Crossfade (E): no corte selecionado, pra suavizar e evitar estalo" onClick={() => applySplice(false)} disabled={!sel.some((c) => prevOf(c))}>
           <Combine size={13} /> Crossfade
         </button>
         <button className="btn small" title="Aplica o crossfade em todos os cortes colados da timeline" onClick={() => applySplice(true)}>
-          Crossfade em todos os cortes
+          Crossfade em todos
         </button>
         <label className="mt-splice-len" title="Duração do crossfade">
           <input
@@ -2058,7 +2177,7 @@ export function Montage({
         </label>
         <span className="mt-sep" />
         <button className="btn small mt-mark-btn" title="Marca no cursor onde entra o lettering do capítulo (L)" onClick={() => addLettering()}>
-          <Type size={13} /> Lettering
+          <Type size={13} /> <span className="lbl">Lettering</span>
         </button>
         <label className="mt-splice-len" title="Tempo fixo de cada lettering novo (segundos)">
           <input
@@ -2073,35 +2192,105 @@ export function Montage({
         </label>
         <div className="mt-sil">
           <button
-            className="btn small"
-            disabled={!!busy}
-            title="Corte por silêncio (rápido, sem transcrever): tira as pausas. Com cortes selecionados, só neles; sem seleção, a narração toda"
-            onClick={cutSilence}
+            className={'btn small' + (silOpen ? ' on' : '')}
+            disabled={!!busy && !silOpen}
+            title="Corte por silêncio (rápido, sem transcrever): abre o painel pra calibrar e cortar"
+            onClick={() => setSilOpen((o) => !o)}
           >
             <AudioWaveform size={13} /> Cortar silêncios
           </button>
-          <button className={'icon-btn' + (silOpen ? ' on' : '')} title="Ajustes do corte por silêncio" onClick={() => setSilOpen((o) => !o)}>
-            <Settings2 size={13} />
-          </button>
-          {silOpen && (
-            <div className="mt-sil-pop" onMouseDown={(e) => e.stopPropagation()}>
-              <label>
-                Silêncio abaixo de <b>{silOpts.threshold} dB</b>
-                <input type="range" min={-60} max={-20} step={1} value={silOpts.threshold} onChange={(e) => setSilOpts({ threshold: Number(e.target.value) })} />
-              </label>
-              <label>
-                Pausa mínima pra cortar <b>{Math.round(silOpts.minSilence * 1000)} ms</b>
-                <input type="range" min={100} max={2000} step={50} value={silOpts.minSilence * 1000} onChange={(e) => setSilOpts({ minSilence: Number(e.target.value) / 1000 })} />
-              </label>
-              <label>
-                Folga antes/depois da fala <b>{Math.round(silOpts.pad * 1000)} ms</b>
-                <input type="range" min={0} max={500} step={10} value={silOpts.pad * 1000} onChange={(e) => setSilOpts({ pad: Number(e.target.value) / 1000 })} />
-              </label>
-              <button className="btn small" onClick={() => setSilOpts(SILENCE_DEFAULT)}>
-                Padrão
-              </button>
-            </div>
-          )}
+          {silOpen &&
+            (() => {
+              const info = silenceInfo()
+              const st = info.stats
+              const pct = st.total ? Math.round((st.removed / st.total) * 100) : 0
+              return (
+                <div className="mt-sil-pop" onMouseDown={(e) => e.stopPropagation()}>
+                  <header>
+                    <b>Cortar silêncios</b>
+                    <button className="icon-btn" title="Fechar" onClick={() => setSilOpen(false)}>
+                      <X size={13} />
+                    </button>
+                  </header>
+                  <small className="muted">Vai cortar: {info.n ? info.scope : 'nada (selecione cortes com áudio ou ponha a narração na pasta Narração)'}</small>
+                  <label title="Tudo que fica abaixo desse volume conta como silêncio. Mais perto de 0 corta mais; mais negativo corta menos.">
+                    <span>
+                      Silêncio abaixo de <b>{silOpts.threshold} dB</b>
+                      {info.suggest !== null && (
+                        <button className="link-btn" title="Mede o ruído de fundo e a fala e põe o limiar entre os dois" onClick={() => setSilOpts({ threshold: info.suggest! })}>
+                          detectar ({info.suggest} dB)
+                        </button>
+                      )}
+                    </span>
+                    <input type="range" min={-70} max={-15} step={1} value={silOpts.threshold} onChange={(e) => setSilOpts({ threshold: Number(e.target.value) })} />
+                  </label>
+                  <label title="Pausas mais curtas que isso ficam (respiração entre palavras). Menor deixa o ritmo mais acelerado.">
+                    <span>
+                      Duração mínima do silêncio <b>{Math.round(silOpts.minSilence * 1000)} ms</b>
+                    </span>
+                    <input type="range" min={100} max={3000} step={50} value={silOpts.minSilence * 1000} onChange={(e) => setSilOpts({ minSilence: Number(e.target.value) / 1000 })} />
+                  </label>
+                  <label title="Quanto de respiro fica antes e depois de cada fala. Aumente se o começo ou o fim das palavras estiver sendo comido.">
+                    <span>
+                      Folga antes/depois da fala <b>{Math.round(silOpts.pad * 1000)} ms</b>
+                    </span>
+                    <input type="range" min={0} max={600} step={10} value={silOpts.pad * 1000} onChange={(e) => setSilOpts({ pad: Number(e.target.value) / 1000 })} />
+                  </label>
+                  <label title="Sons mais curtos que isso no meio do silêncio (estalo de boca, clique, batida na mesa) saem junto.">
+                    <span>
+                      Ignorar ruídos mais curtos que <b>{Math.round((silOpts.minVoice ?? 0.05) * 1000)} ms</b>
+                    </span>
+                    <input
+                      type="range"
+                      min={50}
+                      max={600}
+                      step={10}
+                      value={(silOpts.minVoice ?? 0.05) * 1000}
+                      onChange={(e) => setSilOpts({ minVoice: Number(e.target.value) / 1000 })}
+                    />
+                  </label>
+                  <div className="mt-sil-est">
+                    {busy ? (
+                      <>
+                        <Loader2 size={12} className="spin" /> {busy.label}
+                      </>
+                    ) : st.total ? (
+                      <>
+                        Com esses ajustes: <b>{st.removed.toFixed(1)} s</b> de silêncio saem ({pct}% de {fmtTc(st.total)}), ficam <b>{st.pieces}</b> trechos de fala.
+                      </>
+                    ) : (
+                      'As ondas ainda não carregaram.'
+                    )}
+                  </div>
+                  <details className="mt-sil-help">
+                    <summary>Como calibrar</summary>
+                    <ol>
+                      <li>Clique em detectar: o Typos mede o ruído de fundo e a sua voz e sugere o limiar.</li>
+                      <li>Está comendo o começo ou o fim das palavras? Deixe o limiar mais negativo ou aumente a folga.</li>
+                      <li>Ainda sobram pausas? Suba o limiar (mais perto de 0) ou diminua a duração mínima do silêncio.</li>
+                      <li>Ficou corrido demais? Aumente a duração mínima: pausas curtas de respiração ficam.</li>
+                      <li>Cortou e não gostou? Ctrl+Z desfaz, mude e corte de novo.</li>
+                    </ol>
+                  </details>
+                  <footer>
+                    <button className="btn small" onClick={() => setSilOpts(SILENCE_DEFAULT)}>
+                      Padrão
+                    </button>
+                    <span className="mt-grow" />
+                    <button
+                      className="btn small primary"
+                      disabled={!!busy || !info.n}
+                      onClick={() => {
+                        setSilOpen(false)
+                        cutSilence()
+                      }}
+                    >
+                      <AudioWaveform size={13} /> Cortar
+                    </button>
+                  </footer>
+                </div>
+              )
+            })()}
         </div>
         <span className="mt-sep" />
         <button
@@ -2110,7 +2299,7 @@ export function Montage({
           title="Deixa a narração no volume ideal: mede cada corte (LUFS) e ajusta o volume dele. Com cortes selecionados, só neles."
           onClick={() => normalize()}
         >
-          <Gauge size={13} /> Normalizar
+          <Gauge size={13} /> <span className="lbl">Normalizar</span>
         </button>
         <select className="mt-loud" value={normSpec} title="Alvo da normalização" onChange={(e) => change({ ...data, norm: e.target.value }, 'norm-target')}>
           <optgroup label="Pico (voz: −4 a −8 dB)">
@@ -2167,7 +2356,7 @@ export function Montage({
             title="Troca o texto escrito das falas pelo que foi falado na narração (improvisos entram, o que não foi dito sai). Só o texto."
             onClick={() => onSyncScript(dataRef.current)}
           >
-            <FileCheck2 size={13} /> Atualizar roteiro
+            <FileCheck2 size={13} /> <span className="lbl">Atualizar roteiro</span>
           </button>
         )}
         {onPrepareClips && (
@@ -2177,7 +2366,7 @@ export function Montage({
             title="Criar Clipes: o Claude lê a transcrição e sugere os melhores trechos pra Reels, TikTok e Shorts; cada recorte ganha a timeline dele"
             onClick={onPrepareClips}
           >
-            <Scissors size={13} /> {prepareLabel ?? 'Preparar Clipes'}
+            <Scissors size={13} /> <span className="lbl">{prepareLabel ?? 'Preparar Clipes'}</span>
           </button>
         )}
         {onQueueRender && (
@@ -2187,7 +2376,7 @@ export function Montage({
             title="Põe o vídeo desta timeline na fila do Render. Você continua editando; o render sai de lá."
             onClick={onQueueRender}
           >
-            <ListPlus size={13} /> Enviar pra fila de render
+            <ListPlus size={13} /> Fila de render
           </button>
         )}
         {toolbarExtra}

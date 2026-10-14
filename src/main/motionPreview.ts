@@ -111,7 +111,7 @@ export async function htmlToVideo(job: HtmlVideoJob) {
 
   const W = Math.max(16, Math.round(job.width / 2) * 2)
   const H = Math.max(16, Math.round(job.height / 2) * 2)
-  const zoom = job.zoom && job.zoom > 0 ? job.zoom : 1
+  let zoom = job.zoom && job.zoom > 0 ? job.zoom : 1
   // sessão própria, sem internet: a animação tem que ser autocontida (e não vaza nada)
   const ses = session.fromPartition('typos-motion-preview')
   ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|blob|about|devtools):/i.test(d.url) }))
@@ -125,6 +125,14 @@ export async function htmlToVideo(job: HtmlVideoJob) {
     webPreferences: { offscreen: true, session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, zoomFactor: zoom }
   })
   win.setContentSize(W, H)
+  // o Windows não deixa a janela passar do tamanho da tela (ex.: 1080×1920 num monitor de 1080 de altura):
+  // se encolheu, grava menor na MESMA proporção (zoom junto) e o ffmpeg amplia, em vez de esticar o quadro
+  const [cw, ch] = win.getContentSize()
+  if (cw < W - 1 || ch < H - 1) {
+    const f = Math.min(cw / W, ch / H)
+    win.setContentSize(Math.max(16, Math.floor(W * f)), Math.max(16, Math.floor(H * f)))
+    zoom *= f
+  }
   let lastImg: NativeImage | null = null
   let waiting: ((img: NativeImage) => void) | null = null
   win.webContents.on('paint', (_e, _dirty, img) => {
