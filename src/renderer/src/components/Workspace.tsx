@@ -847,9 +847,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       items: [
         { label: 'Roteiro', checked: mode === 'script', onClick: () => goMode('script') },
         { label: 'Montagem', checked: mode === 'montage', onClick: () => goMode('montage') },
+        ...(shorts ? [{ label: 'Criar Clipes (recortes curtos)', checked: mode === 'clips', onClick: () => goMode('clips') }] : []),
         { label: 'Estilo (treinar motion e formato)', checked: mode === 'style', onClick: () => goMode('style') },
         { label: 'Render (criar o vídeo com o Claude)', checked: mode === 'render', onClick: () => goMode('render') },
-        ...(shorts ? [{ label: 'Criar Clipes (recortes curtos)', checked: mode === 'clips', onClick: () => goMode('clips') }] : []),
         { sep: true },
         { label: 'Painel Inserir', checked: leftOpen, onClick: () => setLeftOpen((o) => !o) },
         { label: 'Painel lateral', checked: panelOpen, onClick: () => setPanelOpen((o) => !o) },
@@ -1188,16 +1188,16 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
               <Film size={15} />
               <span>Montagem</span>
             </button>
-            <button className={mode === 'style' ? 'on' : ''} title="Estilo: treinar o motion com o Claude e configurar o formato" onClick={() => goMode('style')}>
-              <Palette size={15} />
-              <span>Estilo</span>
-            </button>
             {shorts && (
               <button className={mode === 'clips' ? 'on' : ''} title="Criar Clipes: recortes curtos pra Reels, TikTok e Shorts" onClick={() => goMode('clips')}>
                 <Scissors size={15} />
                 <span>Clipes</span>
               </button>
             )}
+            <button className={mode === 'style' ? 'on' : ''} title="Estilo: treinar o motion com o Claude e configurar o formato" onClick={() => goMode('style')}>
+              <Palette size={15} />
+              <span>Estilo</span>
+            </button>
             <button className={mode === 'render' ? 'on' : ''} title="Render: a fila de vídeos (o principal e os clipes), prévia e export" onClick={() => goMode('render')}>
               <Clapperboard size={15} />
               <span>Render</span>
@@ -1375,7 +1375,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             usedElsewhere={() => new Set((metaRef.current.shorts?.items ?? []).flatMap((x) => pathsUsed(x.montage)))}
             otherTimelines={() => (metaRef.current.shorts?.items ?? []).map((x) => x.montage)}
             onPrepareClips={() => (shorts?.items.length ? goMode('clips') : setShortsSetup(true))}
-            prepareLabel={shorts?.items.length ? 'Abrir Criar Clipes' : 'Preparar Clipes'}
+            prepareLabel={shorts?.items.length ? 'Abrir Clipes' : 'Preparar Clipes'}
             dir={dir}
             wpm={wpm}
             onAudioSettings={() => setAudioOpen(true)}
