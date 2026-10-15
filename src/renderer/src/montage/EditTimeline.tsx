@@ -35,6 +35,8 @@ interface Props {
   recClipRef: React.RefObject<HTMLDivElement | null>
   /** botão direito num corte */
   onClipMenu: (e: React.MouseEvent, c: MontageClip) => void
+  /** duplo clique num corte (ex.: motion aprovado abre o editor do motion) */
+  onClipOpen?: (c: MontageClip) => void
   /** botão direito numa junção de dois cortes (id do corte da direita) */
   onJoinMenu: (e: React.MouseEvent, rightId: string) => void
   /** soltou um arquivo do PC: o Montage importa e põe o corte */
@@ -313,10 +315,16 @@ export function EditTimeline(p: Props) {
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
 
-  /** duplo clique na alça da curva: o fade volta a ser linear */
+  /** duplo clique na alça da curva: o fade volta a ser linear; no resto do corte, abre ele (motion aprovado) */
   const onClipDouble = (e: React.MouseEvent, c: MontageClip) => {
     const role = (e.target as HTMLElement).dataset.role
-    if (role !== 'curve-in' && role !== 'curve-out') return
+    if (role !== 'curve-in' && role !== 'curve-out') {
+      if (!role || role === 'move') {
+        e.stopPropagation()
+        p.onClipOpen?.(c)
+      }
+      return
+    }
     e.stopPropagation()
     p.change({ ...data, clips: data.clips.map((x) => (x.id === c.id ? { ...x, [role === 'curve-in' ? 'fadeInCurve' : 'fadeOutCurve']: undefined } : x)) })
   }

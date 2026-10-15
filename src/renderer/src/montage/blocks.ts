@@ -563,6 +563,40 @@ export async function memoryFromBlock(b: InstructionBlock, html: string): Promis
   return { id: uid(), at: new Date().toISOString(), source: 'bloco', title: blockLabel(b), text: what.filter(Boolean).join('\n'), html: html.slice(0, 12000) }
 }
 
+// ---------- editar um motion já aprovado (o clipe na timeline) ----------
+/**
+ * O bloco por trás de um clipe de motion aprovado, posto no tempo do clipe (o segundo 0 do HTML cai em
+ * clip.start - clip.in), e a timeline sem esse clipe (pra ele não aparecer como "vídeo de baixo" de si mesmo).
+ * Clipes aprovados antes de guardarem o bloco viram um bloco só com o HTML.
+ */
+export function blockFromClip(data: MontageData, clipId: string, format?: Format): { block: InstructionBlock; data: MontageData } | null {
+  const c = data.clips.find((x) => x.id === clipId)
+  const m = c && data.media.find((x) => x.id === c.media)
+  if (!c || !m || !(m.motionHtml || m.motionBlock?.preview)) return null
+  const start = Math.max(0, c.start - c.in)
+  const base: InstructionBlock = m.motionBlock ?? { id: 'b' + uid(), track: c.track, start, end: start + m.duration, name: m.name.replace(/\.mp4$/i, ''), text: '', attachments: [] }
+  const block: InstructionBlock = { ...base, track: c.track, start, end: start + m.duration, approved: true }
+  const prev = base.preview
+  block.preview = {
+    video: m.path,
+    html: m.motionHtml ?? prev!.html,
+    at: prev?.at ?? '',
+    provider: prev?.provider ?? '',
+    transcript: prev?.transcript ?? '',
+    key: '',
+    size: prev?.size ?? previewSize(format)
+  }
+  block.preview.key = blockKey(block)
+  return { block, data: { ...data, clips: data.clips.filter((x) => x.id !== c.id) } }
+}
+
+/** pedido de alteração de um trecho do motion (tempos do clipe); sem trecho, vale o clipe todo */
+export function rangeTweak(text: string, range: [number, number] | null) {
+  if (!range) return text
+  const f = (t: number) => t.toFixed(2).replace('.', ',')
+  return `ALTERE SÓ O TRECHO de ${f(range[0])} s a ${f(range[1])} s da animação. Fora dele, tudo fica EXATAMENTE igual, quadro a quadro (mesmos elementos, posições e tempos); dentro, a entrada e a saída do trecho emendam sem salto com o que vem antes e depois. Pedido: ${text || '(veja as imagens)'}`
+}
+
 // ---------- prévia ----------
 export interface PreviewCtx {
   block: InstructionBlock
@@ -574,7 +608,7 @@ export interface PreviewCtx {
   format?: Format
   dir: string
   /** etapa atual; `pct` é dentro da etapa e `span` o pedaço do total que ela ocupa (pra barra geral) */
-  onStage: (label: string, pct: number | null, span?: [number, number]) => void
+  onStage: (label: string, pct: number | null, span?: [number, number], frames?: number) => void
   /** Cancelar: para de esperar (o que já foi pra fila do Whisper continua e fica guardado) */
   signal?: AbortSignal
   /** pedir ajuste: parte da prévia atual em vez de criar do zero */
@@ -700,7 +734,7 @@ export async function generatePreview(c: PreviewCtx) {
   if (c.signal?.aborted) throw new Error('Cancelado.')
   c.onStage('Mixando o áudio do trecho…', null, [0.8, 0.82])
   const wav = hasAudio ? await rangeWav(c.engine, c.data, c.dur, b.start, b.end).catch(() => undefined) : undefined
-  c.onStage('Gravando a prévia (12 fps)…', 0, [0.82, 1])
+  c.onStage('Gravando a prévia (12 fps)…', 0, [0.82, 1], Math.max(1, Math.round(blockDur(b) * PREVIEW_FPS)))
   const v = await api.motionPreview({
     dir: c.dir,
     block: b.id,
@@ -764,7 +798,7 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
   }
   c.onStage('Mixando o áudio do trecho…', null, [0.12, 0.15])
   const wav = hasAudio ? await rangeWav(c.engine, c.data, c.dur, b.start, b.end).catch(() => undefined) : undefined
-  c.onStage(`Gravando o clipe em ${size.w}×${size.h}…`, 0, [0.15, 1])
+  c.onStage(`Gravando o clipe em ${size.w}×${size.h}…`, 0, [0.15, 1], Math.max(1, Math.round(blockDur(b) * CLIP_FPS)))
   const v = await api.motionPreview({
     dir: c.dir,
     block: b.id,

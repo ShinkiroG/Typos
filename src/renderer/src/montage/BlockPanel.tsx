@@ -17,6 +17,8 @@ export interface BlockBusy {
   span?: [number, number]
   /** quando começou (pra mostrar o tempo) */
   t0?: number
+  /** quadros da gravação em andamento (pra mostrar quantos faltam) */
+  frames?: number
 }
 
 /** quanto do trabalho todo já foi (0–1); sem etapa conhecida, o da etapa */
@@ -45,6 +47,11 @@ export function BusyBar({ busy, onCancel, big }: { busy: BlockBusy; onCancel: ()
           {Math.round(all * 100)}%{busy.t0 ? ` · ${fmtElapsed(Date.now() - busy.t0)}` : ''}
         </span>
       </div>
+      {!!busy.frames && busy.pct !== null && busy.label.startsWith('Gravando') && (
+        <small className="blk-busy-frames">
+          quadro {Math.min(busy.frames, Math.round(busy.pct * busy.frames))} de {busy.frames} · faltam {Math.max(0, busy.frames - Math.round(busy.pct * busy.frames))}
+        </small>
+      )}
       <div className={'mt-bar blk-busy-bar' + (busy.span || busy.pct !== null ? '' : ' indet')}>
         <i style={{ width: `${Math.round(all * 1000) / 10}%` }} />
       </div>
@@ -206,7 +213,21 @@ export function BlockForm({ b, data, dir, patch, big }: FormProps & { big?: bool
 export type AdjustFn = (t: { text: string; files: Attachment[] }) => void
 
 /** pedir ajustes na prévia atual: o histórico do que já foi pedido + campo de texto com anexos */
-function AdjustBox({ b, dir, busy, onAdjust, onClose }: { b: InstructionBlock; dir: string; busy: boolean; onAdjust: AdjustFn; onClose: () => void }) {
+export function AdjustBox({
+  b,
+  dir,
+  busy,
+  onAdjust,
+  onClose,
+  title = 'Pedir ajustes nesta prévia'
+}: {
+  b: InstructionBlock
+  dir: string
+  busy: boolean
+  onAdjust: AdjustFn
+  onClose?: () => void
+  title?: string
+}) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<Attachment[]>([])
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -231,11 +252,13 @@ function AdjustBox({ b, dir, busy, onAdjust, onClose }: { b: InstructionBlock; d
       }}
     >
       <div className="blk-adjust-head">
-        <MessageSquare size={12} /> Pedir ajustes nesta prévia
+        <MessageSquare size={12} /> {title}
         <span className="st-grow" />
-        <button className="icon-btn" title="Fechar" onClick={onClose}>
-          <X size={12} />
-        </button>
+        {onClose && (
+          <button className="icon-btn" title="Fechar" onClick={onClose}>
+            <X size={12} />
+          </button>
+        )}
       </div>
       {!!b.tweaks?.length && (
         <ol className="blk-adjust-log" title="O que já foi pedido nesta prévia (some quando você refaz a prévia do zero)">

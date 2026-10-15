@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { snapMove } from '../montage/snap'
-import { blockKey, neighborOf, newBlock, slimHtml } from '../montage/blocks'
+import { blockFromClip, blockKey, neighborOf, newBlock, rangeTweak, slimHtml } from '../montage/blocks'
 import type { MontageData } from '../lib'
 
 // ímã de teste: gruda em 10 e 20 se estiver a menos de 0,2 s
@@ -75,5 +75,20 @@ describe('HTML do vizinho no prompt', () => {
     const out = slimHtml(`<img src="${big}"><p>oi</p>`)
     expect(out).toBe('<img src="data:…"><p>oi</p>')
     expect(slimHtml('x'.repeat(20000)).length).toBeLessThan(12100)
+  })
+})
+
+describe('editar motion aprovado', () => {
+  it('o bloco do clipe fica no tempo do clipe e a timeline perde o próprio clipe', () => {
+    const d = montage()
+    const r = blockFromClip(d, 'c2')!
+    expect(r.block).toMatchObject({ start: 20, end: 25, track: 'V1', approved: true })
+    expect(r.block.preview).toMatchObject({ video: '/x/motion.mp4', html: '/x/m.html' })
+    expect(r.data.clips.map((c) => c.id)).toEqual(['c1'])
+    expect(blockFromClip(d, 'c1')).toBeNull()
+  })
+  it('pedido do trecho leva os tempos; sem trecho, só o texto', () => {
+    expect(rangeTweak('troca a cor', [1, 2.5])).toContain('de 1,00 s a 2,50 s')
+    expect(rangeTweak('troca a cor', null)).toBe('troca a cor')
   })
 })
