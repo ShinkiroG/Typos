@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { Paperclip, Sparkles, Film, Ear, Loader2, ArrowLeftToLine, ArrowRightToLine } from 'lucide-react'
+import { Paperclip, Sparkles, Film, Ear, Loader2, ArrowLeftToLine, ArrowRightToLine, X } from 'lucide-react'
 import type { BlockHeard } from './AudioRead'
 import { formatTime, uid, type InstructionBlock, type MontageData } from '../lib'
 import { BLOCK_MIN, blockDur, blockLabel, previewStale } from './blocks'
@@ -27,6 +27,9 @@ export function BlockLayer(p: {
   trackAt: (clientY: number) => { id: string; kind: 'video' | 'audio' } | null
   /** gerando prévia agora */
   busy: string | null
+  /** quanto já foi (0–1) */
+  busyPct?: number | null
+  onCancel?: () => void
   /** o som do bloco já foi lido (Whisper)? */
   heard?: (b: InstructionBlock) => BlockHeard
 }) {
@@ -152,6 +155,26 @@ export function BlockLayer(p: {
                 </span>
               )}
             </span>
+            {p.busy === b.id && (
+              <>
+                <div className="mt-iblock-prog">
+                  <i style={{ width: `${Math.round((p.busyPct ?? 0) * 100)}%` }} />
+                </div>
+                {p.onCancel && (
+                  <button
+                    className="mt-iblock-cancel"
+                    title="Cancelar a prévia"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      p.onCancel!()
+                    }}
+                  >
+                    {Math.round((p.busyPct ?? 0) * 100)}% <X size={9} />
+                  </button>
+                )}
+              </>
+            )}
             <div className="mt-iblock-trim l" data-role="l" />
             <div className="mt-iblock-trim r" data-role="r" />
           </div>

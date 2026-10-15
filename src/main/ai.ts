@@ -34,11 +34,19 @@ const DEFAULT_MODELS = {
 }
 
 // ---------- Claude Code: achar o executável ----------
-function run(file: string, args: string[], opts: { cwd?: string; input?: string; timeoutMs?: number } = {}) {
+function run(file: string, args: string[], opts: { cwd?: string; input?: string; timeoutMs?: number; signal?: AbortSignal } = {}) {
   return new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
     const p = spawn(file, args, { cwd: opts.cwd, windowsHide: true, env: process.env })
     let out = ''
     let err = ''
+    opts.signal?.addEventListener(
+      'abort',
+      () => {
+        p.kill()
+        err += '\n(cancelado)'
+      },
+      { once: true }
+    )
     const timer = setTimeout(() => {
       p.kill()
       err += '\n(tempo esgotado)'
@@ -288,11 +296,16 @@ export interface MotionTrainJob {
   prompt: string
   /** imagens de referência (prints e quadros dos vídeos), caminhos absolutos */
   images: string[]
+  /** quem pediu (ex.: o id do bloco): é o que o Cancelar para */
+  id?: string
 }
+
+/** pedidos de motion em andamento (o Cancelar da prévia corta o do bloco) */
+const motionRunning = new Map<string, AbortController>()
 
 const mimeOf = (p: string) => (/\.png$/i.test(p) ? 'image/png' : /\.webp$/i.test(p) ? 'image/webp' : /\.gif$/i.test(p) ? 'image/gif' : 'image/jpeg')
 
-async function motionClaudeCode(s: AiSettings, job: MotionTrainJob) {
+async function motionClaudeCode(s: AiSettings, job: MotionTrainJob, signal?: AbortSignal) {
   const cc = await findClaudeCode(s)
   if (!cc) throw new Error('Claude Code não encontrado neste PC. Instale e faça login (Configurações → IA).')
   // as imagens vão pra uma pasta de trabalho; o Claude Code lê cada uma (ele enxerga imagem)
@@ -307,7 +320,7 @@ async function motionClaudeCode(s: AiSettings, job: MotionTrainJob) {
   const prompt = `${job.prompt}\n\nAs imagens de referência estão nesta pasta: ${names.join(', ')}. Abra e olhe TODAS antes de responder.`
   try {
     // 30 min: com emenda (HTML do vizinho + quadros) o Claude Code passava dos 15 e era cortado
-    const r = await run(cc.path, ['-p', '--output-format', 'json', '--allowedTools', 'Read,WebSearch,WebFetch'], { cwd: work, input: prompt, timeoutMs: 30 * 60000 })
+    const r = await run(cc.path, ['-p', '--output-format', 'json', '--allowedTools', 'Read,WebSearch,WebFetch'], { cwd: work, input: prompt, timeoutMs: 30 * 60000, signal })
     let parsed: any = null
     try {
       parsed = JSON.parse(r.out)
@@ -315,6 +328,7 @@ async function motionClaudeCode(s: AiSettings, job: MotionTrainJob) {
       /* erro abaixo */
     }
     if (parsed && !parsed.is_error && typeof parsed.result === 'string') return parsed.result.trim()
+    if (signal?.aborted) throw new Error('Cancelado.')
     if (r.err.includes('(tempo esgotado)')) throw new Error('Claude Code: tempo esgotado (30 min sem resposta). Tente de novo; se repetir, encurte o bloco ou as instruções.')
     const why = (parsed?.result || r.err || r.out || '').toString().trim()
     throw new Error(`Claude Code: ${why.slice(0, 300) || 'falhou sem mensagem'}`)
@@ -323,7 +337,7 @@ async function motionClaudeCode(s: AiSettings, job: MotionTrainJob) {
   }
 }
 
-async function motionAnthropic(s: AiSettings, job: MotionTrainJob) {
+async function motionAnthropic(s: AiSettings, job: MotionTrainJob, signal?: AbortSignal) {
   if (!s.anthropicKey) throw new Error('Coloque a chave da API da Anthropic em Configurações → IA.')
   const client = new Anthropic({ apiKey: s.anthropicKey })
   const imgs = await Promise.all(
@@ -344,7 +358,7 @@ async function motionAnthropic(s: AiSettings, job: MotionTrainJob) {
         fallbacks: 'default',
         messages: [{ role: 'user', content: [...imgs, { type: 'text', text: job.prompt }] }]
       },
-      { timeout: 30 * 60000 }
+      { timeout: 30 * 60000, signal }
     )
     .finalMessage()
   chargeAnthropic(res.model, res.usage)
@@ -369,16 +383,30 @@ async function motionOpenAI(s: AiSettings, job: MotionTrainJob) {
 
 export function initMotionAi() {
   ipcMain.handle('ai:motionTrain', async (_e, job: MotionTrainJob) => {
+    const ac = new AbortController()
+    const key = job.id ?? randomUUID()
+    motionRunning.get(key)?.abort()
+    motionRunning.set(key, ac)
     try {
       const provider = await routeFor('text')
       const s = (await loadSettings()).ai ?? {}
-      const text = await metered(provider, undefined, () =>
-        provider === 'claude-code' ? motionClaudeCode(s, job) : provider === 'anthropic' ? motionAnthropic(s, job) : motionOpenAI(s, job)
-      )
+      const stopped = new Promise<never>((_, rej) => ac.signal.addEventListener('abort', () => rej(new Error('Cancelado.')), { once: true }))
+      const text = await Promise.race([
+        metered(provider, undefined, () =>
+          provider === 'claude-code' ? motionClaudeCode(s, job, ac.signal) : provider === 'anthropic' ? motionAnthropic(s, job, ac.signal) : motionOpenAI(s, job)
+        ),
+        stopped
+      ])
       return { text, provider }
     } catch (e: any) {
-      return { error: String(e?.message ?? e) }
+      return { error: ac.signal.aborted ? 'Cancelado.' : String(e?.message ?? e) }
+    } finally {
+      if (motionRunning.get(key) === ac) motionRunning.delete(key)
     }
+  })
+  /** Cancelar: para o pedido de motion desse id (sem id, todos) */
+  ipcMain.handle('ai:motionCancel', (_e, id?: string) => {
+    for (const [k, ac] of motionRunning) if (!id || k === id) ac.abort()
   })
 }
 

@@ -288,8 +288,10 @@ const api = {
   },
   findSfxLibraries: (): Promise<{ libs: { path: string; name: string; program: string; why: string; files: number }[]; hints: number } | { error: string }> =>
     ipcRenderer.invoke('ai:findSfx'),
-  motionTrain: (job: { prompt: string; images: string[] }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
+  motionTrain: (job: { prompt: string; images: string[]; id?: string }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
     ipcRenderer.invoke('ai:motionTrain', job),
+  /** para o pedido de motion desse id (o bloco) */
+  motionTrainCancel: (id?: string) => ipcRenderer.invoke('ai:motionCancel', id),
 
   /** o main pede pra salvar antes de fechar/atualizar */
   onFlush: (cb: () => Promise<void>) => {

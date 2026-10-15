@@ -54,7 +54,7 @@ import { YoutubeDownload } from '../components/YoutubeDownload'
 import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H, findGap, mediaLen, splitClip, trackHeight, type GapSel, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
 import { blockDur, blockLabel, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale } from './blocks'
-import { BlockInspector, BlockWindow, type BlockBusy } from './BlockPanel'
+import { BlockInspector, BlockWindow, busyOverall, type BlockBusy } from './BlockPanel'
 import { AudioReadButton, BlockHeardRow, useBlockHeard } from './AudioRead'
 import { jobPct, recheckRead, runningLabel, watchJobs } from './transcripts'
 import { describeChange } from './history'
@@ -1071,11 +1071,13 @@ export function Montage({
     if (active) api.onMotionPreviewProgress((p) => setBlockBusy((b) => (b && b.id === p.block ? { ...b, label: p.stage === 'vídeo' ? 'Montando o vídeo…' : b.label, pct: p.pct } : b)))
   }, [active])
   const blockHeard = useBlockHeard(data, lang)
-  /** Cancelar da prévia: para de esperar o Whisper (a leitura continua na fila) e para a gravação */
+  /** Cancelar da prévia: para de esperar o Whisper (a leitura continua na fila), corta o pedido ao Claude e para a gravação */
   const blockAbort = useRef<AbortController | null>(null)
   const cancelBlock = () => {
     blockAbort.current?.abort()
+    if (blockBusy) api.motionTrainCancel(blockBusy.id)
     api.motionPreviewCancel()
+    setBlockBusy((b) => (b ? { ...b, label: 'Cancelando…', pct: null } : b))
   }
   /** janela do bloco aberta agora (a prévia continua com ela fechada; aí avisa quando fica pronta) */
   const blockOpenRef = useRef(blockOpen)
@@ -1091,7 +1093,8 @@ export function Montage({
     const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
     if (!b || blockBusy) return
     const tweaks = tweak ? [...(b.tweaks ?? []), { id: uid(), at: new Date().toISOString(), ...tweak }] : undefined
-    setBlockBusy({ id, label: 'Preparando…', pct: null })
+    const t0 = Date.now()
+    setBlockBusy({ id, label: 'Preparando…', pct: null, t0 })
     const ac = new AbortController()
     blockAbort.current = ac
     try {
@@ -1104,7 +1107,7 @@ export function Montage({
         lang,
         format: blockFormat,
         dir,
-        onStage: (label, pct) => setBlockBusy({ id, label, pct }),
+        onStage: (label, pct, span) => setBlockBusy((cur) => (cur?.label === 'Cancelando…' ? cur : { id, label, pct, span, t0 })),
         signal: ac.signal,
         adjust: tweaks ? { tweaks } : undefined
       })
@@ -1127,9 +1130,10 @@ export function Montage({
     const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
     if (!b?.preview || blockBusy) return
     if (previewStale(b) && !confirm('O bloco mudou depois desta prévia. Importar a prévia assim mesmo, com o tempo atual do bloco?')) return
-    setBlockBusy({ id, label: 'Preparando o clipe…', pct: null })
+    const t0 = Date.now()
+    setBlockBusy({ id, label: 'Preparando o clipe…', pct: null, t0 })
     try {
-      const video = await generateClip({ block: b, data: dataRef.current, engine, dur, format: blockFormat, dir, onStage: (label, pct) => setBlockBusy({ id, label, pct }) })
+      const video = await generateClip({ block: b, data: dataRef.current, engine, dur, format: blockFormat, dir, onStage: (label, pct, span) => setBlockBusy({ id, label, pct, span, t0 }) })
       const info = await api.probeMedia(video)
       if ('error' in info) throw new Error(info.error)
       const d = dataRef.current
@@ -2657,6 +2661,8 @@ export function Montage({
           onBlockOpen={setBlockOpen}
           onBlockMenu={(e, id) => setBlockMenu({ x: e.clientX, y: e.clientY, id })}
           blockBusy={blockBusy?.id ?? null}
+          blockPct={blockBusy ? busyOverall(blockBusy) : null}
+          onBlockCancel={cancelBlock}
           blockHeard={blockHeard}
           gap={gap}
           onGap={setGap}
