@@ -48,6 +48,76 @@ export function followOutput(ctx: AudioContext) {
   return () => window.removeEventListener('typos:audio-prefs', on)
 }
 
+/** a promessa resolve dentro do prazo? (false se rejeitar ou demorar) */
+const within = (p: Promise<unknown>, ms: number) =>
+  Promise.race([p.then(() => true, () => false), new Promise<boolean>((r) => setTimeout(() => r(false), ms))])
+
+/** o relógio do contexto está andando? (só anda se a saída de som estiver viva) */
+export async function ticking(ctx: BaseAudioContext & { resume(): Promise<void> }, ms = 500) {
+  if (ctx.state === 'closed') return false
+  if (ctx.state !== 'running' && !(await within(ctx.resume(), 1500))) return false
+  const t0 = ctx.currentTime
+  const end = performance.now() + ms
+  while (performance.now() < end) {
+    await new Promise((r) => setTimeout(r, 8))
+    if (ctx.currentTime > t0) return true
+  }
+  return false
+}
+
+/**
+ * AudioContext de tocar que se refaz quando a saída de som morre. Depois de horas aberto ou de uma
+ * tarefa longa (o monitor dorme e leva junto o som do HDMI, o fone desconecta, o Windows troca ou
+ * suspende o dispositivo), o Chromium deixa o contexto "running" com o relógio parado, ou o resume()
+ * nunca volta: o play não tocava nem andava. Antes de tocar, `ready()` confere se o relógio anda e,
+ * se não, fecha e abre outro (os AudioBuffers já decodificados servem no contexto novo).
+ */
+export class LiveAudio {
+  private ctx: AudioContext | null = null
+  private unfollow: (() => void) | null = null
+  private failed = false
+
+  /** `setup` monta o que fica pendurado no contexto (ex.: o limitador) a cada contexto novo */
+  constructor(private setup?: (ctx: AudioContext) => void) {}
+
+  /** o contexto atual, sem criar */
+  get current() {
+    return this.ctx
+  }
+
+  get() {
+    if (!this.ctx) {
+      const ctx = new AudioContext()
+      this.ctx = ctx
+      this.failed = false
+      // o Chromium avisa quando o dispositivo de saída falha
+      ctx.addEventListener('error', () => {
+        if (this.ctx === ctx) this.failed = true
+      })
+      this.unfollow = followOutput(ctx)
+      this.setup?.(ctx)
+    }
+    return this.ctx
+  }
+
+  /** contexto pronto pra tocar: tenta o atual e, se a saída morreu, um novo */
+  async ready() {
+    const cur = this.get()
+    if (!this.failed && (await ticking(cur))) return cur
+    if (this.ctx === cur) this.close()
+    const ctx = this.get()
+    await ticking(ctx)
+    return ctx
+  }
+
+  close() {
+    this.unfollow?.()
+    this.unfollow = null
+    this.ctx?.close().catch(() => null)
+    this.ctx = null
+  }
+}
+
 export async function listDevices() {
   // os nomes só aparecem depois que o app tem acesso ao microfone uma vez
   try {

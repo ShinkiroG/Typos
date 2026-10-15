@@ -1,4 +1,4 @@
-import { followOutput } from '../audio'
+import { LiveAudio } from '../audio'
 import { absPath, clipEnd, envelopeAt, fileUrl, type Clip } from '../lib'
 
 /** Picos por segundo usados pra desenhar a forma de onda. */
@@ -14,21 +14,15 @@ interface Loaded {
  * então o playhead fica sincronizado mesmo sem nenhuma música (só texto).
  */
 export class AudioEngine {
-  private ctx: AudioContext | null = null
+  private audio = new LiveAudio()
   private cache = new Map<string, Promise<Loaded>>()
   private ready = new Map<string, Loaded>()
   private nodes: { src: AudioBufferSourceNode; gain: GainNode }[] = []
   private startedAt = 0
   private startPos = 0
+  /** play esperando a saída de som ficar pronta (pause/seek no meio cancelam) */
+  private pending: object | null = null
   playing = false
-
-  private context() {
-    if (!this.ctx) {
-      this.ctx = new AudioContext()
-      followOutput(this.ctx)
-    }
-    return this.ctx
-  }
 
   get(path: string) {
     return this.ready.get(path)
@@ -41,7 +35,7 @@ export class AudioEngine {
         const abs = /^[a-zA-Z]:[\/]/.test(c.path) ? c.path : absPath({ id: '', name: '', path: c.path })
         const res = await fetch(fileUrl(abs))
         if (!res.ok) throw new Error(`Não achei o áudio ${c.path}`)
-        const buffer = await this.context().decodeAudioData(await res.arrayBuffer())
+        const buffer = await this.audio.get().decodeAudioData(await res.arrayBuffer())
         const loaded = { buffer, peaks: computePeaks(buffer) }
         this.ready.set(c.path, loaded)
         return loaded
@@ -53,11 +47,13 @@ export class AudioEngine {
   }
 
   position() {
-    return this.playing && this.ctx ? this.startPos + (this.ctx.currentTime - this.startedAt) : this.startPos
+    const ctx = this.audio.current
+    return this.playing && ctx ? this.startPos + (ctx.currentTime - this.startedAt) : this.startPos
   }
 
   seek(t: number, clips: Clip[]) {
-    const wasPlaying = this.playing
+    const wasPlaying = this.playing || !!this.pending
+    this.pending = null
     this.stopNodes()
     this.playing = false
     this.startPos = Math.max(0, t)
@@ -70,10 +66,14 @@ export class AudioEngine {
   }
 
   async play(clips: Clip[]) {
-    const ctx = this.context()
-    if (ctx.state === 'suspended') await ctx.resume()
     if (this.playing) this.startPos = this.position()
     this.stopNodes()
+    this.playing = false
+    const me = {}
+    this.pending = me
+    const ctx = await this.audio.ready()
+    if (this.pending !== me) return
+    this.pending = null
     const from = this.startPos
     const now = ctx.currentTime + 0.03
     this.startedAt = now
@@ -104,6 +104,7 @@ export class AudioEngine {
   }
 
   pause() {
+    this.pending = null
     this.startPos = this.position()
     this.stopNodes()
     this.playing = false
@@ -123,9 +124,10 @@ export class AudioEngine {
   }
 
   dispose() {
+    this.pending = null
     this.stopNodes()
     this.playing = false
-    this.ctx?.close()
+    this.audio.close()
   }
 }
 

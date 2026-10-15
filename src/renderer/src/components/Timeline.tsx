@@ -375,7 +375,7 @@ export function Timeline({
     } else {
       await Promise.all(playRef.current.filter((c) => c.path).map((c) => engine.load(c).catch(() => null)))
       await engine.play(playRef.current)
-      setPlaying(true)
+      setPlaying(engine.playing)
     }
   }, [engine])
 
