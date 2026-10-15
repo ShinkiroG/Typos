@@ -574,7 +574,9 @@ export function blockFromClip(data: MontageData, clipId: string, format?: Format
   const m = c && data.media.find((x) => x.id === c.media)
   if (!c || !m || !(m.motionHtml || m.motionBlock?.preview)) return null
   const start = Math.max(0, c.start - c.in)
-  const base: InstructionBlock = m.motionBlock ?? { id: 'b' + uid(), track: c.track, start, end: start + m.duration, name: m.name.replace(/\.mp4$/i, ''), text: '', attachments: [] }
+  // clipe antigo: o id do bloco é o nome da pasta da prévia (previas/<bloco>/clipe-….mp4), onde estão os anexos copiados
+  const folder = m.path.match(/[\\/]previas[\\/]([^\\/]+)[\\/][^\\/]+$/)?.[1]
+  const base: InstructionBlock = m.motionBlock ?? { id: folder ?? 'b' + uid(), track: c.track, start, end: start + m.duration, name: m.name.replace(/\.mp4$/i, ''), text: '', attachments: [] }
   const block: InstructionBlock = { ...base, track: c.track, start, end: start + m.duration, approved: true }
   const prev = base.preview
   block.preview = {

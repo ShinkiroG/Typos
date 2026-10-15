@@ -1125,8 +1125,19 @@ export function Montage({
   }
   // ---------- editor do motion aprovado (duplo clique no clipe) ----------
   const [motionEdit, setMotionEdit] = useState<{ clipId: string; block: InstructionBlock; pending: boolean } | null>(null)
-  const openMotionEdit = (c: MontageClip) => {
-    const r = blockFromClip(dataRef.current, c.id, blockFormat)
+  const openMotionEdit = async (c: MontageClip) => {
+    let d = dataRef.current
+    const m = d.media.find((x) => x.id === c.media)
+    if (!m || m.kind !== 'video') return
+    // motion aprovado antes de o Typos guardar o HTML no clipe: procura na pasta da prévia dele e guarda
+    if (!m.motionHtml && !m.motionBlock && /[\\/]previas[\\/][^\\/]+[\\/][^\\/]+\.mp4$/i.test(m.path)) {
+      const html = await api.motionFindHtml(m.path)
+      if (!html) return alert('Não achei a animação (o HTML) deste motion na pasta da prévia dele, então não dá pra editar. Refaça o bloco pra editar.')
+      d = dataRef.current
+      d = { ...d, media: d.media.map((x) => (x.id === m.id ? { ...x, motionHtml: html } : x)) }
+      change(d)
+    }
+    const r = blockFromClip(d, c.id, blockFormat)
     if (r) setMotionEdit({ clipId: c.id, block: r.block, pending: false })
   }
   /** pede a alteração (do trecho marcado ou do clipe todo): sai uma prévia nova, o clipe ainda não muda */

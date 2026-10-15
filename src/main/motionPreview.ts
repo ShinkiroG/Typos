@@ -1,5 +1,5 @@
 import { BrowserWindow, ipcMain, session, type NativeImage, type WebContents } from 'electron'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { promises as fs, existsSync } from 'fs'
 import { createHash } from 'crypto'
 import { findFfmpeg, run } from './media'
@@ -343,7 +343,27 @@ export async function underVideo(job: UnderJob) {
   return video
 }
 
+/**
+ * O HTML que gerou um clipe de motion (clipes aprovados antes de o Typos guardar isso): o motion-*.html
+ * mais novo da mesma pasta da prévia que já existia quando o clipe foi gravado.
+ */
+export async function findMotionHtml(video: string): Promise<string | null> {
+  const dir = dirname(video)
+  const st = await fs.stat(video).catch(() => null)
+  const names = await fs.readdir(dir).catch(() => [] as string[])
+  let best: { path: string; t: number } | null = null
+  for (const n of names) {
+    if (!/^motion-.*\.html$/i.test(n)) continue
+    const p = join(dir, n)
+    const t = (await fs.stat(p).catch(() => null))?.mtimeMs ?? 0
+    if (st && t > st.mtimeMs + 1000) continue
+    if (!best || t > best.t) best = { path: p, t }
+  }
+  return best?.path ?? null
+}
+
 export function initMotionPreview() {
+  ipcMain.handle('motion:findHtml', (_e, video: string) => findMotionHtml(video).catch(() => null))
   ipcMain.handle('motion:underVideo', async (_e, job: UnderJob) => {
     try {
       return { video: await underVideo(job) }

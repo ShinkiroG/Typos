@@ -92,3 +92,11 @@ describe('editar motion aprovado', () => {
     expect(rangeTweak('troca a cor', null)).toBe('troca a cor')
   })
 })
+
+describe('motion aprovado antes de guardar o bloco', () => {
+  it('usa a pasta da prévia como id do bloco (os anexos copiados estão lá)', () => {
+    const d = montage()
+    d.media[1] = { ...d.media[1], path: 'C:\\proj\\previas\\bk123\\clipe-2026.mp4' }
+    expect(blockFromClip(d, 'c2')!.block.id).toBe('bk123')
+  })
+})
