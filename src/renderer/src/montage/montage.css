@@ -1117,6 +1117,45 @@
 .blk-sync small {
   margin-left: auto;
 }
+.blk-chain {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.blk-chain-title {
+  font-size: 11px;
+  color: var(--muted);
+}
+.blk-chain-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.blk-chain-opt.on {
+  border-color: color-mix(in srgb, #f472b6 70%, transparent);
+  background: color-mix(in srgb, #f472b6 10%, transparent);
+}
+.blk-chain-opt input {
+  margin: 1px 0 0;
+}
+.blk-chain-opt svg {
+  flex: none;
+  margin-top: 2px;
+}
+.blk-chain-opt span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.blk-chain-opt small {
+  color: var(--muted);
+  font-size: 10.5px;
+}
 .blk-label textarea {
   resize: vertical;
   background: var(--bg);

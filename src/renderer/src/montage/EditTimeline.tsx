@@ -3,6 +3,7 @@ import { Volume2, VolumeX, Plus } from 'lucide-react'
 import { clipDur, clipEndT, formatTime, uid, type MontageClip, type MontageData, type MontageMarker, type MontageMedia, type MontageTrack } from '../lib'
 import { PEAKS_PER_SEC, butted, fadeInGain, fadeOutGain, xfadeHalf, type MontageEngine } from './engine'
 import { BlockLayer } from './BlockLayer'
+import { snapMove } from './snap'
 import type { BlockHeard } from './AudioRead'
 import type { InstructionBlock } from '../lib'
 
@@ -247,7 +248,8 @@ export function EditTimeline(p: Props) {
   }
 
   /**
-   * ímã (só com Shift segurado): começo/fim de cortes, blocos e letterings, playhead e zero.
+   * ímã (cortes e letterings: só com Shift segurado; blocos: sempre, Alt solta): começo/fim de cortes,
+   * blocos e letterings, playhead e zero.
    * Mostra a linha do encaixe enquanto está grudado.
    */
   const snapLineRef = useRef<HTMLDivElement>(null)
@@ -348,12 +350,9 @@ export function EditTimeline(p: Props) {
     let clips = d.orig.clips
     if (d.kind === 'move') {
       // o clipe pego decide o ímã (pela borda mais perto)
-      let ns = o.start + dt
-      const s1 = snap(ns, d.ids, sh)
-      const s2 = snap(ns + clipDur(o), d.ids, sh) - clipDur(o)
-      const first = Math.abs(s1 - ns) <= Math.abs(s2 - ns)
-      if (first ? off(s1, ns) : off(s2, ns)) hit = first ? s1 : s2 + clipDur(o)
-      ns = first ? s1 : s2
+      const sm = snapMove((t) => snap(t, d.ids, sh), o.start + dt, clipDur(o))
+      hit = sm.hit
+      const ns = sm.start
       const shift = Math.max(-Math.min(...d.ids.map((id) => d.orig.clips.find((c) => c.id === id)!.start)), ns - o.start)
       const tr = d.ids.length === 1 ? trackAt(e.clientY) : null
       const okTrack = tr && tr.kind === d.orig.tracks.find((t) => t.id === o.track)?.kind ? tr.id : null
@@ -583,11 +582,9 @@ export function EditTimeline(p: Props) {
                           nd = Math.max(0.5, en - mk.t)
                         }
                       } else {
-                        const a = snap(nt, [mk.id], sh)
-                        const z = snap(nt + mk.dur, [mk.id], sh) - mk.dur
-                        const first = Math.abs(a - nt) <= Math.abs(z - nt)
-                        if (first ? off(a, nt) : off(z, nt)) hit = first ? a : z + mk.dur
-                        nt = Math.max(0, first ? a : z)
+                        const sm = snapMove((t) => snap(t, [mk.id], sh), nt, mk.dur)
+                        hit = sm.hit
+                        nt = Math.max(0, sm.start)
                       }
                       showSnap(hit)
                       const markers = (orig.markers ?? []).map((x) => (x.id !== mk.id ? x : resize ? { ...x, dur: nd } : { ...x, t: nt }))

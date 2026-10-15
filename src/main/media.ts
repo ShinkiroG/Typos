@@ -326,7 +326,7 @@ export async function framesForFocus(
 }
 
 /** um quadro em cada tempo pedido (s do arquivo), em cache: o que está embaixo de um bloco de instrução */
-export async function framesAt(path: string, times: number[], outRoot: string): Promise<(string | null)[]> {
+export async function framesAt(path: string, times: number[], outRoot: string, width = 480): Promise<(string | null)[]> {
   const ff = await findFfmpeg()
   if (!ff) return times.map(() => null)
   const st = await fs.stat(path).catch(() => null)
@@ -335,8 +335,11 @@ export async function framesAt(path: string, times: number[], outRoot: string): 
   await fs.mkdir(dir, { recursive: true })
   const out: (string | null)[] = []
   for (const t of times) {
-    const f = join(dir, `t${Math.max(0, t).toFixed(2)}.jpg`)
-    if (!existsSync(f)) await run(ff.ffmpeg, ['-hide_banner', '-y', '-ss', Math.max(0, t).toFixed(2), '-i', path, '-frames:v', '1', '-vf', 'scale=480:-2', '-q:v', '5', f], { timeoutMs: 60000 })
+    const f = join(dir, `t${Math.max(0, t).toFixed(2)}${width === 480 ? '' : '-' + width}.jpg`)
+    if (!existsSync(f))
+      await run(ff.ffmpeg, ['-hide_banner', '-y', '-ss', Math.max(0, t).toFixed(2), '-i', path, '-frames:v', '1', '-vf', `scale=${width}:-2`, '-q:v', width === 480 ? '5' : '2', f], {
+        timeoutMs: 60000
+      })
     out.push(existsSync(f) ? f : null)
   }
   return out

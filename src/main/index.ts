@@ -1092,7 +1092,9 @@ ipcMain.handle('motion:frames', (_e, path: string, w: FrameWeights | number) =>
 )
 
 /** quadros do vídeo que está embaixo de um bloco de instrução (o Claude olha pra encaixar o motion) */
-ipcMain.handle('motion:framesAt', (_e, path: string, times: number[]) => framesAt(path, times, join(mediaCacheDir(), 'under')))
+ipcMain.handle('motion:framesAt', (_e, path: string, times: number[], width?: number) =>
+  framesAt(path, times, join(mediaCacheDir(), 'under'), Math.max(16, Math.min(4096, Math.round((width ?? 480) / 2) * 2)))
+)
 
 ipcMain.handle('edit:do', (e, what: 'cut' | 'copy' | 'paste' | 'pasteAndMatchStyle') => {
   if (['cut', 'copy', 'paste', 'pasteAndMatchStyle'].includes(what)) e.sender[what]()
