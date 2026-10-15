@@ -306,7 +306,8 @@ async function motionClaudeCode(s: AiSettings, job: MotionTrainJob) {
   }
   const prompt = `${job.prompt}\n\nAs imagens de referência estão nesta pasta: ${names.join(', ')}. Abra e olhe TODAS antes de responder.`
   try {
-    const r = await run(cc.path, ['-p', '--output-format', 'json', '--allowedTools', 'Read,WebSearch,WebFetch'], { cwd: work, input: prompt, timeoutMs: 15 * 60000 })
+    // 30 min: com emenda (HTML do vizinho + quadros) o Claude Code passava dos 15 e era cortado
+    const r = await run(cc.path, ['-p', '--output-format', 'json', '--allowedTools', 'Read,WebSearch,WebFetch'], { cwd: work, input: prompt, timeoutMs: 30 * 60000 })
     let parsed: any = null
     try {
       parsed = JSON.parse(r.out)
@@ -314,6 +315,7 @@ async function motionClaudeCode(s: AiSettings, job: MotionTrainJob) {
       /* erro abaixo */
     }
     if (parsed && !parsed.is_error && typeof parsed.result === 'string') return parsed.result.trim()
+    if (r.err.includes('(tempo esgotado)')) throw new Error('Claude Code: tempo esgotado (30 min sem resposta). Tente de novo; se repetir, encurte o bloco ou as instruções.')
     const why = (parsed?.result || r.err || r.out || '').toString().trim()
     throw new Error(`Claude Code: ${why.slice(0, 300) || 'falhou sem mensagem'}`)
   } finally {
@@ -330,14 +332,21 @@ async function motionAnthropic(s: AiSettings, job: MotionTrainJob) {
       source: { type: 'base64' as const, media_type: mimeOf(p) as 'image/jpeg', data: (await fs.readFile(p)).toString('base64') }
     }))
   )
-  const res = await client.beta.messages.create({
-    model: s.anthropicModel || DEFAULT_MODELS.anthropic,
-    max_tokens: 32000,
-    output_config: { effort: 'high' },
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
-    messages: [{ role: 'user', content: [...imgs, { type: 'text', text: job.prompt }] }]
-  })
+  // em stream: um motion grande (com o HTML do bloco vizinho, imagens e 32k de saída) passa dos 10 min
+  // que a API aceita numa resposta só, e aí dava "tempo esgotado"
+  const res = await client.beta.messages
+    .stream(
+      {
+        model: s.anthropicModel || DEFAULT_MODELS.anthropic,
+        max_tokens: 32000,
+        output_config: { effort: 'high' },
+        betas: ['server-side-fallback-2026-07-01'],
+        fallbacks: 'default',
+        messages: [{ role: 'user', content: [...imgs, { type: 'text', text: job.prompt }] }]
+      },
+      { timeout: 30 * 60000 }
+    )
+    .finalMessage()
   chargeAnthropic(res.model, res.usage)
   if (res.stop_reason === 'refusal') throw new Error('O Claude recusou esse pedido.')
   return res.content

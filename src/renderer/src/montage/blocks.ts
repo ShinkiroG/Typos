@@ -323,6 +323,12 @@ export async function edgesFor(data: MontageData, b: InstructionBlock, dir: stri
 const edgeName = (e: EdgeInfo) => (e.side === 'prev' ? PREV_NAME : NEXT_NAME)
 export const edgeFiles = (edges: EdgeInfo[]) => edges.map((e) => ({ src: e.frame, name: edgeName(e) }))
 
+/** HTML do vizinho enxuto pro prompt: sem imagens/fontes embutidas (data:) e com limite de tamanho */
+export function slimHtml(html: string, max = 12000) {
+  const s = html.replace(/data:[\w/+.-]+;base64,[A-Za-z0-9+/=]{100,}/g, 'data:…').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n')
+  return s.length > max ? s.slice(0, max) + '\n<!-- … cortado -->' : s
+}
+
 /** a parte do prompt que pede a emenda sem corte (as imagens chegam a partir de `first`) */
 function continuityPrompt(edges: EdgeInfo[], first: number) {
   if (!edges.length) return []
@@ -344,7 +350,7 @@ function continuityPrompt(edges: EdgeInfo[], first: number) {
           : `  Esse trecho de depois é vídeo ou imagem. Nos últimos ~0,5 s leve a composição até <img src="${NEXT_NAME}"> cobrindo a tela inteira (object-fit: cover), exatamente como ele é (ex.: a cena vira uma moldura que cresce até a tela cheia, ou a câmera recua até ele), e segure até o fim.`
       )
     }
-    if (e.html) L.push('```html', e.html.slice(0, 20000), '```')
+    if (e.html) L.push('```html', slimHtml(e.html), '```')
   })
   L.push('- A emenda é feita DENTRO deste bloco: nada de corte, flash, fade pro preto ou tela vazia nas pontas. Use a duração toda com movimento contínuo.', '')
   return L

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { snapMove } from '../montage/snap'
-import { blockKey, neighborOf, newBlock } from '../montage/blocks'
+import { blockKey, neighborOf, newBlock, slimHtml } from '../montage/blocks'
 import type { MontageData } from '../lib'
 
 // ímã de teste: gruda em 10 e 20 se estiver a menos de 0,2 s
@@ -66,5 +66,14 @@ describe('vizinhos do bloco', () => {
     const b = newBlock('V1', 1, 3)
     expect(blockKey({ ...b, fromPrev: false, toNext: false })).toBe(blockKey(b))
     expect(blockKey({ ...b, toNext: true })).not.toBe(blockKey(b))
+  })
+})
+
+describe('HTML do vizinho no prompt', () => {
+  it('tira imagens embutidas e corta no limite', () => {
+    const big = 'data:image/png;base64,' + 'A'.repeat(50000)
+    const out = slimHtml(`<img src="${big}"><p>oi</p>`)
+    expect(out).toBe('<img src="data:…"><p>oi</p>')
+    expect(slimHtml('x'.repeat(20000)).length).toBeLessThan(12100)
   })
 })
