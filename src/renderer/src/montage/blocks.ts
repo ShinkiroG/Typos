@@ -39,7 +39,8 @@ export function newBlock(track: string, start: number, end: number): Instruction
 
 /** impressão digital: se mudar, a prévia que existe ficou velha */
 export function blockKey(b: InstructionBlock) {
-  const s = JSON.stringify([b.start.toFixed(2), b.end.toFixed(2), b.text.trim(), !!b.dynamic, b.attachments.map((a) => [a.path, a.use, a.note ?? '']), blockSync(b)])
+  const chain = b.fromPrev || b.toNext ? [[!!b.fromPrev, !!b.toNext]] : []
+  const s = JSON.stringify([b.start.toFixed(2), b.end.toFixed(2), b.text.trim(), !!b.dynamic, b.attachments.map((a) => [a.path, a.use, a.note ?? '']), blockSync(b), ...chain])
   let h = 5381
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
   return (h >>> 0).toString(36)
@@ -168,10 +169,10 @@ export const scriptFalas = (script: ScriptBlock[]) =>
     .join('\n')
 
 // ---------- o vídeo que está embaixo do bloco ----------
-/** a timeline só com as faixas de vídeo do bloco pra baixo (a primeira faixa da lista é a de cima) */
-function belowMontage(data: MontageData, b: InstructionBlock): MontageData {
+/** a timeline só com as faixas de vídeo do bloco pra baixo (a primeira faixa da lista é a de cima); `all` = todas */
+function belowMontage(data: MontageData, b: InstructionBlock, all = false): MontageData {
   const vids = data.tracks.filter((t) => t.kind === 'video')
-  const at = vids.findIndex((t) => t.id === b.track)
+  const at = all ? 0 : vids.findIndex((t) => t.id === b.track)
   const keep = new Set(vids.slice(Math.max(0, at)).map((t) => t.id))
   const tracks = data.tracks.filter((t) => t.kind === 'video' && keep.has(t.id))
   const ids = new Set(tracks.map((t) => t.id))
@@ -223,6 +224,131 @@ export async function underFor(data: MontageData, b: InstructionBlock, dir: stri
 }
 
 export const UNDER_NAME = 'embaixo.mp4'
+
+// ---------- continuidade: o que toca logo antes e logo depois do bloco ----------
+/** até quanto de vão (s) um bloco ainda conta como encostado no outro */
+export const TOUCH = 0.12
+export const PREV_NAME = 'antes.jpg'
+export const NEXT_NAME = 'depois.jpg'
+
+export type Side = 'prev' | 'next'
+export type Neighbor =
+  | { kind: 'block'; block: InstructionBlock; label: string }
+  /** o que a timeline mostra nesse instante (cortes de vídeo, inserts, motion já aprovado) */
+  | { kind: 'video'; label: string; t: number; html?: string; htmlT?: number }
+
+/**
+ * Vizinho do bloco: um bloco encostado (de preferência na mesma faixa) ou, sem bloco, o que as
+ * faixas de vídeo mostram no instante da emenda. null = não tem nada (começo ou fim do vídeo).
+ */
+export function neighborOf(data: MontageData, b: InstructionBlock, side: Side): Neighbor | null {
+  const t = side === 'prev' ? b.start : b.end
+  const touching = (data.blocks ?? []).filter((x) => x.id !== b.id && Math.abs((side === 'prev' ? x.end : x.start) - t) <= TOUCH)
+  const blk = touching.find((x) => x.track === b.track) ?? touching[0]
+  if (blk) return { kind: 'block', block: blk, label: blockLabel(blk) }
+  if (side === 'prev' && t <= 0.001) return null
+  // o instante que aparece na tela: o último quadro antes do bloco, ou o primeiro depois
+  const at = side === 'prev' ? Math.max(0, t - 1 / CLIP_FPS) : t + 0.001
+  const media = new Map(data.media.map((m) => [m.id, m]))
+  for (const tr of data.tracks.filter((x) => x.kind === 'video' && !x.muted)) {
+    const c = data.clips.find((x) => x.track === tr.id && x.start <= at && clipEndT(x) > at && media.get(x.media)?.kind !== 'audio')
+    if (!c) continue
+    const m = media.get(c.media)!
+    return { kind: 'video', label: m.name, t, html: m.motionHtml, htmlT: m.motionHtml ? Math.max(0, c.in + (t - c.start)) : undefined }
+  }
+  return null
+}
+
+export const neighborText = (n: Neighbor | null) =>
+  !n ? 'nada' : n.kind === 'block' ? `${n.label}${n.block.preview ? '' : ' (sem prévia ainda)'}` : `${n.label}${n.html ? ' (motion)' : ''}`
+
+export interface EdgeInfo {
+  side: Side
+  label: string
+  /** quadro da emenda (jpg), no tamanho pedido */
+  frame: string
+  /** HTML da animação vizinha e o instante dela que encosta neste bloco */
+  html?: string
+  htmlT?: number
+}
+
+/** quadro (e, se for motion, o HTML) do que encosta no bloco do lado pedido */
+export async function edgeFor(data: MontageData, b: InstructionBlock, side: Side, dir: string, size: { w: number; h: number }): Promise<EdgeInfo | null> {
+  const n = neighborOf(data, b, side)
+  if (!n) return null
+  const readHtml = (p?: string) =>
+    p
+      ? fetch(fileUrl(p))
+          .then((r) => (r.ok ? r.text() : ''))
+          .catch(() => '')
+      : Promise.resolve('')
+  if (n.kind === 'block') {
+    const p = n.block.preview
+    if (!p)
+      throw new Error(
+        `${n.label} ainda não tem prévia. Gere a prévia dele antes: é ${side === 'prev' ? 'do último quadro dela que este bloco continua' : 'no primeiro quadro dela que este bloco termina'}.`
+      )
+    const d = blockDur(n.block)
+    const [frame] = await api.motionFramesAt(p.video, [side === 'prev' ? Math.max(0, d - 0.1) : 0], size.w)
+    if (!frame) throw new Error(`Não deu pra tirar o quadro da prévia de ${n.label}.`)
+    const html = await readHtml(p.html)
+    return { side, label: n.label, frame, html: html || undefined, htmlT: side === 'prev' ? d : 0 }
+  }
+  // o que a timeline mostra na emenda: recorta um pedacinho (todas as faixas de vídeo) e tira o quadro
+  const from = side === 'prev' ? Math.max(0, n.t - 0.2) : n.t
+  const to = side === 'prev' ? n.t : n.t + 0.2
+  const all = belowMontage(data, b, true)
+  const plan = planRender(all, { from, to, width: 2, height: 2, fps: 30 })
+  const layers = plan.parts.flatMap((p) => p.video).filter((v) => v.t0 < to && v.t1 > from)
+  if (!layers.length) return null
+  const r = await api.motionUnderVideo({ dir, block: b.id, from, to, width: size.w, height: size.h, video: layers })
+  if ('error' in r) throw new Error(r.error)
+  const [frame] = await api.motionFramesAt(r.video, [side === 'prev' ? Math.max(0, to - from - 0.05) : 0], size.w)
+  if (!frame) throw new Error(`Não deu pra tirar o quadro ${side === 'prev' ? 'de antes' : 'de depois'} do bloco.`)
+  const html = await readHtml(n.html)
+  return { side, label: n.label, frame, html: html || undefined, htmlT: n.htmlT }
+}
+
+/** as emendas que o bloco pediu (continuar do anterior / chegar no próximo) */
+export async function edgesFor(data: MontageData, b: InstructionBlock, dir: string, size: { w: number; h: number }) {
+  const out: EdgeInfo[] = []
+  for (const side of ['prev', 'next'] as const) {
+    if (!(side === 'prev' ? b.fromPrev : b.toNext)) continue
+    const e = await edgeFor(data, b, side, dir, size)
+    if (e) out.push(e)
+  }
+  return out
+}
+
+const edgeName = (e: EdgeInfo) => (e.side === 'prev' ? PREV_NAME : NEXT_NAME)
+export const edgeFiles = (edges: EdgeInfo[]) => edges.map((e) => ({ src: e.frame, name: edgeName(e) }))
+
+/** a parte do prompt que pede a emenda sem corte (as imagens chegam a partir de `first`) */
+function continuityPrompt(edges: EdgeInfo[], first: number) {
+  if (!edges.length) return []
+  const L = ['## Continuidade (sem corte seco)']
+  edges.forEach((e, i) => {
+    const img = `a imagem ${first + i} (também está na pasta do HTML como ${edgeName(e)})`
+    if (e.side === 'prev') {
+      L.push(
+        `- COMEÇO: este bloco continua o que toca logo antes dele ("${e.label}"). O quadro 0 desta animação tem que ser IGUAL ao último quadro de antes: ${img}. Quem assiste não pode perceber emenda.`,
+        e.html
+          ? `  Esse trecho de antes é uma animação; o HTML dela está abaixo. Recrie em t = 0 o estado em que ela está em ${(e.htmlT ?? 0).toFixed(2)} s (mesmos elementos, posições, tamanhos, cores, fundo e fontes) e transforme a partir daí: os elementos de antes saem, mudam ou viram parte da cena nova, com movimento.`
+          : `  Esse trecho de antes é vídeo ou imagem. Comece mostrando <img src="${PREV_NAME}"> cobrindo a tela inteira (object-fit: cover) e saia dele com movimento (câmera entrando, zoom, o quadro encolhendo pra uma moldura, deslize, elementos novos tomando a tela).`
+      )
+    } else {
+      L.push(
+        `- FIM: este bloco desemboca no que toca logo depois dele ("${e.label}"). O último quadro desta animação tem que ser IGUAL ao primeiro quadro de depois: ${img}.`,
+        e.html
+          ? `  Esse trecho de depois é uma animação; o HTML dela está abaixo. Termine chegando exatamente ao estado em que ela está em ${(e.htmlT ?? 0).toFixed(2)} s (mesmos elementos, posições, tamanhos, cores, fundo e fontes) e segure esse quadro no fim.`
+          : `  Esse trecho de depois é vídeo ou imagem. Nos últimos ~0,5 s leve a composição até <img src="${NEXT_NAME}"> cobrindo a tela inteira (object-fit: cover), exatamente como ele é (ex.: a cena vira uma moldura que cresce até a tela cheia, ou a câmera recua até ele), e segure até o fim.`
+      )
+    }
+    if (e.html) L.push('```html', e.html.slice(0, 20000), '```')
+  })
+  L.push('- A emenda é feita DENTRO deste bloco: nada de corte, flash, fade pro preto ou tela vazia nas pontas. Use a duração toda com movimento contínuo.', '')
+  return L
+}
 
 // ---------- áudio do trecho (mixado como a Montagem toca) ----------
 export async function rangeWav(engine: MontageEngine, data: MontageData, dur: (id: string) => number, t0: number, t1: number): Promise<Uint8Array | undefined> {
@@ -330,6 +456,8 @@ export function blockPrompt(o: {
   files: { a: BlockAttachment; name: string }[]
   size: { w: number; h: number }
   under?: UnderInfo | null
+  /** emendas pedidas (continuar do anterior / chegar no próximo); as imagens vêm depois dos quadros de baixo */
+  edges?: EdgeInfo[]
   /** ajuste em cima da prévia atual: o HTML dela e os pedidos (o último é o novo) */
   adjust?: { html: string; tweaks: { text: string; names: string[] }[] }
 }) {
@@ -368,6 +496,7 @@ export function blockPrompt(o: {
       ''
     )
   }
+  L.push(...continuityPrompt(o.edges ?? [], o.files.length + (o.under?.frames.length ?? 0) + 1))
   L.push('## O que é falado neste trecho (tempos a partir do começo do bloco)')
   if (!o.hasAudio) L.push('(não há áudio neste trecho: o motion carrega o momento sozinho)')
   else if (o.heard.length) L.push(phrases(o.heard))
@@ -469,6 +598,8 @@ export async function generatePreview(c: PreviewCtx) {
   const size = previewSize(c.format)
   c.onStage('Olhando o vídeo embaixo do bloco…', null)
   const under = await underFor(c.data, b, c.dir, size, true)
+  if (b.fromPrev || b.toNext) c.onStage('Olhando o que vem antes e depois do bloco…', null)
+  const edges = await edgesFor(c.data, b, c.dir, size)
   let adjust: { html: string; tweaks: { text: string; names: string[] }[] } | undefined
   const tf = tweakFiles(c.adjust?.tweaks)
   if (c.adjust) {
@@ -490,10 +621,11 @@ export async function generatePreview(c: PreviewCtx) {
     files,
     size,
     under,
+    edges,
     adjust
   })
   c.onStage(adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', null)
-  const images = [...files.map((f) => absPath(f.a)), ...(under?.frames.map((f) => f.path) ?? []), ...tf.flat().map((f) => absPath(f.a))]
+  const images = [...files.map((f) => absPath(f.a)), ...(under?.frames.map((f) => f.path) ?? []), ...edges.map((e) => e.frame), ...tf.flat().map((f) => absPath(f.a))]
   const r = await api.motionTrain({ prompt, images })
   if ('error' in r) throw new Error(r.error)
   let html = parseDemo(r.text)
@@ -501,7 +633,8 @@ export async function generatePreview(c: PreviewCtx) {
   const playFiles = [
     ...files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
     ...tf.flat().map((f) => ({ src: absPath(f.a), name: f.name })),
-    ...(under ? [{ src: under.video, name: UNDER_NAME }] : [])
+    ...(under ? [{ src: under.video, name: UNDER_NAME }] : []),
+    ...edgeFiles(edges)
   ]
   // safe zone: mede a animação e, se algo ficou fora do lugar, devolve pro Claude corrigir (uma vez)
   const zones = safeZones(c.format?.aspect, size.w, size.h)
@@ -528,6 +661,7 @@ export async function generatePreview(c: PreviewCtx) {
       files,
       size,
       under,
+      edges,
       adjust: { html, tweaks: [...(adjust?.tweaks ?? []), { text: issuesTweak(issues, zones), names: [] }] }
     })
     const f = await api.motionTrain({ prompt: fixPrompt, images })
@@ -597,6 +731,12 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
     c.onStage('Recortando o vídeo de baixo…', null)
     under = await underFor(c.data, b, c.dir, size, false)
   }
+  // as emendas de novo, no tamanho do clipe (só as que a animação usa pelo nome)
+  let edges: EdgeInfo[] = []
+  if (html.includes(PREV_NAME) || html.includes(NEXT_NAME)) {
+    c.onStage('Pegando os quadros de antes e depois…', null)
+    edges = (await edgesFor(c.data, b, c.dir, size).catch(() => [])).filter((e) => html.includes(edgeName(e)))
+  }
   c.onStage('Mixando o áudio do trecho…', null)
   const wav = hasAudio ? await rangeWav(c.engine, c.data, c.dur, b.start, b.end).catch(() => undefined) : undefined
   c.onStage(`Gravando o clipe em ${size.w}×${size.h}…`, 0)
@@ -615,7 +755,8 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
     files: [
       ...files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
       ...tweakFiles(b.tweaks).flat().map((f) => ({ src: absPath(f.a), name: f.name })),
-      ...(under ? [{ src: under.video, name: UNDER_NAME }] : [])
+      ...(under ? [{ src: under.video, name: UNDER_NAME }] : []),
+      ...edgeFiles(edges)
     ]
   })
   if ('error' in v) throw new Error(v.error)

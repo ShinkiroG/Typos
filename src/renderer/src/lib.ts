@@ -657,6 +657,8 @@ export interface MontageMedia {
   width?: number
   height?: number
   fps?: number
+  /** motion aprovado de um bloco: o HTML que gerou o clipe (o bloco seguinte continua dele) */
+  motionHtml?: string
 }
 export interface MontageTrack {
   id: string
@@ -765,6 +767,10 @@ export interface InstructionBlock {
   sync?: number
   /** ajustes pedidos sobre a prévia atual (a conversa com o Claude); some quando a prévia é refeita do zero */
   tweaks?: BlockTweak[]
+  /** começa no último quadro do que toca logo antes (bloco encostado ou o vídeo da timeline): sem corte seco */
+  fromPrev?: boolean
+  /** termina chegando no primeiro quadro do que toca logo depois (motion até o próximo) */
+  toNext?: boolean
 }
 
 /** um pedido de ajuste na prévia de um bloco */

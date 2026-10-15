@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send } from 'lucide-react'
-import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type InstructionBlock } from '../lib'
-import { blockDur, blockLabel, blockSync, isImage, previewStale } from './blocks'
+import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine } from 'lucide-react'
+import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type InstructionBlock, type MontageData } from '../lib'
+import { blockDur, blockLabel, blockSync, isImage, neighborOf, neighborText, previewStale } from './blocks'
 
 const fmtTc = (t: number) => {
   const m = Math.floor(Math.max(0, t) / 60)
@@ -16,6 +16,8 @@ export interface BlockBusy {
 
 interface FormProps {
   b: InstructionBlock
+  /** a timeline (pra mostrar o que encosta no bloco) */
+  data?: MontageData
   dir: string
   patch: (p: Partial<InstructionBlock>, gesture?: string) => void
 }
@@ -23,7 +25,7 @@ interface FormProps {
 const toBlockAtt = (a: Attachment): BlockAttachment => ({ ...a, use: 'insert' })
 
 /** campos do bloco: nome, tempo, modo, instruções e anexos (o mesmo no painel e na janela) */
-export function BlockForm({ b, dir, patch, big }: FormProps & { big?: boolean }) {
+export function BlockForm({ b, data, dir, patch, big }: FormProps & { big?: boolean }) {
   const g = 'blk-' + b.id
   const [dropping, setDropping] = useState(false)
   const addAtts = (list: Attachment[]) => list.length && patch({ attachments: [...b.attachments, ...list.map(toBlockAtt)] })
@@ -78,6 +80,31 @@ export function BlockForm({ b, dir, patch, big }: FormProps & { big?: boolean })
         </span>
         <input type="range" min={0} max={1} step={0.05} value={blockSync(b)} onChange={(e) => patch({ sync: Number(e.target.value) }, g + 'sy')} />
       </label>
+      <div className="blk-chain">
+        <span className="blk-chain-title">Emenda com os vizinhos (sem corte seco)</span>
+        {(['prev', 'next'] as const).map((side) => {
+          const on = side === 'prev' ? !!b.fromPrev : !!b.toNext
+          const n = data ? neighborOf(data, b, side) : null
+          return (
+            <label
+              key={side}
+              className={'blk-chain-opt' + (on ? ' on' : '')}
+              title={
+                side === 'prev'
+                  ? 'O primeiro quadro deste bloco é o último quadro do que toca antes (um bloco encostado ou o vídeo da timeline); o motion parte dali. Se for um bloco, ele precisa ter prévia.'
+                  : 'O motion termina chegando no primeiro quadro do que toca depois (um bloco encostado ou o vídeo da timeline). Se for um bloco, ele precisa ter prévia.'
+              }
+            >
+              <input type="checkbox" checked={on} onChange={(e) => patch(side === 'prev' ? { fromPrev: e.target.checked } : { toNext: e.target.checked })} />
+              {side === 'prev' ? <ArrowLeftToLine size={12} /> : <ArrowRightToLine size={12} />}
+              <span>
+                {side === 'prev' ? 'Continuar do último quadro de antes' : 'Fazer motion até o primeiro quadro de depois'}
+                {data && <small>{side === 'prev' ? 'antes' : 'depois'}: {neighborText(n)}</small>}
+              </span>
+            </label>
+          )
+        })}
+      </div>
       <label className="blk-label">
         {b.dynamic ? 'Dicas (opcional): o motion sai da fala do trecho' : 'Como você imagina o motion'}
         <textarea
@@ -352,7 +379,7 @@ export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenera
         </button>
       </div>
       <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={p.onGenerate} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} heard={p.heard} />
-      <BlockForm b={p.b} dir={p.dir} patch={p.patch} />
+      <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} />
     </div>
   )
 }
@@ -377,7 +404,7 @@ export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate:
         </div>
         <div className="blk-window-body">
           <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={p.onGenerate} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} heard={p.heard} big />
-          <BlockForm b={p.b} dir={p.dir} patch={p.patch} big />
+          <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} big />
         </div>
       </div>
     </div>

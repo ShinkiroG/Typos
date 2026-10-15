@@ -1146,7 +1146,8 @@ export function Montage({
         hasVideo: true,
         width: info.width,
         height: info.height,
-        fps: info.fps
+        fps: info.fps,
+        motionHtml: b.preview.html
       }
       // na faixa do bloco; se já tem corte ali, na primeira faixa de vídeo livre acima (ou numa nova, em cima de tudo)
       const free = (tid: string) => !d.clips.some((c) => c.track === tid && c.start < b.end - 0.001 && clipEndT(c) > b.start + 0.001)
@@ -2106,6 +2107,7 @@ export function Montage({
         {curBlock ? (
           <BlockInspector
             b={curBlock}
+            data={data}
             dir={dir}
             patch={(p, g) => patchBlock(curBlock.id, p, g)}
             busy={blockBusy}
@@ -2611,6 +2613,7 @@ export function Montage({
       {openBlock && (
         <BlockWindow
           b={openBlock}
+          data={data}
           dir={dir}
           patch={(p, g) => patchBlock(openBlock.id, p, g)}
           busy={blockBusy}

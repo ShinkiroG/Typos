@@ -196,8 +196,8 @@ const api = {
     weights: { aesthetic: number; motion: number; frameByFrame?: boolean }
   ): Promise<{ path: string; kind: 'even' | 'burst'; group: number; index: number; t: number; fps: number }[] | { error: string }> =>
     ipcRenderer.invoke('motion:frames', path, weights),
-  /** um quadro do vídeo em cada tempo (s do arquivo); null onde não deu */
-  motionFramesAt: (path: string, times: number[]): Promise<(string | null)[]> => ipcRenderer.invoke('motion:framesAt', path, times),
+  /** um quadro do vídeo em cada tempo (s do arquivo), com `width` px de largura (padrão 480); null onde não deu */
+  motionFramesAt: (path: string, times: number[], width?: number): Promise<(string | null)[]> => ipcRenderer.invoke('motion:framesAt', path, times, width),
   motionPasteImage: (bytes: Uint8Array, name: string): Promise<string> => ipcRenderer.invoke('motion:pasteImage', bytes, name),
   systemFonts: (): Promise<string[]> => ipcRenderer.invoke('sys:fonts'),
   motionDemoFile: (html: string): Promise<string> => ipcRenderer.invoke('motion:demoFile', html),

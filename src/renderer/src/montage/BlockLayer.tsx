@@ -1,12 +1,14 @@
 import { useRef } from 'react'
-import { Paperclip, Sparkles, Film, Ear, Loader2 } from 'lucide-react'
+import { Paperclip, Sparkles, Film, Ear, Loader2, ArrowLeftToLine, ArrowRightToLine } from 'lucide-react'
 import type { BlockHeard } from './AudioRead'
 import { formatTime, uid, type InstructionBlock, type MontageData } from '../lib'
 import { BLOCK_MIN, blockDur, blockLabel, previewStale } from './blocks'
+import { snapMove } from './snap'
 
 /**
  * Blocos de instrução desenhados numa faixa de vídeo: arrastar move (e troca de faixa de vídeo),
- * as bordas aparam, duplo clique abre a janela do bloco.
+ * as bordas aparam, duplo clique abre a janela do bloco. O ímã fica sempre ligado nos blocos
+ * (Alt segurado solta).
  */
 export function BlockLayer(p: {
   data: MontageData
@@ -17,7 +19,7 @@ export function BlockLayer(p: {
   onOpen: (id: string) => void
   onMenu: (e: React.MouseEvent, id: string) => void
   change: (next: MontageData, gesture?: string) => void
-  /** ímã (bordas dos cortes, playhead) sem contar os ids passados; on = Shift segurado */
+  /** ímã (bordas dos cortes e blocos, playhead) sem contar os ids passados; on = liga o ímã */
   snap: (t: number, skip: string[], on?: boolean) => number
   /** linha do encaixe (null esconde) */
   showSnap: (t: number | null) => void
@@ -28,7 +30,10 @@ export function BlockLayer(p: {
   /** o som do bloco já foi lido (Whisper)? */
   heard?: (b: InstructionBlock) => BlockHeard
 }) {
-  const drag = useRef<{ kind: 'move' | 'l' | 'r'; x0: number; orig: InstructionBlock; all: InstructionBlock[]; g: string; moved: boolean } | null>(null)
+  // o arrasto escuta a janela (não o elemento): trocar de faixa remonta o bloco em outra camada e
+  // o elemento antigo perde o pointer capture no meio do gesto
+  const live = useRef(p)
+  live.current = p
   const blocks = (p.data.blocks ?? []).filter((b) => b.track === p.track)
 
   const down = (e: React.PointerEvent, b: InstructionBlock) => {
@@ -36,47 +41,52 @@ export function BlockLayer(p: {
     e.stopPropagation()
     p.onSelect(b.id)
     const role = (e.target as HTMLElement).dataset.role
-    drag.current = { kind: role === 'l' || role === 'r' ? role : 'move', x0: e.clientX, orig: b, all: p.data.blocks ?? [], g: uid(), moved: false }
-    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-  }
-  const move = (e: React.PointerEvent) => {
-    const d = drag.current
-    if (!d) return
-    if (!d.moved && Math.abs(e.clientX - d.x0) < 3 && d.kind === 'move') return
-    d.moved = true
-    const o = d.orig
-    const dt = (e.clientX - d.x0) / p.pps
-    const sh = e.shiftKey
-    const off = (a: number, b: number) => Math.abs(a - b) > 1e-6
-    let hit: number | null = null
-    let nb: InstructionBlock
-    if (d.kind === 'move') {
-      const len = blockDur(o)
-      let s = Math.max(0, o.start + dt)
-      const a = p.snap(s, [o.id], sh)
-      const z = p.snap(s + len, [o.id], sh) - len
-      const first = Math.abs(a - s) <= Math.abs(z - s)
-      if (first ? off(a, s) : off(z, s)) hit = first ? a : z + len
-      s = Math.max(0, first ? a : z)
-      const tr = p.trackAt(e.clientY)
-      nb = { ...o, start: s, end: s + len, track: tr?.kind === 'video' ? tr.id : o.track }
-    } else if (d.kind === 'l') {
-      const raw = Math.max(0, o.start + dt)
-      const sn = p.snap(raw, [o.id], sh)
-      if (off(sn, raw)) hit = sn
-      nb = { ...o, start: Math.min(o.end - BLOCK_MIN, Math.max(0, sn)) }
-    } else {
-      const raw = o.end + dt
-      const sn = p.snap(raw, [o.id], sh)
-      if (off(sn, raw)) hit = sn
-      nb = { ...o, end: Math.max(o.start + BLOCK_MIN, sn) }
+    const kind: 'move' | 'l' | 'r' = role === 'l' || role === 'r' ? role : 'move'
+    const x0 = e.clientX
+    const o = b
+    const all = p.data.blocks ?? []
+    const g = uid()
+    let moved = false
+    const move = (ev: PointerEvent) => {
+      const q = live.current
+      if (!moved && Math.abs(ev.clientX - x0) < 3 && kind === 'move') return
+      moved = true
+      const dt = (ev.clientX - x0) / q.pps
+      // blocos grudam sempre (é o que deixa um encostado no outro, sem vão nem corte); Alt solta
+      const on = !ev.altKey
+      const off = (a: number, z: number) => Math.abs(a - z) > 1e-6
+      let hit: number | null = null
+      let nb: InstructionBlock
+      if (kind === 'move') {
+        const len = blockDur(o)
+        const sm = snapMove((t) => q.snap(t, [o.id], on), Math.max(0, o.start + dt), len)
+        hit = sm.hit
+        const s = Math.max(0, sm.start)
+        const tr = q.trackAt(ev.clientY)
+        nb = { ...o, start: s, end: s + len, track: tr?.kind === 'video' ? tr.id : o.track }
+      } else if (kind === 'l') {
+        const raw = Math.max(0, o.start + dt)
+        const sn = q.snap(raw, [o.id], on)
+        if (off(sn, raw)) hit = sn
+        nb = { ...o, start: Math.min(o.end - BLOCK_MIN, Math.max(0, sn)) }
+      } else {
+        const raw = o.end + dt
+        const sn = q.snap(raw, [o.id], on)
+        if (off(sn, raw)) hit = sn
+        nb = { ...o, end: Math.max(o.start + BLOCK_MIN, sn) }
+      }
+      q.showSnap(hit)
+      q.change({ ...q.data, blocks: all.map((x) => (x.id === o.id ? nb : x)) }, g)
     }
-    p.showSnap(hit)
-    p.change({ ...p.data, blocks: d.all.map((x) => (x.id === o.id ? nb : x)) }, d.g)
-  }
-  const up = () => {
-    drag.current = null
-    p.showSnap(null)
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      live.current.showSnap(null)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
   }
 
   return (
@@ -90,8 +100,6 @@ export function BlockLayer(p: {
             style={{ left: b.start * p.pps, width: Math.max(4, blockDur(b) * p.pps) }}
             data-iblock={b.id}
             onPointerDown={(e) => down(e, b)}
-            onPointerMove={move}
-            onPointerUp={up}
             onDoubleClick={(e) => {
               e.stopPropagation()
               p.onOpen(b.id)
@@ -102,7 +110,7 @@ export function BlockLayer(p: {
               p.onSelect(b.id)
               p.onMenu(e, b.id)
             }}
-            title={`${blockLabel(b)}\n${formatTime(b.start)} → ${formatTime(b.end)} (${blockDur(b).toFixed(1)}s)\n${b.dynamic ? 'Dinâmico: o Claude deduz o motion pela fala' : b.text.trim() || 'Sem instruções ainda'}\nDuplo clique abre o bloco`}
+            title={`${blockLabel(b)}\n${formatTime(b.start)} → ${formatTime(b.end)} (${blockDur(b).toFixed(1)}s)\n${b.dynamic ? 'Dinâmico: o Claude deduz o motion pela fala' : b.text.trim() || 'Sem instruções ainda'}\nDuplo clique abre o bloco · arrastar gruda nas bordas (Alt solta)`}
           >
             <span className="mt-iblock-name">
               {b.dynamic && <Sparkles size={10} />}
@@ -122,6 +130,16 @@ export function BlockLayer(p: {
                   </span>
                 )
               })()}
+              {b.fromPrev && (
+                <span title="Continua do último quadro de antes">
+                  <ArrowLeftToLine size={10} />
+                </span>
+              )}
+              {b.toNext && (
+                <span title="Termina no primeiro quadro de depois">
+                  <ArrowRightToLine size={10} />
+                </span>
+              )}
               {b.attachments.length > 0 && (
                 <span title={`${b.attachments.length} anexo(s)`}>
                   <Paperclip size={10} />
