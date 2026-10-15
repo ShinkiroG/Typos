@@ -4,7 +4,7 @@ import { promises as fs, existsSync } from 'fs'
 import { spawn, type ChildProcess } from 'child_process'
 import { createHash } from 'crypto'
 import { findFfmpeg, probe } from './media'
-import { concatList, finalArgs, partArgs, partFrames, type ALayer, type VLayer } from './compose'
+import { concatList, finalArgs, partArgs, partFrames, ENCODE_V, type ALayer, type VLayer } from './compose'
 import { htmlToVideo } from './motionPreview'
 
 /**
@@ -200,7 +200,7 @@ async function start(sender: WebContents, job: RenderJob) {
 
   // ---------- o que já está pronto de uma rodada anterior ----------
   const letById = new Map(job.letterings.map((l) => [l.id, l]))
-  const letFile = (l: LetteringIn) => join(letDir, sha([l.html, l.dur, job.width, job.height, job.fps].join('|')) + '.mp4')
+  const letFile = (l: LetteringIn) => join(letDir, sha([l.html, l.dur, job.width, job.height, job.fps, ENCODE_V].join('|')) + '.mp4')
   const old = await readState(out)
   const plan: StepState[] = [
     ...job.parts.map((p) => ({
@@ -209,7 +209,7 @@ async function start(sender: WebContents, job: RenderJob) {
       file: `partes/${p.id}.mp4`,
       weight: p.to - p.from,
       expect: p.to - p.from,
-      sig: sha(p.key + '|' + p.letterings.map((id) => letById.get(id)?.html ?? '').join('|')),
+      sig: sha(p.key + '|' + ENCODE_V + '|' + p.letterings.map((id) => letById.get(id)?.html ?? '').join('|')),
       done: false
     })),
     { id: 'final', label: 'Vídeo final', file: job.finalFile, weight: Math.max(2, total * 0.04), expect: total, sig: '', done: false }
@@ -255,7 +255,7 @@ async function start(sender: WebContents, job: RenderJob) {
     progress('letterings')
     try {
       const tmp = letFile(l).replace(/\.mp4$/, '.tmp.mp4')
-      await htmlToVideo({ out: letDir, html: l.html, seconds: l.dur, width: job.width, height: job.height, fps: job.fps, files: [], video: tmp, crf: 16, cancelled: () => cancelled })
+      await htmlToVideo({ out: letDir, html: l.html, seconds: l.dur, width: job.width, height: job.height, fps: job.fps, files: [], video: tmp, quality: 'final', cancelled: () => cancelled })
       await fs.rename(tmp, letFile(l))
     } catch (e: any) {
       if (cancelled) throw await stop('Cancelado.')

@@ -3,7 +3,7 @@ import { dirname, join } from 'path'
 import { promises as fs, existsSync } from 'fs'
 import { createHash } from 'crypto'
 import { findFfmpeg, run } from './media'
-import { partArgs, type VLayer } from './compose'
+import { partArgs, x264Args, RGB_TO_YUV, type VLayer } from './compose'
 
 /**
  * Prévia de um bloco de instrução: o HTML de motion que a IA escreveu é tocado numa janela
@@ -92,7 +92,8 @@ export interface HtmlVideoJob {
   files: { src: string; name: string }[]
   /** arquivo de saída (.mp4) */
   video: string
-  crf: number
+  /** prévia leve (12 fps, baixa resolução) ou vídeo de entrega (clipe, lettering) */
+  quality: 'preview' | 'final'
   onPct?: (pct: number) => void
   cancelled?: () => boolean
 }
@@ -187,8 +188,12 @@ export async function htmlToVideo(job: HtmlVideoJob) {
     await fs.writeFile(wav, job.wav)
     args.push('-i', wav)
   }
-  args.push('-vf', `scale=${W}:${H}:flags=bicubic,format=yuv420p`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(job.crf), '-r', String(job.fps))
-  if (wav) args.push('-c:a', 'aac', '-b:a', job.crf <= 20 ? '192k' : '96k', '-shortest')
+  args.push('-vf', `scale=${W}:${H}:${RGB_TO_YUV},format=yuv420p`)
+  // prévia: leve e rápida; clipe e lettering: qualidade de entrega (o grão do fundo tem que sobreviver)
+  if (job.quality === 'preview') args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p')
+  else args.push(...x264Args('grain'))
+  args.push('-r', String(job.fps))
+  if (wav) args.push('-c:a', 'aac', '-b:a', job.quality === 'preview' ? '96k' : '192k', '-shortest')
   args.push('-movflags', '+faststart', job.video)
   const r = await run(ff.ffmpeg, args)
   await fs.rm(frames, { recursive: true, force: true }).catch(() => null)
@@ -223,7 +228,7 @@ export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed
     wav: job.wav,
     files: job.files,
     video: join(out, `${job.final ? 'clipe' : 'previa'}-${stamp}.mp4`),
-    crf: job.final ? 18 : 26,
+    quality: job.final ? 'final' : 'preview',
     onPct: (p) => send(p >= 1 ? 'vídeo' : 'quadros', p),
     cancelled: () => !!busy?.cancel
   })

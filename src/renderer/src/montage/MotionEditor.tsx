@@ -16,6 +16,8 @@ export function MotionEditor(p: {
   block: InstructionBlock
   /** tem uma prévia da alteração que ainda não foi pro vídeo */
   pending: boolean
+  /** o clipe da timeline foi gravado com uma qualidade mais velha (fundo pode sair em blocos) */
+  outdated: boolean
   dir: string
   busy: BlockBusy | null
   /** pedido de alteração: do trecho marcado, ou (com `extend`) continuar o motion até essa nova duração (s) */
@@ -131,6 +133,14 @@ export function MotionEditor(p: {
                 </button>
                 <button className="btn small" disabled={!!p.busy} onClick={p.onDiscard} title="Volta pro motion que está na timeline">
                   <Undo2 size={13} /> Descartar
+                </button>
+              </div>
+            )}
+            {!p.pending && p.outdated && (
+              <div className="mx-pending">
+                <span>Este clipe foi gravado antes da v3, com pouca qualidade: fundo em gradiente pode sair em blocos. Regrave pra corrigir.</span>
+                <button className="btn small" disabled={!!p.busy} onClick={p.onApply} title="Grava de novo o mesmo motion na resolução do projeto, com a qualidade atual, e troca o clipe na timeline (Ctrl+Z desfaz)">
+                  <Film size={13} /> Regravar o clipe
                 </button>
               </div>
             )}
