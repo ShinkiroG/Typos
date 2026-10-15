@@ -532,7 +532,8 @@ export function Montage({
     } else {
       setSource(null)
       await engine.play(dataRef.current, dur)
-      setPlaying(true)
+      // um pause no meio (a saída de som demorou a acordar) ganha
+      setPlaying(engine.playing)
     }
   }, [engine, dur])
 
@@ -781,7 +782,7 @@ export function Montage({
     setRec({ track, start: t0 })
     setRehearse(false)
     await engine.play(dataRef.current, dur)
-    setPlaying(true)
+    setPlaying(engine.playing)
   }
 
   const stopRec = async () => {

@@ -1,4 +1,4 @@
-import { followOutput } from '../audio'
+import { LiveAudio } from '../audio'
 import { api, clipEndT, fileUrl, type FadeCurve, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 
 export const PEAKS_PER_SEC = 100
@@ -117,33 +117,28 @@ export function envPoints(s: Span) {
  * O vídeo só acompanha o relógio daqui.
  */
 export class MontageEngine {
-  private ctx: AudioContext | null = null
   private master: DynamicsCompressorNode | null = null
+  private audio = new LiveAudio((ctx) => {
+    // limitador (estilo broadcast): segura os picos depois da normalização, sem mexer no resto
+    const lim = ctx.createDynamicsCompressor()
+    lim.threshold.value = -1.5
+    lim.knee.value = 0
+    lim.ratio.value = 20
+    lim.attack.value = 0.002
+    lim.release.value = 0.12
+    lim.connect(ctx.destination)
+    this.master = lim
+  })
   private loading = new Map<string, Promise<LoadedAudio | null>>()
   private ready = new Map<string, LoadedAudio>()
   private nodes: { src: AudioBufferSourceNode; gain: GainNode }[] = []
   private startedAt = 0
   private startPos = 0
+  /** play esperando a saída de som ficar pronta (pause/seek no meio cancelam) */
+  private pending: object | null = null
   playing = false
   /** avisa quando uma prévia de áudio fica pronta (pra desenhar a onda) */
   onLoaded: (() => void) | null = null
-
-  private context() {
-    if (!this.ctx) {
-      this.ctx = new AudioContext()
-      followOutput(this.ctx)
-      // limitador (estilo broadcast): segura os picos depois da normalização, sem mexer no resto
-      const lim = this.ctx.createDynamicsCompressor()
-      lim.threshold.value = -1.5
-      lim.knee.value = 0
-      lim.ratio.value = 20
-      lim.attack.value = 0.002
-      lim.release.value = 0.12
-      lim.connect(this.ctx.destination)
-      this.master = lim
-    }
-    return this.ctx
-  }
 
   get(mediaId: string) {
     return this.ready.get(mediaId)
@@ -157,7 +152,7 @@ export class MontageEngine {
         const proxy = await api.proxyAudio(m.path)
         if (typeof proxy !== 'string') throw new Error(proxy.error)
         const res = await fetch(fileUrl(proxy))
-        const buffer = await this.context().decodeAudioData(await res.arrayBuffer())
+        const buffer = await this.audio.get().decodeAudioData(await res.arrayBuffer())
         const loaded = { buffer, peaks: computePeaks(buffer) }
         this.ready.set(m.id, loaded)
         this.onLoaded?.()
@@ -170,11 +165,13 @@ export class MontageEngine {
   }
 
   position() {
-    return this.playing && this.ctx ? this.startPos + (this.ctx.currentTime - this.startedAt) : this.startPos
+    const ctx = this.audio.current
+    return this.playing && ctx ? this.startPos + (ctx.currentTime - this.startedAt) : this.startPos
   }
 
   seek(t: number, data: MontageData, dur: (id: string) => number) {
-    const was = this.playing
+    const was = this.playing || !!this.pending
+    this.pending = null
     this.stopNodes()
     this.playing = false
     this.startPos = Math.max(0, t)
@@ -186,10 +183,14 @@ export class MontageEngine {
   }
 
   async play(data: MontageData, dur: (id: string) => number) {
-    const ctx = this.context()
-    if (ctx.state === 'suspended') await ctx.resume()
     if (this.playing) this.startPos = this.position()
     this.stopNodes()
+    this.playing = false
+    const me = {}
+    this.pending = me
+    const ctx = await this.audio.ready()
+    if (this.pending !== me) return
+    this.pending = null
     const from = this.startPos
     const now = ctx.currentTime + 0.04
     this.startedAt = now
@@ -222,6 +223,7 @@ export class MontageEngine {
   }
 
   pause() {
+    this.pending = null
     this.startPos = this.position()
     this.stopNodes()
     this.playing = false
@@ -241,9 +243,10 @@ export class MontageEngine {
   }
 
   dispose() {
+    this.pending = null
     this.stopNodes()
     this.playing = false
-    this.ctx?.close()
+    this.audio.close()
   }
 }
 
