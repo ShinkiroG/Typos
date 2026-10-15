@@ -290,6 +290,8 @@ const api = {
     ipcRenderer.invoke('ai:findSfx'),
   motionTrain: (job: { prompt: string; images: string[]; id?: string }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
     ipcRenderer.invoke('ai:motionTrain', job),
+  /** o HTML que gerou um clipe de motion antigo (o mais novo da pasta da prévia dele); null se não achar */
+  motionFindHtml: (video: string): Promise<string | null> => ipcRenderer.invoke('motion:findHtml', video),
   /** para o pedido de motion desse id (o bloco) */
   motionTrainCancel: (id?: string) => ipcRenderer.invoke('ai:motionCancel', id),
 
