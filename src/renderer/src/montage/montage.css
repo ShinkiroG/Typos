@@ -1294,6 +1294,77 @@
 }
 .blk-prev-busy .btn {
   align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.blk-busy-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.blk-busy-label {
+  flex: 1;
+  min-width: 0;
+}
+.blk-busy-num {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.blk-busy-frames {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.blk-busy-bar {
+  height: 6px;
+  margin-top: 0;
+}
+.blk-busy-bar.indet i {
+  width: 30% !important;
+  animation: blk-indet 1.2s ease-in-out infinite;
+}
+@keyframes blk-indet {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+/* o bloco na timeline mostra a barra e um X pra cancelar enquanto gera */
+.mt-iblock-prog {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: color-mix(in srgb, #000 40%, transparent);
+  pointer-events: none;
+}
+.mt-iblock-prog i {
+  display: block;
+  height: 100%;
+  background: #fff;
+  transition: width 0.3s;
+}
+.mt-iblock-cancel {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 0;
+  font-size: 9px;
+  color: var(--text);
+  background: color-mix(in srgb, #000 55%, transparent);
+  cursor: pointer;
+}
+.mt-iblock-cancel:hover {
+  background: #e5484d;
 }
 .blk-prev-btns {
   display: flex;
@@ -2001,4 +2072,145 @@
 }
 .mt-toolbar.compact .lbl {
   display: none;
+}
+
+/* ---------- editor do motion aprovado (duplo clique no clipe) ---------- */
+.mx-window .blk-window-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mx-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px 16px;
+}
+.mx-player {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.mx-player video {
+  flex: 1 1 auto;
+  min-height: 160px;
+  width: 100%;
+  object-fit: contain;
+  background: #000;
+  border-radius: 6px;
+}
+.mx-pending {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: color-mix(in srgb, #f472b6 12%, transparent);
+  border: 1px solid color-mix(in srgb, #f472b6 50%, transparent);
+}
+.mx-pending span {
+  flex: 1 1 220px;
+}
+.mx-pending .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.mx-body > .blk-adjust {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  min-height: 0;
+  overflow: auto;
+}
+.mx-tl {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mx-ruler {
+  position: relative;
+  height: 14px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.mx-ruler span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+.mx-ruler span:first-child {
+  transform: none;
+}
+.mx-lane {
+  position: relative;
+  height: 56px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+}
+.mx-thumbs {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  pointer-events: none;
+}
+.mx-thumbs img,
+.mx-thumbs i {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.75;
+}
+.mx-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, #f472b6 30%, transparent);
+  border-left: 2px solid #f472b6;
+  border-right: 2px solid #f472b6;
+  pointer-events: none;
+}
+.mx-head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  box-shadow: 0 0 4px #000;
+  pointer-events: none;
+}
+.mx-range-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.mx-range-row span {
+  flex: 1;
+}
+.mx-range-row b {
+  color: var(--text);
+}
+@media (max-width: 800px) {
+  .mx-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+  .mx-body > .blk-adjust {
+    grid-row: auto;
+    grid-column: 1;
+  }
 }

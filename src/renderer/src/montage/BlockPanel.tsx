@@ -11,7 +11,56 @@ const fmtTc = (t: number) => {
 export interface BlockBusy {
   id: string
   label: string
+  /** dentro da etapa atual (0–1); null = sem medida */
   pct: number | null
+  /** pedaço do total que a etapa ocupa (pra barra geral) */
+  span?: [number, number]
+  /** quando começou (pra mostrar o tempo) */
+  t0?: number
+  /** quadros da gravação em andamento (pra mostrar quantos faltam) */
+  frames?: number
+}
+
+/** quanto do trabalho todo já foi (0–1); sem etapa conhecida, o da etapa */
+export const busyOverall = (b: BlockBusy) => (b.span ? b.span[0] + (b.span[1] - b.span[0]) * Math.max(0, Math.min(1, b.pct ?? 0)) : (b.pct ?? 0))
+
+const fmtElapsed = (ms: number) => {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** barra de progresso da prévia/clipe: etapa, % do total, tempo e Cancelar */
+export function BusyBar({ busy, onCancel, big }: { busy: BlockBusy; onCancel: () => void; big?: boolean }) {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const all = busyOverall(busy)
+  const cancelling = busy.label === 'Cancelando…'
+  return (
+    <div className="blk-prev-busy">
+      <div className="blk-busy-row">
+        <Loader2 size={13} className="spin" />
+        <span className="blk-busy-label">{busy.label}</span>
+        <span className="blk-busy-num">
+          {Math.round(all * 100)}%{busy.t0 ? ` · ${fmtElapsed(Date.now() - busy.t0)}` : ''}
+        </span>
+      </div>
+      {!!busy.frames && busy.pct !== null && busy.label.startsWith('Gravando') && (
+        <small className="blk-busy-frames">
+          quadro {Math.min(busy.frames, Math.round(busy.pct * busy.frames))} de {busy.frames} · faltam {Math.max(0, busy.frames - Math.round(busy.pct * busy.frames))}
+        </small>
+      )}
+      <div className={'mt-bar blk-busy-bar' + (busy.span || busy.pct !== null ? '' : ' indet')}>
+        <i style={{ width: `${Math.round(all * 1000) / 10}%` }} />
+      </div>
+      <button className="btn small" disabled={cancelling} onClick={onCancel}>
+        <X size={12} /> {cancelling ? 'Cancelando…' : 'Cancelar'}
+      </button>
+      {big && <small className="blk-prev-bg">Pode fechar esta janela e continuar usando o Typos: a prévia segue em segundo plano e fica neste bloco.</small>}
+    </div>
+  )
 }
 
 interface FormProps {
@@ -164,7 +213,21 @@ export function BlockForm({ b, data, dir, patch, big }: FormProps & { big?: bool
 export type AdjustFn = (t: { text: string; files: Attachment[] }) => void
 
 /** pedir ajustes na prévia atual: o histórico do que já foi pedido + campo de texto com anexos */
-function AdjustBox({ b, dir, busy, onAdjust, onClose }: { b: InstructionBlock; dir: string; busy: boolean; onAdjust: AdjustFn; onClose: () => void }) {
+export function AdjustBox({
+  b,
+  dir,
+  busy,
+  onAdjust,
+  onClose,
+  title = 'Pedir ajustes nesta prévia'
+}: {
+  b: InstructionBlock
+  dir: string
+  busy: boolean
+  onAdjust: AdjustFn
+  onClose?: () => void
+  title?: string
+}) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<Attachment[]>([])
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -189,11 +252,13 @@ function AdjustBox({ b, dir, busy, onAdjust, onClose }: { b: InstructionBlock; d
       }}
     >
       <div className="blk-adjust-head">
-        <MessageSquare size={12} /> Pedir ajustes nesta prévia
+        <MessageSquare size={12} /> {title}
         <span className="st-grow" />
-        <button className="icon-btn" title="Fechar" onClick={onClose}>
-          <X size={12} />
-        </button>
+        {onClose && (
+          <button className="icon-btn" title="Fechar" onClick={onClose}>
+            <X size={12} />
+          </button>
+        )}
       </div>
       {!!b.tweaks?.length && (
         <ol className="blk-adjust-log" title="O que já foi pedido nesta prévia (some quando você refaz a prévia do zero)">
@@ -309,18 +374,7 @@ export function BlockPreviewBox({
         </details>
       )}
       {mine ? (
-        <div className="blk-prev-busy">
-          <Loader2 size={13} className="spin" /> {busy!.label}
-          {busy!.pct !== null && (
-            <div className="mt-bar">
-              <i style={{ width: `${Math.round(busy!.pct * 100)}%` }} />
-            </div>
-          )}
-          <button className="btn small" onClick={onCancel}>
-            Cancelar
-          </button>
-          {big && <small className="blk-prev-bg">Pode fechar esta janela e continuar usando o Typos: a prévia segue em segundo plano e fica neste bloco.</small>}
-        </div>
+        <BusyBar busy={busy!} onCancel={onCancel} big={big} />
       ) : (
         <div className="blk-prev-btns">
           <button

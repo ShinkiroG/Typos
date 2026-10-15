@@ -323,6 +323,12 @@ export async function edgesFor(data: MontageData, b: InstructionBlock, dir: stri
 const edgeName = (e: EdgeInfo) => (e.side === 'prev' ? PREV_NAME : NEXT_NAME)
 export const edgeFiles = (edges: EdgeInfo[]) => edges.map((e) => ({ src: e.frame, name: edgeName(e) }))
 
+/** HTML do vizinho enxuto pro prompt: sem imagens/fontes embutidas (data:) e com limite de tamanho */
+export function slimHtml(html: string, max = 12000) {
+  const s = html.replace(/data:[\w/+.-]+;base64,[A-Za-z0-9+/=]{100,}/g, 'data:…').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n')
+  return s.length > max ? s.slice(0, max) + '\n<!-- … cortado -->' : s
+}
+
 /** a parte do prompt que pede a emenda sem corte (as imagens chegam a partir de `first`) */
 function continuityPrompt(edges: EdgeInfo[], first: number) {
   if (!edges.length) return []
@@ -344,7 +350,7 @@ function continuityPrompt(edges: EdgeInfo[], first: number) {
           : `  Esse trecho de depois é vídeo ou imagem. Nos últimos ~0,5 s leve a composição até <img src="${NEXT_NAME}"> cobrindo a tela inteira (object-fit: cover), exatamente como ele é (ex.: a cena vira uma moldura que cresce até a tela cheia, ou a câmera recua até ele), e segure até o fim.`
       )
     }
-    if (e.html) L.push('```html', e.html.slice(0, 20000), '```')
+    if (e.html) L.push('```html', slimHtml(e.html), '```')
   })
   L.push('- A emenda é feita DENTRO deste bloco: nada de corte, flash, fade pro preto ou tela vazia nas pontas. Use a duração toda com movimento contínuo.', '')
   return L
@@ -557,6 +563,40 @@ export async function memoryFromBlock(b: InstructionBlock, html: string): Promis
   return { id: uid(), at: new Date().toISOString(), source: 'bloco', title: blockLabel(b), text: what.filter(Boolean).join('\n'), html: html.slice(0, 12000) }
 }
 
+// ---------- editar um motion já aprovado (o clipe na timeline) ----------
+/**
+ * O bloco por trás de um clipe de motion aprovado, posto no tempo do clipe (o segundo 0 do HTML cai em
+ * clip.start - clip.in), e a timeline sem esse clipe (pra ele não aparecer como "vídeo de baixo" de si mesmo).
+ * Clipes aprovados antes de guardarem o bloco viram um bloco só com o HTML.
+ */
+export function blockFromClip(data: MontageData, clipId: string, format?: Format): { block: InstructionBlock; data: MontageData } | null {
+  const c = data.clips.find((x) => x.id === clipId)
+  const m = c && data.media.find((x) => x.id === c.media)
+  if (!c || !m || !(m.motionHtml || m.motionBlock?.preview)) return null
+  const start = Math.max(0, c.start - c.in)
+  const base: InstructionBlock = m.motionBlock ?? { id: 'b' + uid(), track: c.track, start, end: start + m.duration, name: m.name.replace(/\.mp4$/i, ''), text: '', attachments: [] }
+  const block: InstructionBlock = { ...base, track: c.track, start, end: start + m.duration, approved: true }
+  const prev = base.preview
+  block.preview = {
+    video: m.path,
+    html: m.motionHtml ?? prev!.html,
+    at: prev?.at ?? '',
+    provider: prev?.provider ?? '',
+    transcript: prev?.transcript ?? '',
+    key: '',
+    size: prev?.size ?? previewSize(format)
+  }
+  block.preview.key = blockKey(block)
+  return { block, data: { ...data, clips: data.clips.filter((x) => x.id !== c.id) } }
+}
+
+/** pedido de alteração de um trecho do motion (tempos do clipe); sem trecho, vale o clipe todo */
+export function rangeTweak(text: string, range: [number, number] | null) {
+  if (!range) return text
+  const f = (t: number) => t.toFixed(2).replace('.', ',')
+  return `ALTERE SÓ O TRECHO de ${f(range[0])} s a ${f(range[1])} s da animação. Fora dele, tudo fica EXATAMENTE igual, quadro a quadro (mesmos elementos, posições e tempos); dentro, a entrada e a saída do trecho emendam sem salto com o que vem antes e depois. Pedido: ${text || '(veja as imagens)'}`
+}
+
 // ---------- prévia ----------
 export interface PreviewCtx {
   block: InstructionBlock
@@ -567,7 +607,8 @@ export interface PreviewCtx {
   lang: string
   format?: Format
   dir: string
-  onStage: (label: string, pct: number | null) => void
+  /** etapa atual; `pct` é dentro da etapa e `span` o pedaço do total que ela ocupa (pra barra geral) */
+  onStage: (label: string, pct: number | null, span?: [number, number], frames?: number) => void
   /** Cancelar: para de esperar (o que já foi pra fila do Whisper continua e fica guardado) */
   signal?: AbortSignal
   /** pedir ajuste: parte da prévia atual em vez de criar do zero */
@@ -585,20 +626,33 @@ function tweakFiles(tweaks: BlockTweak[] | undefined) {
  * Prévia do bloco: confere se tem áudio no trecho, transcreve, junta roteiro + instruções + estilo + memória,
  * pede o HTML do motion pra IA e grava em 12 fps com o áudio do trecho.
  */
+/** espera do Claude: não tem progresso de verdade, então a barra anda devagar (estimativa) até a resposta chegar */
+async function waitAi<T>(c: Pick<PreviewCtx, 'onStage'>, label: string, span: [number, number], job: Promise<T>) {
+  const t0 = Date.now()
+  const tick = () => c.onStage(label, 1 - Math.exp(-(Date.now() - t0) / 150000), span)
+  tick()
+  const id = setInterval(tick, 1000)
+  try {
+    return await job
+  } finally {
+    clearInterval(id)
+  }
+}
+
 export async function generatePreview(c: PreviewCtx) {
   const b = c.block
   const hasAudio = audioIn(c.data, b).length > 0
   let heard: { words: HeardWord[]; error?: string } = { words: [] }
   if (hasAudio) {
-    c.onStage('Ouvindo o trecho (Whisper)…', null)
-    heard = await heardIn(c.data, b, c.lang, { signal: c.signal, onWait: c.onStage })
+    c.onStage('Ouvindo o trecho (Whisper)…', null, [0, 0.1])
+    heard = await heardIn(c.data, b, c.lang, { signal: c.signal, onWait: (l, p) => c.onStage(l, p, [0, 0.1]) })
   }
   if (c.signal?.aborted) throw new Error('Cancelado.')
   const files = b.attachments.filter(isImage).map((a, i) => ({ a, name: attachName(a, i) }))
   const size = previewSize(c.format)
-  c.onStage('Olhando o vídeo embaixo do bloco…', null)
+  c.onStage('Olhando o vídeo embaixo do bloco…', null, [0.1, 0.14])
   const under = await underFor(c.data, b, c.dir, size, true)
-  if (b.fromPrev || b.toNext) c.onStage('Olhando o que vem antes e depois do bloco…', null)
+  if (b.fromPrev || b.toNext) c.onStage('Olhando o que vem antes e depois do bloco…', null, [0.14, 0.17])
   const edges = await edgesFor(c.data, b, c.dir, size)
   let adjust: { html: string; tweaks: { text: string; names: string[] }[] } | undefined
   const tf = tweakFiles(c.adjust?.tweaks)
@@ -624,9 +678,9 @@ export async function generatePreview(c: PreviewCtx) {
     edges,
     adjust
   })
-  c.onStage(adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', null)
   const images = [...files.map((f) => absPath(f.a)), ...(under?.frames.map((f) => f.path) ?? []), ...edges.map((e) => e.frame), ...tf.flat().map((f) => absPath(f.a))]
-  const r = await api.motionTrain({ prompt, images })
+  if (c.signal?.aborted) throw new Error('Cancelado.')
+  const r = await waitAi(c, adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', [0.17, 0.62], api.motionTrain({ prompt, images, id: b.id }))
   if ('error' in r) throw new Error(r.error)
   let html = parseDemo(r.text)
   if (!html) throw new Error('A IA respondeu fora do formato (sem o HTML da animação). Tente de novo.')
@@ -646,10 +700,9 @@ export async function generatePreview(c: PreviewCtx) {
     }
     return got.issues
   }
-  c.onStage('Conferindo a safe zone…', null)
+  c.onStage('Conferindo a safe zone…', null, [0.62, 0.66])
   let issues = await check(html)
   if (issues.length && !c.signal?.aborted) {
-    c.onStage(`Claude corrigindo a safe zone (${issues.length} elemento${issues.length > 1 ? 's' : ''} fora do lugar)…`, null)
     const fixPrompt = blockPrompt({
       block: b,
       format: c.format,
@@ -664,18 +717,24 @@ export async function generatePreview(c: PreviewCtx) {
       edges,
       adjust: { html, tweaks: [...(adjust?.tweaks ?? []), { text: issuesTweak(issues, zones), names: [] }] }
     })
-    const f = await api.motionTrain({ prompt: fixPrompt, images })
+    const f = await waitAi(
+      c,
+      `Claude corrigindo a safe zone (${issues.length} elemento${issues.length > 1 ? 's' : ''} fora do lugar)…`,
+      [0.66, 0.78],
+      api.motionTrain({ prompt: fixPrompt, images, id: b.id })
+    )
+    if (c.signal?.aborted) throw new Error('Cancelado.')
     const fixed = 'error' in f ? '' : parseDemo(f.text)
     if (fixed) {
       html = fixed
-      c.onStage('Conferindo a safe zone de novo…', null)
+      c.onStage('Conferindo a safe zone de novo…', null, [0.78, 0.8])
       issues = await check(html)
     }
   }
   if (c.signal?.aborted) throw new Error('Cancelado.')
-  c.onStage('Mixando o áudio do trecho…', null)
+  c.onStage('Mixando o áudio do trecho…', null, [0.8, 0.82])
   const wav = hasAudio ? await rangeWav(c.engine, c.data, c.dur, b.start, b.end).catch(() => undefined) : undefined
-  c.onStage('Gravando a prévia (12 fps)…', 0)
+  c.onStage('Gravando a prévia (12 fps)…', 0, [0.82, 1], Math.max(1, Math.round(blockDur(b) * PREVIEW_FPS)))
   const v = await api.motionPreview({
     dir: c.dir,
     block: b.id,
@@ -728,18 +787,18 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
     .catch(() => '')
   let under: UnderInfo | null = null
   if (html.includes(UNDER_NAME)) {
-    c.onStage('Recortando o vídeo de baixo…', null)
+    c.onStage('Recortando o vídeo de baixo…', null, [0, 0.08])
     under = await underFor(c.data, b, c.dir, size, false)
   }
   // as emendas de novo, no tamanho do clipe (só as que a animação usa pelo nome)
   let edges: EdgeInfo[] = []
   if (html.includes(PREV_NAME) || html.includes(NEXT_NAME)) {
-    c.onStage('Pegando os quadros de antes e depois…', null)
+    c.onStage('Pegando os quadros de antes e depois…', null, [0.08, 0.12])
     edges = (await edgesFor(c.data, b, c.dir, size).catch(() => [])).filter((e) => html.includes(edgeName(e)))
   }
-  c.onStage('Mixando o áudio do trecho…', null)
+  c.onStage('Mixando o áudio do trecho…', null, [0.12, 0.15])
   const wav = hasAudio ? await rangeWav(c.engine, c.data, c.dur, b.start, b.end).catch(() => undefined) : undefined
-  c.onStage(`Gravando o clipe em ${size.w}×${size.h}…`, 0)
+  c.onStage(`Gravando o clipe em ${size.w}×${size.h}…`, 0, [0.15, 1], Math.max(1, Math.round(blockDur(b) * CLIP_FPS)))
   const v = await api.motionPreview({
     dir: c.dir,
     block: b.id,

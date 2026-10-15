@@ -53,8 +53,9 @@ import { askText } from '../components/AskDialog'
 import { YoutubeDownload } from '../components/YoutubeDownload'
 import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H, findGap, mediaLen, splitClip, trackHeight, type GapSel, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
-import { blockDur, blockLabel, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale } from './blocks'
-import { BlockInspector, BlockWindow, type BlockBusy } from './BlockPanel'
+import { blockDur, blockFromClip, blockLabel, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale, rangeTweak } from './blocks'
+import { MotionEditor } from './MotionEditor'
+import { BlockInspector, BlockWindow, busyOverall, type BlockBusy } from './BlockPanel'
 import { AudioReadButton, BlockHeardRow, useBlockHeard } from './AudioRead'
 import { jobPct, recheckRead, runningLabel, watchJobs } from './transcripts'
 import { describeChange } from './history'
@@ -1071,11 +1072,13 @@ export function Montage({
     if (active) api.onMotionPreviewProgress((p) => setBlockBusy((b) => (b && b.id === p.block ? { ...b, label: p.stage === 'vídeo' ? 'Montando o vídeo…' : b.label, pct: p.pct } : b)))
   }, [active])
   const blockHeard = useBlockHeard(data, lang)
-  /** Cancelar da prévia: para de esperar o Whisper (a leitura continua na fila) e para a gravação */
+  /** Cancelar da prévia: para de esperar o Whisper (a leitura continua na fila), corta o pedido ao Claude e para a gravação */
   const blockAbort = useRef<AbortController | null>(null)
   const cancelBlock = () => {
     blockAbort.current?.abort()
+    if (blockBusy) api.motionTrainCancel(blockBusy.id)
     api.motionPreviewCancel()
+    setBlockBusy((b) => (b ? { ...b, label: 'Cancelando…', pct: null } : b))
   }
   /** janela do bloco aberta agora (a prévia continua com ela fechada; aí avisa quando fica pronta) */
   const blockOpenRef = useRef(blockOpen)
@@ -1091,7 +1094,8 @@ export function Montage({
     const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
     if (!b || blockBusy) return
     const tweaks = tweak ? [...(b.tweaks ?? []), { id: uid(), at: new Date().toISOString(), ...tweak }] : undefined
-    setBlockBusy({ id, label: 'Preparando…', pct: null })
+    const t0 = Date.now()
+    setBlockBusy({ id, label: 'Preparando…', pct: null, t0 })
     const ac = new AbortController()
     blockAbort.current = ac
     try {
@@ -1104,7 +1108,7 @@ export function Montage({
         lang,
         format: blockFormat,
         dir,
-        onStage: (label, pct) => setBlockBusy({ id, label, pct }),
+        onStage: (label, pct, span, frames) => setBlockBusy((cur) => (cur?.label === 'Cancelando…' ? cur : { id, label, pct, span, t0, frames })),
         signal: ac.signal,
         adjust: tweaks ? { tweaks } : undefined
       })
@@ -1119,6 +1123,90 @@ export function Montage({
       setBlockBusy(null)
     }
   }
+  // ---------- editor do motion aprovado (duplo clique no clipe) ----------
+  const [motionEdit, setMotionEdit] = useState<{ clipId: string; block: InstructionBlock; pending: boolean } | null>(null)
+  const openMotionEdit = (c: MontageClip) => {
+    const r = blockFromClip(dataRef.current, c.id, blockFormat)
+    if (r) setMotionEdit({ clipId: c.id, block: r.block, pending: false })
+  }
+  /** pede a alteração (do trecho marcado ou do clipe todo): sai uma prévia nova, o clipe ainda não muda */
+  const motionEditAdjust = async (tweak: { text: string; files: Attachment[] }, range: [number, number] | null) => {
+    const me = motionEdit
+    const base = me && blockFromClip(dataRef.current, me.clipId, blockFormat)
+    if (!me || !base || blockBusy) return
+    const b = me.block
+    const tweaks = [...(b.tweaks ?? []), { id: uid(), at: new Date().toISOString(), text: rangeTweak(tweak.text, range), files: tweak.files }]
+    const t0 = Date.now()
+    setBlockBusy({ id: b.id, label: 'Preparando…', pct: null, t0 })
+    const ac = new AbortController()
+    blockAbort.current = ac
+    try {
+      const preview = await generatePreview({
+        block: b,
+        data: base.data,
+        engine,
+        dur,
+        script: getBlocks(),
+        lang,
+        format: blockFormat,
+        dir,
+        onStage: (label, pct, span, frames) => setBlockBusy((cur) => (cur?.label === 'Cancelando…' ? cur : { id: b.id, label, pct, span, t0, frames })),
+        signal: ac.signal,
+        adjust: { tweaks }
+      })
+      setMotionEdit((m) => (m && m.clipId === me.clipId ? { ...m, block: { ...m.block, preview, tweaks }, pending: true } : m))
+    } catch (e) {
+      const msg = (e as Error).message
+      if (msg !== 'Cancelado.') alert('Não deu pra fazer a alteração: ' + msg)
+    } finally {
+      blockAbort.current = null
+      setBlockBusy(null)
+    }
+  }
+  /** aplica: grava a animação alterada na resolução do projeto e troca o clipe na timeline (Ctrl+Z desfaz) */
+  const motionEditApply = async () => {
+    const me = motionEdit
+    const base = me && blockFromClip(dataRef.current, me.clipId, blockFormat)
+    if (!me || !base || !me.block.preview || blockBusy) return
+    const b = me.block
+    const t0 = Date.now()
+    setBlockBusy({ id: b.id, label: 'Preparando o clipe…', pct: null, t0 })
+    try {
+      const video = await generateClip({ block: b, data: base.data, engine, dur, format: blockFormat, dir, onStage: (label, pct, span, frames) => setBlockBusy({ id: b.id, label, pct, span, t0, frames }) })
+      const info = await api.probeMedia(video)
+      if ('error' in info) throw new Error(info.error)
+      const d = dataRef.current
+      const c = d.clips.find((x) => x.id === me.clipId)
+      const old = c && d.media.find((x) => x.id === c.media)
+      if (!c || !old) throw new Error('O clipe saiu da timeline enquanto a alteração era gravada.')
+      const m: MontageMedia = {
+        ...old,
+        id: uid(),
+        path: video,
+        duration: info.duration || old.duration,
+        hasAudio: info.hasAudio,
+        width: info.width,
+        height: info.height,
+        fps: info.fps,
+        motionHtml: b.preview!.html,
+        motionBlock: { ...b, approved: true }
+      }
+      change({ ...d, media: [...d.media, m], clips: d.clips.map((x) => (x.id === c.id ? { ...x, media: m.id, out: Math.min(x.out, m.duration) } : x)) })
+      const r = blockFromClip({ ...d, media: [...d.media, m], clips: d.clips.map((x) => (x.id === c.id ? { ...x, media: m.id } : x)) }, c.id, blockFormat)
+      setMotionEdit((cur) => (cur && cur.clipId === me.clipId && r ? { ...cur, block: r.block, pending: false } : cur))
+    } catch (e) {
+      const msg = (e as Error).message
+      if (msg !== 'Cancelado.') alert('Não deu pra aplicar a alteração: ' + msg)
+    } finally {
+      setBlockBusy(null)
+    }
+  }
+  const motionEditDiscard = () => {
+    const me = motionEdit
+    const r = me && blockFromClip(dataRef.current, me.clipId, blockFormat)
+    if (me && r) setMotionEdit({ ...me, block: r.block, pending: false })
+  }
+
   /**
    * Aprova a prévia: grava a mesma animação na resolução do projeto (com o áudio do trecho), põe o clipe
    * na timeline no lugar do bloco e guarda o motion na memória do formato. Ctrl+Z traz o bloco de volta.
@@ -1127,9 +1215,10 @@ export function Montage({
     const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
     if (!b?.preview || blockBusy) return
     if (previewStale(b) && !confirm('O bloco mudou depois desta prévia. Importar a prévia assim mesmo, com o tempo atual do bloco?')) return
-    setBlockBusy({ id, label: 'Preparando o clipe…', pct: null })
+    const t0 = Date.now()
+    setBlockBusy({ id, label: 'Preparando o clipe…', pct: null, t0 })
     try {
-      const video = await generateClip({ block: b, data: dataRef.current, engine, dur, format: blockFormat, dir, onStage: (label, pct) => setBlockBusy({ id, label, pct }) })
+      const video = await generateClip({ block: b, data: dataRef.current, engine, dur, format: blockFormat, dir, onStage: (label, pct, span, frames) => setBlockBusy({ id, label, pct, span, t0, frames }) })
       const info = await api.probeMedia(video)
       if ('error' in info) throw new Error(info.error)
       const d = dataRef.current
@@ -1147,7 +1236,8 @@ export function Montage({
         width: info.width,
         height: info.height,
         fps: info.fps,
-        motionHtml: b.preview.html
+        motionHtml: b.preview.html,
+        motionBlock: { ...b, approved: true }
       }
       // na faixa do bloco; se já tem corte ali, na primeira faixa de vídeo livre acima (ou numa nova, em cima de tudo)
       const free = (tid: string) => !d.clips.some((c) => c.track === tid && c.start < b.end - 0.001 && clipEndT(c) > b.start + 0.001)
@@ -2610,6 +2700,22 @@ export function Montage({
             </div>
           )
         })()}
+      {motionEdit && (
+        <MotionEditor
+          block={motionEdit.block}
+          pending={motionEdit.pending}
+          dir={dir}
+          busy={blockBusy}
+          onAdjust={motionEditAdjust}
+          onCancel={cancelBlock}
+          onApply={motionEditApply}
+          onDiscard={motionEditDiscard}
+          onClose={() => {
+            if (motionEdit.pending && !confirm('A alteração ainda não foi aplicada no vídeo. Fechar e perder essa prévia?')) return
+            setMotionEdit(null)
+          }}
+        />
+      )}
       {openBlock && (
         <BlockWindow
           b={openBlock}
@@ -2643,6 +2749,7 @@ export function Montage({
           scrollRef={scrollRef}
           wavesVersion={wavesVersion}
           onClipMenu={onClipMenu}
+          onClipOpen={openMotionEdit}
           onJoinMenu={onJoinMenu}
           onDropFile={dropPcFile}
           onMarkerMenu={(e, mk) => setMarkMenu({ x: e.clientX, y: e.clientY, id: mk.id })}
@@ -2657,6 +2764,8 @@ export function Montage({
           onBlockOpen={setBlockOpen}
           onBlockMenu={(e, id) => setBlockMenu({ x: e.clientX, y: e.clientY, id })}
           blockBusy={blockBusy?.id ?? null}
+          blockPct={blockBusy ? busyOverall(blockBusy) : null}
+          onBlockCancel={cancelBlock}
           blockHeard={blockHeard}
           gap={gap}
           onGap={setGap}

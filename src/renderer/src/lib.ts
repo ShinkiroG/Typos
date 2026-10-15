@@ -659,6 +659,8 @@ export interface MontageMedia {
   fps?: number
   /** motion aprovado de um bloco: o HTML que gerou o clipe (o bloco seguinte continua dele) */
   motionHtml?: string
+  /** o bloco que gerou o clipe (instruções, anexos, ajustes): o editor do motion parte dele */
+  motionBlock?: InstructionBlock
 }
 export interface MontageTrack {
   id: string
