@@ -661,7 +661,7 @@ export interface MontageMedia {
   motionHtml?: string
   /** o bloco que gerou o clipe (instruções, anexos, ajustes): o editor do motion parte dele */
   motionBlock?: InstructionBlock
-  /** qualidade com que o clipe de motion foi gravado (ver CLIP_ENC); sem isso, gravado antes da v2.11 */
+  /** qualidade com que o clipe de motion foi gravado (ver CLIP_ENC); sem isso, gravado antes da v3 */
   motionEnc?: number
 }
 export interface MontageTrack {

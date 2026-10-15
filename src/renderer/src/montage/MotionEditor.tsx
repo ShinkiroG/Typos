@@ -138,7 +138,7 @@ export function MotionEditor(p: {
             )}
             {!p.pending && p.outdated && (
               <div className="mx-pending">
-                <span>Este clipe foi gravado antes da v2.11, com pouca qualidade: fundo em gradiente pode sair em blocos. Regrave pra corrigir.</span>
+                <span>Este clipe foi gravado antes da v3, com pouca qualidade: fundo em gradiente pode sair em blocos. Regrave pra corrigir.</span>
                 <button className="btn small" disabled={!!p.busy} onClick={p.onApply} title="Grava de novo o mesmo motion na resolução do projeto, com a qualidade atual, e troca o clipe na timeline (Ctrl+Z desfaz)">
                   <Film size={13} /> Regravar o clipe
                 </button>
