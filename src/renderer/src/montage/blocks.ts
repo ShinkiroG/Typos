@@ -599,6 +599,12 @@ export function rangeTweak(text: string, range: [number, number] | null) {
   return `ALTERE SÓ O TRECHO de ${f(range[0])} s a ${f(range[1])} s da animação. Fora dele, tudo fica EXATAMENTE igual, quadro a quadro (mesmos elementos, posições e tempos); dentro, a entrada e a saída do trecho emendam sem salto com o que vem antes e depois. Pedido: ${text || '(veja as imagens)'}`
 }
 
+/** pedido de continuar o motion: de `from` s (onde ele acaba hoje) até `to` s */
+export function extendTweak(text: string, from: number, to: number) {
+  const f = (t: number) => t.toFixed(2).replace('.', ',')
+  return `CONTINUE A ANIMAÇÃO: hoje ela acaba em ${f(from)} s e agora tem que durar ${f(to)} s. De 0 a ${f(from)} s tudo fica EXATAMENTE igual, quadro a quadro (se o HTML usa a duração antiga em constantes ou cálculos, ajuste sem mudar o tempo do que já existe). De ${f(from)} s a ${f(to)} s, continue de onde ela parou, sem salto nem recomeço: os elementos que estão na tela seguem dali, acompanhando a fala desse trecho.${text.trim() ? ' Pedido do autor pra essa continuação: ' + text.trim() : ''}`
+}
+
 // ---------- prévia ----------
 export interface PreviewCtx {
   block: InstructionBlock
