@@ -6,6 +6,7 @@ import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import { findFfmpeg, proxyAudio, proxyPathOf, probe, run, mediaCacheDir } from './media'
 import { loadSettings, saveSettings } from './settings'
+import { whisperRuns, wordsFromWhisper } from './whisperTimes'
 
 /**
  * Transcrição local (Whisper via filtro do ffmpeg) pra o corte automático da narração.
@@ -238,7 +239,7 @@ async function cacheFile(path: string, lang: string, proxy?: string) {
   proxy ??= await proxyPathOf(path)
   if (!existsSync(proxy)) return { file: '', hit: false }
   const st = await fs.stat(proxy)
-  const key = createHash('sha1').update(`${proxy}|${st.size}|${m.id}|${lang}|v2`).digest('hex').slice(0, 20)
+  const key = createHash('sha1').update(`${proxy}|${st.size}|${m.id}|${lang}|v3`).digest('hex').slice(0, 20)
   const file = join(mediaCacheDir(), key + '.words.json')
   return { file, key, hit: existsSync(file) }
 }
@@ -274,47 +275,19 @@ async function transcribeNow(path: string, lang: string, signal: AbortSignal, on
     'max_len=1',
     ...(existsSync(vad) ? [`vad_model=${esc(vad)}`] : [])
   ]
-  // cada rodada do Whisper = um trecho de fala que o VAD achou; guarda onde a fala começa/termina nele
-  const runs: { at: number; vs: number; ve: number }[] = []
-  let seg = { vs: 0, ve: 0 }
+  // cada rodada do Whisper (pelo VAD, fila cheia ou fim do arquivo) e onde a fala está nela
+  const log = whisperRuns()
   const r = await run(ff.ffmpeg, ['-hide_banner', '-nostats', '-y', '-i', proxy, '-af', `aresample=16000,whisper=${opts.join(':')}`, '-f', 'null', '-'], {
     signal,
     onErr: (line) => {
-      const v = /VAD detected \d+ segments?, start: (\d+) ms, end: (\d+) ms/.exec(line)
-      if (v) seg = { vs: Number(v[1]) / 1000, ve: Number(v[2]) / 1000 }
-      const at = /run transcription at (\d+) ms/.exec(line)
-      if (at) runs.push({ at: Number(at[1]) / 1000, ...seg })
-      if (!at || !total) return
-      onStage('listen', Math.min(0.99, Number(at[1]) / 1000 / total))
+      const at = log.line(line)
+      if (at === null || !total) return
+      onStage('listen', Math.min(0.99, at / total))
     }
   })
   if (signal.aborted) return { error: 'Cancelado.' }
   if (r.code !== 0) return { error: 'O Whisper falhou: ' + r.err.split('\n').slice(-4).join(' ').slice(0, 300) }
-  const words: Word[] = []
-  // O filtro devolve os tempos de cada rodada a partir do começo dela, "esticando" as primeiras palavras
-  // por cima do silêncio inicial. Os limites do VAD são exatos: remapeia [0, fim] → [início da fala, fim].
-  let k = 0
-  const fix = (t: number) => {
-    const R = runs[k]
-    if (!R || R.ve <= 0) return t
-    const rel = Math.min(Math.max(t - R.at, 0), R.ve)
-    return R.at + R.vs + (rel * (R.ve - R.vs)) / R.ve
-  }
-  for (const line of (await fs.readFile(out, 'utf8').catch(() => '')).split(/\r?\n/)) {
-    if (!line.trim()) continue
-    try {
-      const j = JSON.parse(line)
-      const w = String(j.text ?? '').trim()
-      const s0 = j.start / 1000
-      while (k + 1 < runs.length && s0 >= runs[k + 1].at - 0.001) k++
-      // texto inventado no silêncio do fim (o Whisper às vezes "legenda" o nada)
-      const s = fix(s0)
-      if (total && s > total - 0.05) continue
-      if (w) words.push({ s, e: Math.min(fix(j.end / 1000), total || Infinity), w })
-    } catch {
-      /* linha quebrada */
-    }
-  }
+  const words: Word[] = wordsFromWhisper(await fs.readFile(out, 'utf8').catch(() => ''), log.runs, total)
   await fs.writeFile(cache, JSON.stringify(words))
   return { words }
 }
