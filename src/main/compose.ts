@@ -4,6 +4,28 @@
  * Sem Electron aqui: só texto, pra dar pra testar com o ffmpeg puro.
  */
 
+/**
+ * Versão da codificação: entra na assinatura das partes e dos letterings do render, pra que um ajuste
+ * aqui grave tudo de novo em vez de reaproveitar arquivos feitos com o ajuste antigo.
+ */
+export const ENCODE_V = 2
+
+/**
+ * H.264 de entrega. Fundo em gradiente escuro com grão (o que o motion mais faz) é o pior caso do
+ * x264: no "veryfast" com CRF 18–20 ele joga o grão fora e o gradiente vira blocos e degraus.
+ * - `grain`: animação feita no Typos (motion, lettering): guarda o grão, que é o que esconde os degraus.
+ * - `master`: partes do render (gravam de novo o que já veio comprimido): CRF menor e AQ que protege
+ *   as áreas escuras e lisas.
+ * As cores saem em BT.709 (o padrão de vídeo HD), marcadas no arquivo.
+ */
+export function x264Args(kind: 'grain' | 'master'): string[] {
+  const q = kind === 'grain' ? ['-preset', 'slow', '-crf', '12', '-tune', 'grain'] : ['-preset', 'medium', '-crf', '14', '-x264-params', 'aq-mode=3']
+  return ['-c:v', 'libx264', ...q, '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709']
+}
+
+/** RGB (quadros PNG do navegador) → YUV 4:2:0 em BT.709, com arredondamento preciso (sem degrau extra) */
+export const RGB_TO_YUV = 'flags=bicubic+accurate_rnd+full_chroma_int:out_color_matrix=bt709:out_range=tv'
+
 /** camada de vídeo (clipe, imagem ou lettering): tempos na timeline, já com os crossfades */
 export interface VLayer {
   path: string
@@ -155,7 +177,7 @@ export function partArgs(p: PartSpec): string[] {
   )
 
   args.push('-filter_complex', fil.join(';'))
-  args.push('-map', '[vout]', '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(fps), '-an', p.outVideo)
+  args.push('-map', '[vout]', '-frames:v', String(frames), ...x264Args('master'), '-r', String(fps), '-an', p.outVideo)
   args.push('-map', '[aout]', '-c:a', 'pcm_f32le', '-ar', String(RATE), '-ac', '2', p.outWav)
   return args
 }

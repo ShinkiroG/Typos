@@ -450,6 +450,8 @@ export function projectSize(format?: Format) {
 }
 
 export const CLIP_FPS = 30
+/** versão da gravação do clipe (sobe junto com ENCODE_V do main): clipes mais velhos podem ser regravados */
+export const CLIP_ENC = 2
 
 export function blockPrompt(o: {
   block: InstructionBlock

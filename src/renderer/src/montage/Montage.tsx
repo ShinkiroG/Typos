@@ -53,7 +53,7 @@ import { askText } from '../components/AskDialog'
 import { YoutubeDownload } from '../components/YoutubeDownload'
 import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H, findGap, mediaLen, splitClip, trackHeight, type GapSel, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
-import { blockDur, blockFromClip, blockLabel, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale, rangeTweak } from './blocks'
+import { CLIP_ENC, blockDur, blockFromClip, blockLabel, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale, rangeTweak } from './blocks'
 import { MotionEditor } from './MotionEditor'
 import { BlockInspector, BlockWindow, busyOverall, type BlockBusy } from './BlockPanel'
 import { AudioReadButton, BlockHeardRow, useBlockHeard } from './AudioRead'
@@ -1202,7 +1202,8 @@ export function Montage({
         height: info.height,
         fps: info.fps,
         motionHtml: b.preview!.html,
-        motionBlock: { ...b, approved: true }
+        motionBlock: { ...b, approved: true },
+        motionEnc: CLIP_ENC
       }
       // o clipe ia até o fim do motion: continua indo (se o motion cresceu, o clipe cresce junto)
       const full = c.out >= old.duration - 0.05
@@ -1252,7 +1253,8 @@ export function Montage({
         height: info.height,
         fps: info.fps,
         motionHtml: b.preview.html,
-        motionBlock: { ...b, approved: true }
+        motionBlock: { ...b, approved: true },
+        motionEnc: CLIP_ENC
       }
       // na faixa do bloco; se já tem corte ali, na primeira faixa de vídeo livre acima (ou numa nova, em cima de tudo)
       const free = (tid: string) => !d.clips.some((c) => c.track === tid && c.start < b.end - 0.001 && clipEndT(c) > b.start + 0.001)
@@ -2719,6 +2721,10 @@ export function Montage({
         <MotionEditor
           block={motionEdit.block}
           pending={motionEdit.pending}
+          outdated={(() => {
+            const c = data.clips.find((x) => x.id === motionEdit.clipId)
+            return (data.media.find((m) => m.id === c?.media)?.motionEnc ?? 0) < CLIP_ENC
+          })()}
           dir={dir}
           busy={blockBusy}
           onAdjust={motionEditAdjust}
