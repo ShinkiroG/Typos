@@ -2214,3 +2214,25 @@
     grid-column: 1;
   }
 }
+
+.mx-extend {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text);
+  background: repeating-linear-gradient(-45deg, color-mix(in srgb, #4ade80 22%, transparent) 0 6px, color-mix(in srgb, #4ade80 10%, transparent) 6px 12px);
+  border-right: 2px solid #4ade80;
+  pointer-events: none;
+}
+.mx-extend-in {
+  width: 64px;
+  padding: 1px 4px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+}

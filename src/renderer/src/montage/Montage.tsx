@@ -53,7 +53,7 @@ import { askText } from '../components/AskDialog'
 import { YoutubeDownload } from '../components/YoutubeDownload'
 import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H, findGap, mediaLen, splitClip, trackHeight, type GapSel, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
-import { blockDur, blockFromClip, blockLabel, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale, rangeTweak } from './blocks'
+import { blockDur, blockFromClip, blockLabel, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale, rangeTweak } from './blocks'
 import { MotionEditor } from './MotionEditor'
 import { BlockInspector, BlockWindow, busyOverall, type BlockBusy } from './BlockPanel'
 import { AudioReadButton, BlockHeardRow, useBlockHeard } from './AudioRead'
@@ -1141,12 +1141,14 @@ export function Montage({
     if (r) setMotionEdit({ clipId: c.id, block: r.block, pending: false })
   }
   /** pede a alteração (do trecho marcado ou do clipe todo): sai uma prévia nova, o clipe ainda não muda */
-  const motionEditAdjust = async (tweak: { text: string; files: Attachment[] }, range: [number, number] | null) => {
+  const motionEditAdjust = async (tweak: { text: string; files: Attachment[] }, range: [number, number] | null, extend: number | null) => {
     const me = motionEdit
     const base = me && blockFromClip(dataRef.current, me.clipId, blockFormat)
     if (!me || !base || blockBusy) return
-    const b = me.block
-    const tweaks = [...(b.tweaks ?? []), { id: uid(), at: new Date().toISOString(), text: rangeTweak(tweak.text, range), files: tweak.files }]
+    // continuar: o bloco cresce até a nova duração (a fala, o vídeo de baixo e a gravação passam a cobrir o trecho novo)
+    const b = extend ? { ...me.block, end: me.block.start + extend } : me.block
+    const text = extend ? extendTweak(tweak.text, blockDur(me.block), extend) : rangeTweak(tweak.text, range)
+    const tweaks = [...(b.tweaks ?? []), { id: uid(), at: new Date().toISOString(), text, files: tweak.files }]
     const t0 = Date.now()
     setBlockBusy({ id: b.id, label: 'Preparando…', pct: null, t0 })
     const ac = new AbortController()
@@ -1165,7 +1167,7 @@ export function Montage({
         signal: ac.signal,
         adjust: { tweaks }
       })
-      setMotionEdit((m) => (m && m.clipId === me.clipId ? { ...m, block: { ...m.block, preview, tweaks }, pending: true } : m))
+      setMotionEdit((m) => (m && m.clipId === me.clipId ? { ...m, block: { ...b, preview, tweaks }, pending: true } : m))
     } catch (e) {
       const msg = (e as Error).message
       if (msg !== 'Cancelado.') alert('Não deu pra fazer a alteração: ' + msg)
@@ -1202,7 +1204,9 @@ export function Montage({
         motionHtml: b.preview!.html,
         motionBlock: { ...b, approved: true }
       }
-      change({ ...d, media: [...d.media, m], clips: d.clips.map((x) => (x.id === c.id ? { ...x, media: m.id, out: Math.min(x.out, m.duration) } : x)) })
+      // o clipe ia até o fim do motion: continua indo (se o motion cresceu, o clipe cresce junto)
+      const full = c.out >= old.duration - 0.05
+      change({ ...d, media: [...d.media, m], clips: d.clips.map((x) => (x.id === c.id ? { ...x, media: m.id, out: full ? m.duration : Math.min(x.out, m.duration) } : x)) })
       const r = blockFromClip({ ...d, media: [...d.media, m], clips: d.clips.map((x) => (x.id === c.id ? { ...x, media: m.id } : x)) }, c.id, blockFormat)
       setMotionEdit((cur) => (cur && cur.clipId === me.clipId && r ? { ...cur, block: r.block, pending: false } : cur))
     } catch (e) {

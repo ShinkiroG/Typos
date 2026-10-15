@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { snapMove } from '../montage/snap'
-import { blockFromClip, blockKey, neighborOf, newBlock, rangeTweak, slimHtml } from '../montage/blocks'
+import { blockFromClip, blockKey, extendTweak, neighborOf, newBlock, rangeTweak, slimHtml } from '../montage/blocks'
 import type { MontageData } from '../lib'
 
 // ímã de teste: gruda em 10 e 20 se estiver a menos de 0,2 s
@@ -98,5 +98,14 @@ describe('motion aprovado antes de guardar o bloco', () => {
     const d = montage()
     d.media[1] = { ...d.media[1], path: 'C:\\proj\\previas\\bk123\\clipe-2026.mp4' }
     expect(blockFromClip(d, 'c2')!.block.id).toBe('bk123')
+  })
+})
+
+describe('continuar o motion', () => {
+  it('pede pra manter o que existe e seguir até a nova duração', () => {
+    const t = extendTweak('entra o logo', 5, 8.5)
+    expect(t).toContain('acaba em 5,00 s')
+    expect(t).toContain('durar 8,50 s')
+    expect(t).toContain('entra o logo')
   })
 })

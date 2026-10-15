@@ -219,7 +219,9 @@ export function AdjustBox({
   busy,
   onAdjust,
   onClose,
-  title = 'Pedir ajustes nesta prévia'
+  title = 'Pedir ajustes nesta prévia',
+  allowEmpty,
+  sendLabel = 'Enviar ajuste'
 }: {
   b: InstructionBlock
   dir: string
@@ -227,13 +229,16 @@ export function AdjustBox({
   onAdjust: AdjustFn
   onClose?: () => void
   title?: string
+  /** pode enviar sem texto nem imagem (ex.: continuar o motion) */
+  allowEmpty?: boolean
+  sendLabel?: string
 }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<Attachment[]>([])
   const ref = useRef<HTMLTextAreaElement>(null)
   useEffect(() => ref.current?.focus(), [])
   const send = () => {
-    if (busy || (!text.trim() && !files.length)) return
+    if (busy || (!allowEmpty && !text.trim() && !files.length)) return
     onAdjust({ text: text.trim(), files })
     setText('')
     setFiles([])
@@ -312,8 +317,8 @@ export function AdjustBox({
           <ClipboardPaste size={13} />
         </button>
         <span className="st-grow" />
-        <button className="btn small primary" disabled={busy || (!text.trim() && !files.length)} title="Ctrl+Enter" onClick={send}>
-          <Send size={12} /> Enviar ajuste
+        <button className="btn small primary" disabled={busy || (!allowEmpty && !text.trim() && !files.length)} title="Ctrl+Enter" onClick={send}>
+          <Send size={12} /> {sendLabel}
         </button>
       </div>
     </div>
