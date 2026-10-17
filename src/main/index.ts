@@ -15,7 +15,7 @@ import { initMotionPreview } from './motionPreview'
 import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, framesAt, initDownloads, findFfmpeg, findYtDlp, type FrameWeights } from './media'
 import { initWhisper } from './whisper'
 import { initHistory, beforeSave, snapshotNow, projectId, adoptDir, onOpen } from './history'
-import { relocatePaths } from './historyCore'
+import { relocatePaths, validId } from './historyCore'
 import { initRelink } from './relink'
 import { initExportProject, fixExternalPaths } from './exportProject'
 
@@ -477,9 +477,23 @@ function queued<T>(dir: string, job: () => Promise<T>): Promise<T> {
   return next
 }
 
-ipcMain.handle('project:save', (_e, dir: string, data: any, markdown: string): Promise<Result<true>> =>
+/** pasta que sumiu com o roteiro aberto → rascunho onde o texto foi parar (um só, mesmo com vários salvamentos) */
+const rescued = new Map<string, string>()
+
+ipcMain.handle('project:save', (_e, dir: string, data: any, markdown: string): Promise<Result<true | { rescued: string }>> =>
   queued(dir, async () => {
     try {
+      // a pasta foi renomeada, movida ou apagada com o roteiro aberto: o texto vai pra um rascunho
+      // em vez de dar erro (e se perder ao fechar)
+      if (!existsSync(dir)) {
+        const key = resolve(dir).toLowerCase()
+        const rescue = rescued.get(key) ?? (await newDraftDir())
+        rescued.set(key, rescue)
+        await writeJson(join(rescue, PROJECT_FILE), data)
+        await fs.writeFile(join(rescue, MARKDOWN_FILE), markdown, 'utf8')
+        if (validId(data.id)) await adoptDir(rescue, data.id, data.title).catch((err) => console.warn('histórico:', err))
+        return { rescued: rescue }
+      }
       const diskText = await fs.readFile(join(dir, PROJECT_FILE), 'utf8').catch(() => null)
       await beforeSave(dir, diskText, data)
       await writeJson(join(dir, PROJECT_FILE), data)
@@ -510,7 +524,9 @@ ipcMain.handle('project:saveAs', async (_e, dir: string, data: any, markdown: st
   if (existsSync(join(target, PROJECT_FILE))) return { error: 'Já existe um roteiro nessa pasta. Escolha outro nome.' }
   try {
     await snapshotNow(dir, 'salvar-como').catch((err) => console.warn('histórico:', err))
-    await fs.cp(dir, target, { recursive: true, filter: (src) => basename(src) !== '.typos-versoes' })
+    // pasta de origem sumiu (renomeada com o roteiro aberto): salva só o roteiro
+    if (existsSync(dir)) await fs.cp(dir, target, { recursive: true, filter: (src) => basename(src) !== '.typos-versoes' })
+    else await fs.mkdir(target, { recursive: true })
     // a mídia de dentro da pasta (gravações, anexos) passa a apontar pra cópia: o rascunho vai ser apagado
     const out = relocatePaths(data, dir, target)
     // rascunho salvo continua o mesmo roteiro (mesmo histórico); cópia de um roteiro salvo é outro
@@ -991,6 +1007,7 @@ ipcMain.handle('project:move', async (_e, dir: string, title: string): Promise<R
   const target = join(r.filePaths[0], basename(dir))
   if (resolve(target) === resolve(dir)) return { dir }
   if (existsSync(target)) return { error: `Já existe uma pasta "${basename(dir)}" lá.` }
+  if (!existsSync(dir)) return { error: 'A pasta do roteiro não existe mais (foi renomeada ou movida?). Use Arquivo → Salvar como… pra escolher onde guardar.' }
   try {
     try {
       await fs.rename(dir, target)

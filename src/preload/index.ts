@@ -32,7 +32,9 @@ export interface HistoryProject {
 const api = {
   newProject: () => ipcRenderer.invoke('project:new'),
   openProject: (dir?: string) => ipcRenderer.invoke('project:open', dir),
-  saveProject: (dir: string, data: unknown, markdown: string) => ipcRenderer.invoke('project:save', dir, data, markdown),
+  /** rescued: a pasta não existia mais; o roteiro foi gravado num rascunho novo */
+  saveProject: (dir: string, data: unknown, markdown: string): Promise<true | { rescued: string } | { error: string }> =>
+    ipcRenderer.invoke('project:save', dir, data, markdown),
   saveProjectAs: (dir: string, data: unknown, markdown: string): Promise<{ dir: string } | { error: string } | null> =>
     ipcRenderer.invoke('project:saveAs', dir, data, markdown),
   recentProjects: () => ipcRenderer.invoke('project:recent'),

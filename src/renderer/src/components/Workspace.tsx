@@ -915,25 +915,37 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
     return { out, md }
   }, [data])
 
+  /** grava; devolve a pasta de rascunho se a pasta do roteiro sumiu (quiet: quem chamou continua dali) */
+  const persist = useCallback(
+    async (quiet: boolean): Promise<string | undefined> => {
+      window.clearTimeout(timer.current)
+      const snap = snapshot()
+      if (!snap) return
+      setSaveState('saving')
+      const r = await api.saveProject(dirRef.current, snap.out, snap.md)
+      setSaveState(r && typeof r === 'object' && 'error' in r ? 'error' : 'saved')
+      if (r && typeof r === 'object' && 'rescued' in r) {
+        if (!quiet)
+          onSavedAs(r.rescued, 'A pasta do roteiro não existe mais (foi renomeada ou movida?). Nada se perdeu: o roteiro foi guardado como rascunho. Use Arquivo → Salvar… pra escolher onde ele fica.')
+        return r.rescued
+      }
+    },
+    [snapshot, onSavedAs]
+  )
   const save = useCallback(async () => {
-    window.clearTimeout(timer.current)
-    const snap = snapshot()
-    if (!snap) return
-    setSaveState('saving')
-    const r = await api.saveProject(dirRef.current, snap.out, snap.md)
-    setSaveState(r && typeof r === 'object' && 'error' in r ? 'error' : 'saved')
-  }, [snapshot])
+    await persist(false)
+  }, [persist])
   saveRef.current = save
 
   const saveAs = useCallback(async () => {
-    await save()
+    const from = (await persist(true)) ?? dirRef.current
     const snap = snapshot()
     if (!snap) return
-    const r = await api.saveProjectAs(dirRef.current, snap.out, snap.md)
+    const r = await api.saveProjectAs(from, snap.out, snap.md)
     if (!r) return
     if ('error' in r) return setToast(r.error)
     onSavedAs(r.dir, 'Salvo em ' + r.dir)
-  }, [save, snapshot, onSavedAs])
+  }, [persist, snapshot, onSavedAs])
 
   // título/formato também salvam
   const first = useRef(true)
