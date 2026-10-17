@@ -2339,3 +2339,14 @@
   border-radius: 4px;
   color: var(--text);
 }
+
+/* "Ajustar": a linha/coluna da grade não pode crescer com o tamanho natural do vídeo,
+   senão o max-height: 100% não segura e a prévia passa por baixo dos controles */
+.mt-screen:not(.zoomed) {
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+}
+/* visualizador ampliado (F / duplo clique no vídeo) */
+.mt-pool[hidden],
+.mt-inspector[hidden] {
+  display: none;
+}

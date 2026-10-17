@@ -409,7 +409,19 @@ export async function findYtDlp(force = false) {
   return (ytdlpFound = hit)
 }
 
-let dlProc: ReturnType<typeof spawn> | null = null
+/** cancela o que estiver rodando no download (o yt-dlp ou o corte local no ffmpeg) */
+let dlStop: (() => void) | null = null
+let dlBusy = false
+
+/** "1:05", "0:28.5", "90" → segundos */
+const toSecs = (t?: string) => (t ? t.split(':').reduce((a, x) => a * 60 + Number(x), 0) : NaN)
+
+/**
+ * O "ffmpeg exited with code 3436169992" do yt-dlp é o AVERROR_HTTP_FORBIDDEN (0xCCCFCB08):
+ * no --download-sections quem baixa é o ffmpeg, direto do servidor do YouTube, e ele leva 403.
+ * O downloader do próprio yt-dlp passa, então o trecho cai pro plano B: baixa inteiro e corta aqui.
+ */
+export const sectionFailed = (msg: string) => /ffmpeg exited with code|HTTP error 403|403 Forbidden|Server returned 403/i.test(msg)
 
 export function initDownloads() {
   ipcMain.handle('media:ytdlp', async () => {
@@ -425,8 +437,8 @@ export function initDownloads() {
   })
 
   ipcMain.handle('media:dlCancel', () => {
-    dlProc?.kill()
-    dlProc = null
+    dlStop?.()
+    dlStop = null
   })
 
   ipcMain.handle(
@@ -434,24 +446,51 @@ export function initDownloads() {
     async (e, url: string, dir: string, opts: { quality: '1080' | '720' | 'audio'; from?: string; to?: string; target?: 'motion' }): Promise<{ path: string } | { error: string }> => {
       const yt = await findYtDlp()
       if (!yt) return { error: 'yt-dlp não encontrado' }
-      if (dlProc) return { error: 'já tem um download em andamento' }
-      const ff = await findFfmpeg()
-      // referências de motion são globais (servem pra todo formato): ficam no userData
-      const dest = opts.target === 'motion' ? join(app.getPath('userData'), 'format-media', 'videos') : join(dir, 'assets', 'material-bruto')
-      await fs.mkdir(dest, { recursive: true })
-      const fmt =
-        opts.quality === 'audio' ? 'ba[ext=m4a]/ba' : `bv*[height<=${opts.quality}][ext=mp4]+ba[ext=m4a]/bv*[height<=${opts.quality}]+ba/b[height<=${opts.quality}]/b`
+      if (dlBusy) return { error: 'já tem um download em andamento' }
+      dlBusy = true
+      try {
+        return await download(e.sender, yt, url, dir, opts)
+      } finally {
+        dlBusy = false
+        dlStop = null
+      }
+    }
+  )
+}
+
+type Progress = { pct: number; speed: string; eta: string }
+
+async function download(
+  sender: Electron.WebContents,
+  yt: string,
+  url: string,
+  dir: string,
+  opts: { quality: '1080' | '720' | 'audio'; from?: string; to?: string; target?: 'motion' }
+): Promise<{ path: string } | { error: string }> {
+  const ff = await findFfmpeg()
+  const send = (p: Progress) => !sender.isDestroyed() && sender.send('media:dlProgress', p)
+  // referências de motion são globais (servem pra todo formato): ficam no userData
+  const dest = opts.target === 'motion' ? join(app.getPath('userData'), 'format-media', 'videos') : join(dir, 'assets', 'material-bruto')
+  await fs.mkdir(dest, { recursive: true })
+  const audio = opts.quality === 'audio'
+  const section = !!(opts.from || opts.to)
+  const span = section ? toSecs(opts.to) - toSecs(opts.from || '0') : NaN
+  const fmt = audio ? 'ba[ext=m4a]/ba' : `bv*[height<=${opts.quality}][ext=mp4]+ba[ext=m4a]/bv*[height<=${opts.quality}]+ba/b[height<=${opts.quality}]/b`
+
+  /** uma rodada do yt-dlp; `cut` = baixa só o trecho (o ffmpeg busca direto do servidor) */
+  const ytdlp = (outDir: string, cut: boolean) =>
+    new Promise<{ code: number | null; file?: string; error?: string }>((resolve) => {
       const args = [
         '--no-playlist',
         '--newline',
         '--no-mtime',
         '-f',
         fmt,
-        ...(opts.quality === 'audio' ? ['-x', '--audio-format', 'm4a'] : ['--merge-output-format', 'mp4']),
+        ...(audio ? ['-x', '--audio-format', 'm4a'] : ['--merge-output-format', 'mp4']),
         ...(ff ? ['--ffmpeg-location', dirname(ff.ffmpeg)] : []),
-        ...(opts.from || opts.to ? ['--download-sections', `*${opts.from || '0'}-${opts.to || 'inf'}`, '--force-keyframes-at-cuts'] : []),
+        ...(cut ? ['--download-sections', `*${opts.from || '0'}-${opts.to || 'inf'}`, '--force-keyframes-at-cuts'] : []),
         '-o',
-        join(dest, '%(title).80s [%(id)s]' + (opts.from || opts.to ? ' (trecho)' : '') + '.%(ext)s'),
+        join(outDir, '%(title).80s [%(id)s]' + (cut ? ' (trecho)' : '') + '.%(ext)s'),
         '--print',
         'after_move:filepath',
         // o --print deixa o yt-dlp quieto: religa a saída pra ter o progresso
@@ -463,68 +502,127 @@ export function initDownloads() {
         url
       ]
       const started = Date.now()
-      return new Promise((resolve) => {
-        const p = spawn(yt, args, { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' } })
-        dlProc = p
-        let out = ''
-        let err = ''
-        let step = 0
+      const p = spawn(yt, args, { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' } })
+      dlStop = () => p.kill()
+      let out = ''
+      let err = ''
+      let step = 0
+      // no trecho a barra vai até 99%; no plano B o download é a primeira metade e o corte, a segunda
+      const scale = section && !cut ? 0.5 : 1
+      const onLine = (line: string) => {
         // trecho: o yt-dlp corta com o ffmpeg (sem %): o progresso sai do "time=" sobre a duração do trecho
-        const secs = (t?: string) => (t ? t.split(':').reduce((a, x) => a * 60 + Number(x), 0) : NaN)
-        const span = opts.from || opts.to ? secs(opts.to || '') - secs(opts.from || '0') : NaN
-        const onLine = (line: string) => {
-          const tm = /time=(\d+):(\d+):([\d.]+)/.exec(line)
-          if (tm && span > 0 && !e.sender.isDestroyed()) {
-            const done = Number(tm[1]) * 3600 + Number(tm[2]) * 60 + Number(tm[3])
-            e.sender.send('media:dlProgress', { pct: Math.min(0.99, done / span), speed: '', eta: '' })
-          }
-          // vídeo e áudio baixam separados: a barra vai de 0–50% e 50–100%
-          if (/Destination:/.test(line)) step++
-          const m = /\[download\]\s+([\d.]+)%(?:.*?at\s+(\S+))?(?:.*?ETA\s+(\S+))?/.exec(line)
-          if (m && !e.sender.isDestroyed()) {
-            const raw = Number(m[1]) / 100
-            const pct = opts.quality === 'audio' ? raw : Math.min(0.99, (Math.max(0, step - 1) + raw) / 2)
-            e.sender.send('media:dlProgress', { pct, speed: m[2] ?? '', eta: m[3] ?? '' })
-          }
-          if (/\[Merger\]|\[ExtractAudio\]|\[ModifyChapters\]/.test(line) && !e.sender.isDestroyed()) e.sender.send('media:dlProgress', { pct: 0.99, speed: '', eta: 'juntando…' })
+        const tm = /time=(\d+):(\d+):([\d.]+)/.exec(line)
+        if (tm && cut && span > 0) {
+          const done = Number(tm[1]) * 3600 + Number(tm[2]) * 60 + Number(tm[3])
+          send({ pct: Math.min(0.99, done / span), speed: '', eta: '' })
         }
-        p.stdout.on('data', (d) => {
-          out += d
-          // o ffmpeg reescreve a mesma linha com \r (progresso): separa por \r também
-          String(d).split(/\r\n|\r|\n/).forEach(onLine)
-        })
-        p.stderr.on('data', (d) => {
-          err += d
-          String(d).split(/\r\n|\r|\n/).forEach(onLine)
-        })
-        p.on('close', async (code) => {
-          dlProc = null
-          let file = out
-            .split(/\r?\n/)
-            .map((l) => l.trim())
-            .filter((l) => l && existsSync(l))
-            .pop()
-          // plano B: o arquivo mais novo da pasta, criado durante este download
-          if (code === 0 && !file) {
-            let best: { f: string; t: number } | null = null
-            for (const n of await fs.readdir(dest).catch(() => [] as string[])) {
-              if (/\.(part|ytdl|temp)$/i.test(n)) continue
-              const st = await fs.stat(join(dest, n)).catch(() => null)
-              if (st && st.mtimeMs >= started - 2000 && (!best || st.mtimeMs > best.t)) best = { f: join(dest, n), t: st.mtimeMs }
-            }
-            file = best?.f
-          }
-          if (code === 0 && file) return resolve({ path: file })
-          if (code === null) return resolve({ error: 'download cancelado' })
-          const lines = (err + '\n' + out).split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-          const why = lines.filter((l) => /ERROR/.test(l)).pop() ?? lines.filter((l) => !/^\[download\]\s+[\d.]+%|frame=/.test(l)).slice(-2).join(' · ')
-          resolve({ error: 'yt-dlp: ' + (why || `terminou sem dizer o motivo (código ${code})`).slice(0, 400) })
-        })
-        p.on('error', (er) => {
-          dlProc = null
-          resolve({ error: String(er) })
-        })
+        // vídeo e áudio baixam separados: a barra vai de 0–50% e 50–100%
+        if (/Destination:/.test(line)) step++
+        const m = /\[download\]\s+([\d.]+)%(?:.*?at\s+(\S+))?(?:.*?ETA\s+(\S+))?/.exec(line)
+        if (m) {
+          const raw = Number(m[1]) / 100
+          const pct = audio ? raw : (Math.max(0, step - 1) + raw) / 2
+          send({ pct: Math.min(0.99, pct * scale), speed: m[2] ?? '', eta: m[3] ?? '' })
+        }
+        if (/\[Merger\]|\[ExtractAudio\]|\[ModifyChapters\]/.test(line)) send({ pct: Math.min(0.99, scale), speed: '', eta: 'juntando…' })
+      }
+      p.stdout.on('data', (d) => {
+        out += d
+        // o ffmpeg reescreve a mesma linha com \r (progresso): separa por \r também
+        String(d).split(/\r\n|\r|\n/).forEach(onLine)
       })
+      p.stderr.on('data', (d) => {
+        err += d
+        String(d).split(/\r\n|\r|\n/).forEach(onLine)
+      })
+      p.on('close', async (code) => {
+        let file = out
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => l && existsSync(l))
+          .pop()
+        // plano B: o arquivo mais novo da pasta, criado durante este download
+        if (code === 0 && !file) {
+          let best: { f: string; t: number } | null = null
+          for (const n of await fs.readdir(outDir).catch(() => [] as string[])) {
+            if (/\.(part|ytdl|temp)$/i.test(n)) continue
+            const st = await fs.stat(join(outDir, n)).catch(() => null)
+            if (st?.isFile() && st.mtimeMs >= started - 2000 && (!best || st.mtimeMs > best.t)) best = { f: join(outDir, n), t: st.mtimeMs }
+          }
+          file = best?.f
+        }
+        if (code === 0 && file) return resolve({ code, file })
+        if (code === null) return resolve({ code })
+        const lines = (err + '\n' + out).split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+        const why = lines.filter((l) => /ERROR/.test(l)).pop() ?? lines.filter((l) => !/^\[download\]\s+[\d.]+%|frame=/.test(l)).slice(-2).join(' · ')
+        resolve({ code, error: 'yt-dlp: ' + (why || `terminou sem dizer o motivo (código ${code})`).slice(0, 400) })
+      })
+      p.on('error', (er) => resolve({ code: -1, error: String(er) }))
+    })
+
+  const first = await ytdlp(dest, section)
+  if (first.file) return { path: first.file }
+  if (first.code === null) return { error: 'download cancelado' }
+  if (!section || !ff || !sectionFailed(first.error ?? '')) return { error: first.error ?? 'yt-dlp falhou' }
+
+  // sobras da tentativa que falhou
+  for (const n of await fs.readdir(dest).catch(() => [] as string[]))
+    if (n.includes('(trecho)') && /\.(part|ytdl|temp)$/i.test(n)) await fs.rm(join(dest, n), { force: true }).catch(() => {})
+
+  // plano B do trecho: baixa o vídeo inteiro numa pasta temporária e corta aqui com o ffmpeg
+  const tmp = join(dest, `.baixando-${Date.now()}`)
+  await fs.mkdir(tmp, { recursive: true })
+  try {
+    send({ pct: 0, speed: '', eta: 'baixando o vídeo inteiro pra cortar…' })
+    const full = await ytdlp(tmp, false)
+    if (full.code === null) return { error: 'download cancelado' }
+    if (!full.file) return { error: full.error ?? 'yt-dlp falhou' }
+    const ext = audio ? '.m4a' : '.mp4'
+    const out = join(dest, basename(full.file, extname(full.file)) + ' (trecho)' + ext)
+    const ac = new AbortController()
+    dlStop = () => ac.abort()
+    const from = toSecs(opts.from || '0')
+    // -ss antes do -i: busca rápida e, recodificando, o corte sai no quadro exato
+    const r = await run(
+      ff.ffmpeg,
+      [
+        '-hide_banner',
+        '-y',
+        ...(from > 0 ? ['-ss', String(from)] : []),
+        '-i',
+        full.file,
+        ...(span > 0 ? ['-t', String(span)] : []),
+        ...(audio ? ['-vn'] : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p']),
+        '-c:a',
+        'aac',
+        '-b:a',
+        '192k',
+        '-movflags',
+        '+faststart',
+        out
+      ],
+      {
+        signal: ac.signal,
+        onErr: (line) => {
+          const tm = /time=(\d+):(\d+):([\d.]+)/.exec(line)
+          if (tm && span > 0) {
+            const done = Number(tm[1]) * 3600 + Number(tm[2]) * 60 + Number(tm[3])
+            send({ pct: Math.min(0.99, 0.5 + (done / span) * 0.5), speed: '', eta: 'cortando…' })
+          }
+        }
+      }
+    )
+    if (ac.signal.aborted) {
+      await fs.rm(out, { force: true })
+      return { error: 'download cancelado' }
     }
-  )
+    if (r.code !== 0 || !existsSync(out)) {
+      await fs.rm(out, { force: true })
+      const why = r.err.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() ?? `código ${r.code}`
+      return { error: 'ffmpeg (corte do trecho): ' + why.slice(0, 300) }
+    }
+    return { path: out }
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true }).catch(() => {})
+  }
 }
