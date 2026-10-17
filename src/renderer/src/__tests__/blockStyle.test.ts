@@ -25,4 +25,16 @@ describe('estilo do bloco', () => {
   it('só copia os assets que a animação usa', () => {
     expect(assetFiles(assets, '<img src="estilo-11-bravo.png">')).toEqual([{ src: '/p/bravo.png', name: 'estilo-11-bravo.png' }])
   })
+  it('prompt negativo: o do estilo vale sempre e o do bloco soma', () => {
+    expect(prompt()).not.toContain('O que EVITAR')
+    const p = prompt({ format: { ...fmt, negative: 'nada de emoji' }, block: { ...newBlock('V1', 0, 4), negative: 'sem texto na tela' } })
+    expect(p).toContain('O que EVITAR')
+    expect(p).toContain('nada de emoji')
+    expect(p).toContain('sem texto na tela')
+  })
+  it('mudar o prompt negativo do bloco deixa a prévia velha; vazio não muda a chave', () => {
+    const b = newBlock('V1', 1, 3)
+    expect(blockKey({ ...b, negative: '  ' })).toBe(blockKey(b))
+    expect(blockKey({ ...b, negative: 'sem neon' })).not.toBe(blockKey(b))
+  })
 })

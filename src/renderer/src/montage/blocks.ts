@@ -44,7 +44,8 @@ export function blockKey(b: InstructionBlock) {
   const chain = b.fromPrev || b.toNext ? [[!!b.fromPrev, !!b.toNext]] : []
   const style = b.formatId ? [['estilo', b.formatId]] : []
   const raw = b.useRaw ? [['bruto']] : []
-  const s = JSON.stringify([b.start.toFixed(2), b.end.toFixed(2), b.text.trim(), !!b.dynamic, b.attachments.map((a) => [a.path, a.use, a.note ?? '']), blockSync(b), ...chain, ...style, ...raw])
+  const neg = b.negative?.trim() ? [['evitar', b.negative.trim()]] : []
+  const s = JSON.stringify([b.start.toFixed(2), b.end.toFixed(2), b.text.trim(), !!b.dynamic, b.attachments.map((a) => [a.path, a.use, a.note ?? '']), blockSync(b), ...chain, ...style, ...raw, ...neg])
   let h = 5381
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
   return (h >>> 0).toString(36)
@@ -657,6 +658,19 @@ export const CLIP_FPS = 30
 /** versão da gravação do clipe (sobe junto com ENCODE_V do main): clipes mais velhos podem ser regravados */
 export const CLIP_ENC = 2
 
+/** prompt negativo: o do estilo vale sempre e o do bloco soma em cima */
+export function negativePrompt(style?: string, block?: string) {
+  const s = style?.trim()
+  const b = block?.trim()
+  if (!s && !b) return []
+  return [
+    '## O que EVITAR (prompt negativo: nada disso pode aparecer no motion)',
+    ...(s ? ['Do estilo:', s] : []),
+    ...(b ? ['Deste bloco:', b] : []),
+    ''
+  ]
+}
+
 export function blockPrompt(o: {
   block: InstructionBlock
   format?: Format
@@ -694,6 +708,7 @@ export function blockPrompt(o: {
     b.text.trim() || (b.dynamic ? '(nenhuma: deduza da fala)' : '(vazio: deduza da fala)'),
     ''
   ]
+  L.push(...negativePrompt(o.format?.negative, b.negative))
   const ch = o.chapter
   if (ch) {
     L.push('## Capítulo')
