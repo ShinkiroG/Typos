@@ -4,6 +4,7 @@ import { clipDur, clipEndT, formatTime, uid, type MontageClip, type MontageData,
 import { PEAKS_PER_SEC, butted, fadeInGain, fadeOutGain, xfadeHalf, type MontageEngine } from './engine'
 import { BlockLayer } from './BlockLayer'
 import { snapMove } from './snap'
+import { shiftTracks } from './trackShift'
 import type { BlockHeard } from './AudioRead'
 import type { InstructionBlock } from '../lib'
 
@@ -366,9 +367,9 @@ export function EditTimeline(p: Props) {
       hit = sm.hit
       const ns = sm.start
       const shift = Math.max(-Math.min(...d.ids.map((id) => d.orig.clips.find((c) => c.id === id)!.start)), ns - o.start)
-      const tr = d.ids.length === 1 ? trackAt(e.clientY) : null
-      const okTrack = tr && tr.kind === d.orig.tracks.find((t) => t.id === o.track)?.kind ? tr.id : null
-      clips = clips.map((c) => (d.ids.includes(c.id) ? { ...c, start: c.start + shift, track: okTrack ?? c.track } : c))
+      // trocar de faixa: o grupo inteiro pula junto, quantas faixas o corte pego pular
+      const moved = shiftTracks(d.orig.tracks, d.orig.clips, d.ids, o.id, trackAt(e.clientY))
+      clips = clips.map((c) => (d.ids.includes(c.id) ? { ...c, start: c.start + shift, track: moved.get(c.id) ?? c.track } : c))
     } else if (d.kind === 'trim-l') {
       let nin = Math.min(o.out - MIN_DUR, Math.max(0, o.in + dt))
       const raw = o.start + (nin - o.in)
