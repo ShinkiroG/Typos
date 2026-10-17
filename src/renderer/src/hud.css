@@ -820,11 +820,24 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* encolhe pra caber no painel: a lista rola e os botões ficam sempre à vista */
+  flex: 0 1 auto;
+  min-height: 0;
   margin: 0 8px 8px;
   padding: 10px;
   border-radius: 10px;
   border: 1px solid rgba(34, 211, 238, 0.35);
   background: rgba(34, 211, 238, 0.06);
+}
+.mt-sfxlist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 60px;
+  overflow-y: auto;
+}
+.mt-sfxbtns {
+  flex-shrink: 0;
 }
 .mt-sfxlib {
   display: flex;
