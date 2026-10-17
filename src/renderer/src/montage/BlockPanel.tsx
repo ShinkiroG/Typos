@@ -3,6 +3,7 @@ import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2
 import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type Format, type InstructionBlock, type MontageData } from '../lib'
 import { PromptMenu } from './PromptMenu'
 import { rememberPrompt } from './prompts'
+import { hasDraft, loadDraft, saveDraft } from './drafts'
 import { blockDur, blockLabel, blockSync, isImage, neighborOf, neighborText, previewStale } from './blocks'
 
 const fmtTc = (t: number) => {
@@ -267,6 +268,9 @@ export function BlockForm({ b, data, dir, patch, big, formats, videoFormat }: Fo
 
 export type AdjustFn = (t: { text: string; files: Attachment[] }) => void
 
+/** chave do rascunho do "Pedir ajustes" da prévia do bloco */
+export const previewDraftKey = (b: InstructionBlock) => `prev:${b.id}`
+
 /** pedir ajustes na prévia atual: o histórico do que já foi pedido + campo de texto com anexos */
 export function AdjustBox({
   b,
@@ -276,7 +280,8 @@ export function AdjustBox({
   onClose,
   title = 'Pedir ajustes nesta prévia',
   allowEmpty,
-  sendLabel = 'Enviar ajuste'
+  sendLabel = 'Enviar ajuste',
+  draftKey = previewDraftKey(b)
 }: {
   b: InstructionBlock
   dir: string
@@ -287,16 +292,29 @@ export function AdjustBox({
   /** pode enviar sem texto nem imagem (ex.: continuar o motion) */
   allowEmpty?: boolean
   sendLabel?: string
+  /** onde o rascunho (texto e imagens ainda não enviados) fica guardado */
+  draftKey?: string
 }) {
-  const [text, setText] = useState('')
-  const [files, setFiles] = useState<Attachment[]>([])
+  // o rascunho sobrevive a fechar o painel, trocar de bloco e fechar o app; só some ao enviar
+  const [draft, setDraft] = useState(() => ({ key: draftKey, ...loadDraft(draftKey) }))
+  if (draft.key !== draftKey) setDraft({ key: draftKey, ...loadDraft(draftKey) })
+  const cur = draft.key === draftKey ? draft : { key: draftKey, ...loadDraft(draftKey) }
+  const { text, files } = cur
+  useEffect(() => saveDraft(draft.key, { text: draft.text, files: draft.files }), [draft])
+  const edit = (f: (d: typeof cur) => Partial<typeof cur>) => setDraft((d) => (d.key === draftKey ? { ...d, ...f(d) } : d))
+  const setText = (t: string) => edit(() => ({ text: t }))
+  const setFiles = (f: (prev: Attachment[]) => Attachment[]) => edit((d) => ({ files: f(d.files) }))
   const ref = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => ref.current?.focus(), [])
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(el.value.length, el.value.length)
+  }, [draftKey])
   const send = () => {
     if (busy || (!allowEmpty && !text.trim() && !files.length)) return
     onAdjust({ text: text.trim(), files })
-    setText('')
-    setFiles([])
+    edit(() => ({ text: '', files: [] }))
   }
   const imgs = (list: Attachment[]) => setFiles((f) => [...f, ...list.filter(isImage)])
   return (
@@ -405,7 +423,14 @@ export function BlockPreviewBox({
 }) {
   const mine = busy?.id === b.id
   const stale = previewStale(b)
-  const [asking, setAsking] = useState(false)
+  // com rascunho guardado, o painel de ajustes já volta aberto
+  const [asking, setAsking] = useState(() => hasDraft(previewDraftKey(b)))
+  const shownFor = useRef(b.id)
+  useEffect(() => {
+    if (shownFor.current === b.id) return
+    shownFor.current = b.id
+    setAsking(hasDraft(previewDraftKey(b)))
+  }, [b.id])
   return (
     <div className={'blk-prev' + (big ? ' big' : '')}>
       {b.preview ? (
