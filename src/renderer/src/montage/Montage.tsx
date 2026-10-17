@@ -53,7 +53,7 @@ import { askText } from '../components/AskDialog'
 import { YoutubeDownload } from '../components/YoutubeDownload'
 import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H, findGap, mediaLen, splitClip, trackHeight, type GapSel, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
-import { CLIP_ENC, blockDur, blockFromClip, blockLabel, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale, rangeTweak } from './blocks'
+import { CLIP_ENC, blockDur, blockFromClip, blockLabel, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale, rangeTweak, soundsToTimeline } from './blocks'
 import { MotionEditor } from './MotionEditor'
 import { BlockInspector, BlockWindow, busyOverall, type BlockBusy } from './BlockPanel'
 import { AudioReadButton, BlockHeardRow, useBlockHeard } from './AudioRead'
@@ -1280,7 +1280,9 @@ export function Montage({
       }
       // o som do clipe é a narração do trecho, que já está nas faixas de áudio: fica desligado (dá pra ligar no inspetor)
       const clip: MontageClip = { id: uid(), track, media: m.id, start: b.start, in: 0, out: Math.min(m.duration, len), audioOff: true }
-      change({ ...d, bins, tracks, media: [...d.media, m], clips: [...d.clips, clip], blocks: (d.blocks ?? []).filter((x) => x.id !== id) })
+      // os sons que o Claude pôs no motion viram cortes de áudio (a narração continua nas faixas dela)
+      const withSfx = soundsToTimeline({ ...d, tracks, media: [...d.media, m], clips: [...d.clips, clip] }, b, b.preview.sounds ?? [])
+      change({ ...d, bins, ...withSfx, blocks: (d.blocks ?? []).filter((x) => x.id !== id) })
       setBlockSel((s) => (s === id ? null : s))
       setBlockOpen((s) => (s === id ? null : s))
       setSelected([clip.id])

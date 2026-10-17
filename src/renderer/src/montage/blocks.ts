@@ -8,9 +8,11 @@ import {
   uid,
   type Attachment,
   type BlockAttachment,
+  type BlockSound,
   type BlockTweak,
   type Format,
   type InstructionBlock,
+  type MediaKind,
   type MontageData,
   type MotionMemoryItem
 } from '../lib'
@@ -41,7 +43,8 @@ export function newBlock(track: string, start: number, end: number): Instruction
 export function blockKey(b: InstructionBlock) {
   const chain = b.fromPrev || b.toNext ? [[!!b.fromPrev, !!b.toNext]] : []
   const style = b.formatId ? [['estilo', b.formatId]] : []
-  const s = JSON.stringify([b.start.toFixed(2), b.end.toFixed(2), b.text.trim(), !!b.dynamic, b.attachments.map((a) => [a.path, a.use, a.note ?? '']), blockSync(b), ...chain, ...style])
+  const raw = b.useRaw ? [['bruto']] : []
+  const s = JSON.stringify([b.start.toFixed(2), b.end.toFixed(2), b.text.trim(), !!b.dynamic, b.attachments.map((a) => [a.path, a.use, a.note ?? '']), blockSync(b), ...chain, ...style, ...raw])
   let h = 5381
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
   return (h >>> 0).toString(36)
@@ -162,12 +165,39 @@ function scriptIn(data: MontageData, b: InstructionBlock, script: ScriptBlock[])
   return script.filter((s) => idx.has(s.index) && s.text.trim()).map((s) => s.text.trim())
 }
 
-/** só as falas do roteiro (sem prompts nem instruções): é o tema do vídeo */
+/** as falas do roteiro (sem prompts nem instruções), com os capítulos como "# título": é o tema e a estrutura do vídeo */
 export const scriptFalas = (script: ScriptBlock[]) =>
   script
-    .filter((s) => s.type === 'paragraph' && s.text.trim())
-    .map((s) => s.text.trim())
+    .filter((s) => (s.type === 'paragraph' || s.type === 'chapter') && s.text.trim())
+    .map((s) => (s.type === 'chapter' ? '# ' + s.text.trim() : s.text.trim()))
     .join('\n')
+
+/** em que capítulo o bloco está e os letterings capitulares que passam por ele (tempos a partir do começo do bloco) */
+export interface ChapterInfo {
+  title: string
+  letterings: { label: string; t0: number; t1: number }[]
+}
+
+/**
+ * Capítulo do bloco: o último capítulo do roteiro antes das falas que tocam nele (pelo corte automático);
+ * sem falas ligadas, o último lettering que começa antes do fim do bloco.
+ */
+export function chapterAt(data: MontageData, b: InstructionBlock, script: ScriptBlock[]): ChapterInfo | null {
+  const markers = (data.markers ?? []).filter((m) => m.kind === 'lettering')
+  const letterings = markers
+    .filter((m) => m.dur > 0 && m.t < b.end && m.t + m.dur > b.start)
+    .map((m) => ({ label: m.label, t0: Math.max(0, m.t - b.start), t1: Math.min(blockDur(b), m.t + m.dur - b.start) }))
+  const idx = audioIn(data, b)
+    .map((c) => c.block)
+    .filter((i): i is number => i !== undefined)
+  let title = ''
+  if (idx.length) {
+    const first = Math.min(...idx)
+    title = script.filter((s) => s.type === 'chapter' && s.index < first && s.text.trim()).pop()?.text.trim() ?? ''
+  }
+  if (!title) title = markers.filter((m) => m.t < b.end).pop()?.label.trim() ?? ''
+  return title || letterings.length ? { title, letterings } : null
+}
 
 // ---------- o vídeo que está embaixo do bloco ----------
 /** a timeline só com as faixas de vídeo do bloco pra baixo (a primeira faixa da lista é a de cima); `all` = todas */
@@ -454,7 +484,146 @@ export async function styleAssets(format?: Format): Promise<StyleAsset[]> {
 }
 
 /** os assets do estilo que a animação usa (vão pra pasta da prévia/clipe com o nome que ela pede) */
-export const assetFiles = (assets: StyleAsset[], html: string) => assets.filter((a) => html.includes(a.name)).map((a) => ({ src: a.path, name: a.name }))
+export const assetFiles = (assets: { path: string; name: string }[], html: string) => assets.filter((a) => html.includes(a.name)).map((a) => ({ src: a.path, name: a.name }))
+
+// ---------- material bruto do projeto (checkbox "Usar o Material bruto" do bloco) ----------
+export interface RawFile {
+  path: string
+  /** categoria/pasta/arquivo na Montagem (o que o Claude lê pra escolher) */
+  rel: string
+  kind: MediaKind
+  /** nome do arquivo na pasta da prévia */
+  name: string
+  duration?: number
+  /** pasta da Montagem de onde vem */
+  bin: string
+}
+const MAX_RAW = 120
+/** de uma pasta vinculada do PC (bibliotecas de som podem ter milhares de arquivos) */
+const MAX_RAW_PER_LINK = 40
+/** quantas imagens do bruto vão também como imagem pro Claude olhar */
+export const MAX_RAW_IMAGES = 8
+
+/**
+ * O Material bruto do projeto (imagens, vídeos e sons, inclusive das pastas vinculadas do PC) e os sons da pasta SFX.
+ * Primeiro o que já foi importado na Montagem; depois as pastas vinculadas, as ⭐ antes.
+ */
+export async function rawFiles(data: MontageData): Promise<RawFile[]> {
+  const bins = new Map(data.bins.map((x) => [x.id, x]))
+  const chain = (id: string) => {
+    const out: MontageData['bins'] = []
+    for (let cur = bins.get(id); cur && out.length < 20; cur = cur.parent ? bins.get(cur.parent) : undefined) out.unshift(cur)
+    return out
+  }
+  const roleOf = (id: string) => chain(id)[0]?.role
+  const out: RawFile[] = []
+  const seen = new Set<string>()
+  const add = (f: Omit<RawFile, 'name'>) => {
+    if (seen.has(f.path) || out.length >= MAX_RAW) return
+    seen.add(f.path)
+    const ext = f.path.match(/\.\w+$/)?.[0]?.toLowerCase() ?? ''
+    const base = (f.path.split(/[\\/]/).pop() ?? 'arquivo').replace(/\.\w+$/, '').replace(/[^\w.-]+/g, '_').slice(0, 40)
+    out.push({ ...f, name: `bruto-${out.length + 1}-${base}${ext}` })
+  }
+  const wanted = (bin: string, kind: MediaKind) => roleOf(bin) === 'raw' || (roleOf(bin) === 'sfx' && kind === 'audio')
+  for (const m of data.media) {
+    if (m.motionHtml || m.motionBlock || !wanted(m.bin, m.kind)) continue
+    add({ path: m.path, rel: [...chain(m.bin).map((x) => x.name), m.name].join('/'), kind: m.kind, duration: m.duration, bin: m.bin })
+  }
+  const links = data.bins.filter((x) => x.linked && (roleOf(x.id) === 'raw' || roleOf(x.id) === 'sfx')).sort((a, z) => Number(!!z.star) - Number(!!a.star))
+  for (const x of links) {
+    if (out.length >= MAX_RAW) break
+    const list = await api.scanFolder(x.linked!).catch(() => ({ error: '' }))
+    if ('error' in list) continue
+    const where = chain(x.id).map((y) => y.name)
+    for (const f of list.filter((f) => wanted(x.id, f.kind)).slice(0, MAX_RAW_PER_LINK)) add({ path: f.path, rel: [...where, f.rel.replace(/\\/g, '/')].join('/'), kind: f.kind, bin: x.id })
+  }
+  return out
+}
+
+/** os sons que o Claude pediu na tag <sons> (só arquivos da lista, dentro do bloco) */
+export function parseSounds(text: string, raw: RawFile[], dur: number): BlockSound[] | null {
+  const body = text.match(/<sons>([\s\S]*?)<\/sons>/i)?.[1]
+  if (body === undefined) return null
+  let list: unknown
+  try {
+    list = JSON.parse(body.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim() || '[]')
+  } catch {
+    return []
+  }
+  if (!Array.isArray(list)) return []
+  const byName = new Map(raw.filter((f) => f.kind === 'audio' || f.kind === 'video').map((f) => [f.name, f]))
+  const out: BlockSound[] = []
+  for (const it of list as Record<string, unknown>[]) {
+    const f = byName.get(String(it?.arquivo ?? ''))
+    const at = Number(it?.em)
+    if (!f || !Number.isFinite(at) || at < 0 || at >= dur) continue
+    const v = Number(it?.volume)
+    out.push({ path: f.path, name: f.name, at, vol: Number.isFinite(v) ? Math.max(0.05, Math.min(1, v)) : 0.8, duration: f.duration, bin: f.bin })
+  }
+  return out
+}
+
+/** faixas de áudio onde os sons dos motions aprovados entram */
+export const SOUND_TRACK = 'Sons do motion'
+
+/**
+ * Ao aprovar: os sons do bloco viram cortes de áudio na timeline, nas faixas "Sons do motion" (cria quantas
+ * precisar pra um som não ficar por cima do outro). O arquivo que ainda não é mídia da Montagem vira, na pasta de onde veio.
+ */
+export function soundsToTimeline(d: MontageData, b: InstructionBlock, sounds: BlockSound[]): Pick<MontageData, 'media' | 'tracks' | 'clips'> {
+  let { media, tracks, clips } = d
+  for (const s of [...sounds].sort((x, z) => x.at - z.at)) {
+    let m = media.find((x) => x.path === s.path && !x.motionHtml)
+    const len = Math.min(s.duration ?? m?.duration ?? 0, blockDur(b) - s.at)
+    if (len <= 0.01) continue
+    if (!m) {
+      const video = /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(s.path)
+      m = { id: uid(), bin: s.bin ?? '', path: s.path, name: s.path.split(/[\\/]/).pop() ?? s.name, kind: video ? 'video' : 'audio', duration: s.duration ?? len, hasAudio: true, hasVideo: video }
+      media = [...media, m]
+    }
+    const start = b.start + s.at
+    const free = (tid: string) => !clips.some((c) => c.track === tid && c.start < start + len - 0.001 && clipEndT(c) > start + 0.001)
+    let track = tracks.find((t) => t.kind === 'audio' && t.name.startsWith(SOUND_TRACK) && free(t.id))
+    if (!track) {
+      const n = tracks.filter((t) => t.kind === 'audio' && t.name.startsWith(SOUND_TRACK)).length
+      track = { id: 'A-sons-' + uid().slice(0, 6), kind: 'audio', name: n ? `${SOUND_TRACK} ${n + 1}` : SOUND_TRACK }
+      tracks = [...tracks, track]
+    }
+    clips = [...clips, { id: uid(), track: track.id, media: m.id, start, in: 0, out: len, gainDb: Math.round(20 * Math.log10(s.vol) * 10) / 10 }]
+  }
+  return { media, tracks, clips }
+}
+
+/** id da mídia de um som do bloco no motor de áudio (a mesma pra o mesmo arquivo) */
+const soundMediaId = (path: string) => 'som:' + path
+
+/**
+ * A timeline com os sons do bloco por cima (numa faixa de áudio a mais), pra mixar a prévia e o clipe.
+ * Carrega os arquivos no motor de áudio; `sounds` volta com a duração de cada som (os que não carregaram ficam de fora).
+ */
+export async function withSounds(engine: MontageEngine, data: MontageData, dur: (id: string) => number, b: InstructionBlock, list: BlockSound[]) {
+  const sounds: BlockSound[] = []
+  if (!list.length) return { data, dur, sounds }
+  const media: MontageData['media'] = []
+  const clips: MontageData['clips'] = []
+  const lens = new Map<string, number>()
+  for (const [i, x] of list.entries()) {
+    const m = { id: soundMediaId(x.path), bin: x.bin ?? '', path: x.path, name: x.name, kind: 'audio' as const, duration: x.duration ?? 0, hasAudio: true, hasVideo: false }
+    const loaded = await engine.load(m).catch(() => null)
+    if (!loaded) continue
+    const s = { ...x, duration: loaded.buffer.duration }
+    sounds.push(s)
+    lens.set(m.id, s.duration)
+    if (!media.some((y) => y.id === m.id)) media.push({ ...m, duration: s.duration })
+    clips.push({ id: 'som-' + i, track: 'sons-do-bloco', media: m.id, start: b.start + s.at, in: 0, out: Math.min(s.duration, b.end - b.start - s.at), gainDb: 20 * Math.log10(s.vol) })
+  }
+  return {
+    sounds,
+    data: { ...data, tracks: [...data.tracks, { id: 'sons-do-bloco', kind: 'audio' as const, name: 'Sons do bloco' }], media: [...data.media, ...media], clips: [...data.clips, ...clips] },
+    dur: (id: string) => lens.get(id) ?? dur(id)
+  }
+}
 
 /** memória de motion em texto (mais novas primeiro, com limite de tamanho) */
 export function memorySection(memory: MotionMemoryItem[] | undefined, max = 14000) {
@@ -496,6 +665,8 @@ export function blockPrompt(o: {
   hasAudio: boolean
   scriptHere: string[]
   falas: string
+  /** capítulo do bloco e letterings capitulares que passam por ele */
+  chapter?: ChapterInfo | null
   files: { a: BlockAttachment; name: string }[]
   size: { w: number; h: number }
   under?: UnderInfo | null
@@ -505,6 +676,8 @@ export function blockPrompt(o: {
   adjust?: { html: string; tweaks: { text: string; names: string[] }[] }
   /** assets das pastas do estilo; os `shown` primeiros chegam como imagem a partir da imagem `first` */
   assets?: { list: StyleAsset[]; first: number; shown: number }
+  /** Material bruto do projeto (checkbox do bloco); as `shown` primeiras imagens chegam a partir da imagem `first` */
+  raw?: { list: RawFile[]; first: number; shown: number; sounds?: BlockSound[] }
 }) {
   const b = o.block
   const d = blockDur(b)
@@ -521,6 +694,16 @@ export function blockPrompt(o: {
     b.text.trim() || (b.dynamic ? '(nenhuma: deduza da fala)' : '(vazio: deduza da fala)'),
     ''
   ]
+  const ch = o.chapter
+  if (ch) {
+    L.push('## Capítulo')
+    if (ch.title) L.push(`Este bloco está no capítulo "${ch.title}". Use pra entender do que esta parte do vídeo trata.`)
+    for (const l of ch.letterings)
+      L.push(
+        `- De ${l.t0.toFixed(1)}s a ${l.t1.toFixed(1)}s (a partir do começo do bloco) o vídeo mostra o lettering capitular "${l.label}" (a transição de capítulo, feita à parte, por cima de tudo). Não repita esse título nem ponha texto que dispute com ele nesse intervalo: deixe o centro da tela livre ou faça o motion emendar com ele (entrando quando ele sai).`
+      )
+    L.push('')
+  }
   if (o.files.length) {
     L.push('## Anexos (as imagens chegam pra você na mesma ordem: a 1ª imagem é o anexo 1, e assim por diante)')
     o.files.forEach(({ a, name }, i) => {
@@ -548,7 +731,7 @@ export function blockPrompt(o: {
   else L.push(o.heardError ? `(não deu pra transcrever: ${o.heardError})` : '(só silêncio ou música)')
   if (o.scriptHere.length) L.push('', 'Falas do roteiro que caem aqui (use pra acertar nomes e termos; a fala gravada manda, inclusive improvisos):', ...o.scriptHere.map((s) => '> ' + s))
   L.push('')
-  if (o.falas) L.push('## Roteiro do vídeo (só as falas, pra entender o tema)', o.falas.slice(0, 12000), '')
+  if (o.falas) L.push('## Roteiro do vídeo (só as falas, com os capítulos como "# título", pra entender o tema)', o.falas.slice(0, 12000), '')
   L.push('## Direção de motion', MOTION_DIRECTION, syncDirection(blockSync(b)), '')
   L.push(safeZoneDirection(safeZones(o.format?.aspect, o.size.w, o.size.h), o.size), '')
   const rules = o.format?.rules?.trim()
@@ -562,6 +745,22 @@ export function blockPrompt(o: {
       'São os arquivos que este estilo sempre usa (ex.: pngtuber, logo, molduras, fundos). Quando as regras, o guia ou as instruções pedirem algum deles (ex.: o pngtuber no canto), USE o arquivo de verdade, nunca um desenho inventado no lugar: ele está na mesma pasta do HTML com o nome abaixo. Imagem: <img src="nome">. Vídeo: <video src="nome" muted playsinline></video> (o Typos sincroniza o tempo; não use autoplay nem mexa em currentTime). Escolha pela pasta e pelo nome o que combina com o momento (ex.: a expressão do pngtuber que casa com a fala).',
       ...a.list.map((x) => `- ${x.name} ← ${x.rel} (${x.kind === 'image' ? 'imagem' : 'vídeo'})`),
       a.shown ? `As imagens ${a.first} a ${a.first + a.shown - 1} são as ${a.shown} primeiras imagens desta lista, na mesma ordem.` : '',
+      ''
+    )
+  }
+  const raw = o.raw?.list.length ? o.raw : null
+  const rawSounds = !!raw?.list.some((f) => f.kind === 'audio' || f.kind === 'video')
+  if (raw) {
+    const kind = (f: RawFile) => (f.kind === 'image' ? 'imagem' : f.kind === 'video' ? 'vídeo' : 'som') + (f.duration ? `, ${f.duration.toFixed(1)} s` : '')
+    L.push(
+      '## Material bruto do projeto (o autor pediu pra você usar)',
+      'São os arquivos deste vídeo: gravações, prints, imagens, vídeos e sons. Use o que combinar com a fala e as instruções deste trecho, de verdade (o arquivo, não um desenho inventado no lugar), sem forçar: se nada combinar, não use. Eles estão na mesma pasta do HTML com o nome abaixo. Imagem: <img src="nome">. Vídeo: <video src="nome" muted playsinline></video> (o Typos sincroniza o tempo; não use autoplay nem mexa em currentTime).',
+      rawSounds
+        ? 'Som (efeito, trilha, ou o som de um vídeo da lista): NÃO ponha <audio> no HTML (ele não é gravado). Liste na tag <sons> do fim da resposta, com o segundo em que entra; o Typos mixa com a narração e, quando o autor aprovar, vira um corte de áudio na timeline. Som é tempero: poucos, nos momentos certos (uma entrada, um impacto, um número), com volume que não cubra a fala.'
+        : '',
+      ...raw.list.map((f) => `- ${f.name} ← ${f.rel} (${kind(f)})`),
+      raw.shown ? `As imagens ${raw.first} a ${raw.first + raw.shown - 1} são as ${raw.shown} primeiras imagens desta lista, na mesma ordem.` : '',
+      raw.sounds?.length ? 'Sons que você já tinha posto na prévia atual (repita na tag <sons> os que continuam): ' + JSON.stringify(raw.sounds.map((x) => ({ arquivo: x.name, em: x.at, volume: x.vol }))) : '',
       ''
     )
   }
@@ -591,6 +790,12 @@ export function blockPrompt(o: {
     `Um arquivo HTML completo e autocontido (CSS e JS inline, sem internet), em ${o.size.w}x${o.size.h} px preenchendo a página (body sem margem, overflow hidden), que toca o motion deste bloco UMA vez, começando em 0 s e durando exatamente ${d.toFixed(2)} s (sem loop; segure o último quadro). Anime com CSS keyframes, Web Animations ou requestAnimationFrame com performance.now(): o Typos controla o relógio e grava quadro a quadro. Use as fontes pelo nome (font-family) e as cores do estilo. O clipe final é gravado ampliado (mesma composição, mais pixels): prefira texto, SVG e CSS, que ficam nítidos; se usar <canvas>, crie ele em largura×devicePixelRatio por altura×devicePixelRatio (com o tamanho CSS normal) e dê ctx.scale(devicePixelRatio, devicePixelRatio), senão ele sai borrado.${o.files.some((f) => f.a.use === 'insert') ? ' As imagens de insert estão na mesma pasta do HTML, pelo nome indicado.' : ''}`,
     '</demo>'
   )
+  if (rawSounds)
+    L.push(
+      '<sons>',
+      'Lista JSON dos sons do Material bruto que tocam neste motion; "em" é o segundo a partir do começo do bloco e "volume" vai de 0 a 1. Ex.: [{"arquivo": "bruto-3-whoosh.wav", "em": 1.2, "volume": 0.6}]. Sem som: [].',
+      '</sons>'
+    )
   return L.join('\n')
 }
 
@@ -729,6 +934,17 @@ export async function generatePreview(c: PreviewCtx) {
   const baseImages = [...files.map((f) => absPath(f.a)), ...(under?.frames.map((f) => f.path) ?? []), ...edges.map((e) => e.frame), ...tf.flat().map((f) => absPath(f.a))]
   const shownSet = new Set(shownAssets)
   const assets = { list: [...shownAssets, ...list.filter((a) => !shownSet.has(a))], first: baseImages.length + 1, shown: shownAssets.length }
+  // o Material bruto (se o bloco pediu): as imagens dele vêm depois das dos assets
+  const rawList = b.useRaw ? await rawFiles(c.data) : []
+  const shownRaw = rawList.filter((f) => f.kind === 'image' && /\.(png|jpe?g|webp|gif|bmp)$/i.test(f.path)).slice(0, MAX_RAW_IMAGES)
+  const shownRawSet = new Set(shownRaw)
+  const raw = {
+    list: [...shownRaw, ...rawList.filter((f) => !shownRawSet.has(f))],
+    first: assets.first + assets.shown,
+    shown: shownRaw.length,
+    sounds: adjust ? b.preview?.sounds : undefined
+  }
+  const chapter = chapterAt(c.data, b, c.script)
   const prompt = blockPrompt({
     block: b,
     format: c.format,
@@ -737,25 +953,29 @@ export async function generatePreview(c: PreviewCtx) {
     hasAudio,
     scriptHere: scriptIn(c.data, b, c.script),
     falas: scriptFalas(c.script),
+    chapter,
     files,
     size,
     under,
     edges,
     adjust,
-    assets
+    assets,
+    raw
   })
-  const images = [...baseImages, ...shownAssets.map((a) => a.path)]
+  const images = [...baseImages, ...shownAssets.map((a) => a.path), ...shownRaw.map((f) => f.path)]
   if (c.signal?.aborted) throw new Error('Cancelado.')
   const r = await waitAi(c, adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', [0.17, 0.62], api.motionTrain({ prompt, images, id: b.id }))
   if ('error' in r) throw new Error(r.error)
   let html = parseDemo(r.text)
   if (!html) throw new Error('A IA respondeu fora do formato (sem o HTML da animação). Tente de novo.')
+  let sounds = parseSounds(r.text, rawList, blockDur(b)) ?? []
   const playFiles = (h: string) => [
     ...files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
     ...tf.flat().map((f) => ({ src: absPath(f.a), name: f.name })),
     ...(under ? [{ src: under.video, name: UNDER_NAME }] : []),
     ...edgeFiles(edges),
-    ...assetFiles(list, h)
+    ...assetFiles(list, h),
+    ...assetFiles(rawList, h)
   ]
   // safe zone: mede a animação e, se algo ficou fora do lugar, devolve pro Claude corrigir (uma vez)
   const zones = safeZones(c.format?.aspect, size.w, size.h)
@@ -778,12 +998,14 @@ export async function generatePreview(c: PreviewCtx) {
       hasAudio,
       scriptHere: scriptIn(c.data, b, c.script),
       falas: scriptFalas(c.script),
+      chapter,
       files,
       size,
       under,
       edges,
       adjust: { html, tweaks: [...(adjust?.tweaks ?? []), { text: issuesTweak(issues, zones), names: [] }] },
-      assets
+      assets,
+      raw: { ...raw, sounds }
     })
     const f = await waitAi(
       c,
@@ -795,13 +1017,16 @@ export async function generatePreview(c: PreviewCtx) {
     const fixed = 'error' in f ? '' : parseDemo(f.text)
     if (fixed) {
       html = fixed
+      sounds = ('error' in f ? null : parseSounds(f.text, rawList, blockDur(b))) ?? sounds
       c.onStage('Conferindo a safe zone de novo…', null, [0.78, 0.8])
       issues = await check(html)
     }
   }
   if (c.signal?.aborted) throw new Error('Cancelado.')
   c.onStage('Mixando o áudio do trecho…', null, [0.8, 0.82])
-  const wav = hasAudio ? await rangeWav(c.engine, c.data, c.dur, b.start, b.end).catch(() => undefined) : undefined
+  const mix = await withSounds(c.engine, c.data, c.dur, b, sounds)
+  sounds = mix.sounds
+  const wav = hasAudio || sounds.length ? await rangeWav(c.engine, mix.data, mix.dur, b.start, b.end).catch(() => undefined) : undefined
   c.onStage('Gravando a prévia (12 fps)…', 0, [0.82, 1], Math.max(1, Math.round(blockDur(b) * PREVIEW_FPS)))
   const v = await api.motionPreview({
     dir: c.dir,
@@ -823,7 +1048,8 @@ export async function generatePreview(c: PreviewCtx) {
     transcript: phrases(heard.words),
     key: blockKey(b),
     size,
-    safeIssues: issues.length ? issuesTweak(issues, zones).split('\n').slice(1) : undefined
+    safeIssues: issues.length ? issuesTweak(issues, zones).split('\n').slice(1) : undefined,
+    sounds: sounds.length ? sounds : undefined
   }
 }
 
@@ -865,7 +1091,9 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
     edges = (await edgesFor(c.data, b, c.dir, size).catch(() => [])).filter((e) => html.includes(edgeName(e)))
   }
   c.onStage('Mixando o áudio do trecho…', null, [0.12, 0.15])
-  const wav = hasAudio ? await rangeWav(c.engine, c.data, c.dur, b.start, b.end).catch(() => undefined) : undefined
+  const sounds = b.preview.sounds ?? []
+  const mix = await withSounds(c.engine, c.data, c.dur, b, sounds)
+  const wav = hasAudio || sounds.length ? await rangeWav(c.engine, mix.data, mix.dur, b.start, b.end).catch(() => undefined) : undefined
   c.onStage(`Gravando o clipe em ${size.w}×${size.h}…`, 0, [0.15, 1], Math.max(1, Math.round(blockDur(b) * CLIP_FPS)))
   const v = await api.motionPreview({
     dir: c.dir,
@@ -884,7 +1112,8 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
       ...tweakFiles(b.tweaks).flat().map((f) => ({ src: absPath(f.a), name: f.name })),
       ...(under ? [{ src: under.video, name: UNDER_NAME }] : []),
       ...edgeFiles(edges),
-      ...(html.includes('estilo-') ? assetFiles(await styleAssets(c.format), html) : [])
+      ...(html.includes('estilo-') ? assetFiles(await styleAssets(c.format), html) : []),
+      ...(html.includes('bruto-') ? assetFiles(await rawFiles(c.data), html) : [])
     ]
   })
   if ('error' in v) throw new Error(v.error)

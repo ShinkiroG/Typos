@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine } from 'lucide-react'
+import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine, FolderOpen } from 'lucide-react'
 import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type Format, type InstructionBlock, type MontageData } from '../lib'
 import { PromptMenu } from './PromptMenu'
 import { rememberPrompt } from './prompts'
@@ -174,6 +174,19 @@ export function BlockForm({ b, data, dir, patch, big, formats, videoFormat }: Fo
             </label>
           )
         })}
+      </div>
+      <div className="blk-chain">
+        <label
+          className={'blk-chain-opt' + (b.useRaw ? ' on' : '')}
+          title="O Claude vê a lista do Material bruto do projeto (e os sons da pasta SFX) e usa o que combinar com o trecho: imagens e vídeos no motion e sons mixados com a narração. Ao aprovar, os sons viram cortes de áudio na timeline. Vale na próxima prévia."
+        >
+          <input type="checkbox" checked={!!b.useRaw} onChange={(e) => patch({ useRaw: e.target.checked })} />
+          <FolderOpen size={12} />
+          <span>
+            Usar o Material bruto
+            <small>imagens, vídeos e sons do projeto (e a pasta SFX)</small>
+          </span>
+        </label>
       </div>
       <div className="blk-label">
         <span className="blk-label-head">
@@ -446,6 +459,12 @@ export function BlockPreviewBox({
       )}
       {heard}
       {b.preview && asking && <AdjustBox b={b} dir={dir} busy={!!busy} onAdjust={onAdjust} onClose={() => setAsking(false)} />}
+      {!!b.preview?.sounds?.length && (
+        <details className="blk-heard">
+          <summary>Sons do Material bruto ({b.preview.sounds.length}): viram cortes de áudio ao aprovar</summary>
+          <pre>{b.preview.sounds.map((x) => `${x.at.toFixed(1)}s  ${x.path.split(/[\\/]/).pop()}  (volume ${Math.round(x.vol * 100)}%)`).join('\n')}</pre>
+        </details>
+      )}
       {b.preview?.transcript && (
         <details className="blk-heard">
           <summary>O que foi ouvido no trecho</summary>
