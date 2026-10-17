@@ -1762,28 +1762,31 @@ export function Montage({
                 <span className="small">
                   <b>{sfxFind.libs.length}</b> biblioteca(s) achada(s). Marque as que vão virar referência de som:
                 </span>
-                {sfxFind.libs.map((l) => (
-                  <label key={l.path} className="mt-sfxlib" title={l.path}>
-                    <input
-                      type="checkbox"
-                      checked={!!sfxFind.pick?.has(l.path)}
-                      onChange={(e) =>
-                        setSfxFind((f) => {
-                          if (!f) return f
-                          const pick = new Set(f.pick)
-                          if (e.target.checked) pick.add(l.path)
-                          else pick.delete(l.path)
-                          return { ...f, pick }
-                        })
-                      }
-                    />
-                    <span>
-                      <b>{l.name}</b> <i>{l.program}</i> · {l.files >= 5000 ? '5000+' : l.files} sons
-                      <small>{l.why}</small>
-                      <small className="mt-sfxpath">{l.path}</small>
-                    </span>
-                  </label>
-                ))}
+                <div className="mt-sfxlist">
+                  {sfxFind.libs.map((l) => (
+                    <label key={l.path} className="mt-sfxlib" title={l.path}>
+                      <input
+                        type="checkbox"
+                        checked={!!sfxFind.pick?.has(l.path)}
+                        // inverte a partir do estado (não depende do evento)
+                        onChange={() =>
+                          setSfxFind((f) => {
+                            if (!f) return f
+                            const pick = new Set(f.pick)
+                            if (pick.has(l.path)) pick.delete(l.path)
+                            else pick.add(l.path)
+                            return { ...f, pick }
+                          })
+                        }
+                      />
+                      <span>
+                        <b>{l.name}</b> <i>{l.program}</i> · {l.files >= 5000 ? '5000+' : l.files} sons
+                        <small>{l.why}</small>
+                        <small className="mt-sfxpath">{l.path}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
                 <div className="mt-sfxbtns">
                   <button className="btn small primary" disabled={!sfxFind.pick?.size} onClick={linkSfx}>
                     <Star size={12} /> Vincular {sfxFind.pick?.size ?? 0} como favoritas
