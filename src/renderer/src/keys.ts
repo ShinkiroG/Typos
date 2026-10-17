@@ -28,7 +28,9 @@ export const KEY_ACTIONS: KeyAction[] = [
   { id: 'mt.lettering', label: 'Lettering no cursor', group: 'Montagem', def: 'L' },
   { id: 'mt.block', label: 'Bloco de instrução', group: 'Montagem', def: 'B' },
   { id: 'mt.zoomIn', label: 'Mais zoom', group: 'Montagem', def: '+' },
-  { id: 'mt.zoomOut', label: 'Menos zoom', group: 'Montagem', def: '-' }
+  { id: 'mt.zoomOut', label: 'Menos zoom', group: 'Montagem', def: '-' },
+  { id: 'mt.viewFit', label: 'Visualizador: ajustar o vídeo à tela', group: 'Montagem', def: 'Shift+Z' },
+  { id: 'mt.viewMax', label: 'Visualizador: ampliar (esconde mídia e inspetor)', group: 'Montagem', def: 'F' }
 ]
 
 let custom: Record<string, string> = {}
