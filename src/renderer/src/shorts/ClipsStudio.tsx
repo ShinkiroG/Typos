@@ -22,6 +22,7 @@ interface Props {
   lang: string
   wpm: number
   format?: Format
+  formats?: Format[]
   onFormatChange?: (f: Format) => void
   onAudioSettings: () => void
   /** muda = sugere os recortes agora (vem do "Ativar e sugerir" / "Sugerir de novo") */
@@ -41,7 +42,7 @@ const usedPaths = (d: MontageData) => {
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 
-export function ClipsStudio({ active, dir, main, shorts, onChange, lang, wpm, format, onFormatChange, onAudioSettings, suggestToken, onSetup, onGoRender, onApprove }: Props) {
+export function ClipsStudio({ active, dir, main, shorts, onChange, lang, wpm, format, formats, onFormatChange, onAudioSettings, suggestToken, onSetup, onGoRender, onApprove }: Props) {
   const ref = useRef(shorts)
   ref.current = shorts
   const mainRef = useRef(main)
@@ -235,6 +236,7 @@ export function ClipsStudio({ active, dir, main, shorts, onChange, lang, wpm, fo
           getBlocks={() => []}
           onAudioSettings={onAudioSettings}
           format={format}
+          formats={formats}
           onFormatChange={onFormatChange}
           poolTop={folder}
           toolbarExtra={approveBtn}

@@ -40,7 +40,8 @@ export function newBlock(track: string, start: number, end: number): Instruction
 /** impressão digital: se mudar, a prévia que existe ficou velha */
 export function blockKey(b: InstructionBlock) {
   const chain = b.fromPrev || b.toNext ? [[!!b.fromPrev, !!b.toNext]] : []
-  const s = JSON.stringify([b.start.toFixed(2), b.end.toFixed(2), b.text.trim(), !!b.dynamic, b.attachments.map((a) => [a.path, a.use, a.note ?? '']), blockSync(b), ...chain])
+  const style = b.formatId ? [['estilo', b.formatId]] : []
+  const s = JSON.stringify([b.start.toFixed(2), b.end.toFixed(2), b.text.trim(), !!b.dynamic, b.attachments.map((a) => [a.path, a.use, a.note ?? '']), blockSync(b), ...chain, ...style])
   let h = 5381
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
   return (h >>> 0).toString(36)
@@ -421,6 +422,40 @@ const ATTACH_RULES = {
   ref: 'REFERÊNCIA: a imagem NÃO aparece no vídeo. Recrie em HTML/CSS, com design bonito e no estilo do formato (um clone estilizado, ex.: a página do SteamDB redesenhada), e anime essa recriação.'
 }
 
+// ---------- assets do estilo (as pastas fixas do formato: pngtuber, logo, molduras…) ----------
+export interface StyleAsset {
+  path: string
+  /** pasta/caminho dentro dela (o que o Claude lê pra escolher) */
+  rel: string
+  kind: 'image' | 'video'
+  /** nome do arquivo na pasta da prévia */
+  name: string
+}
+const MAX_STYLE_ASSETS = 60
+/** quantos assets vão também como imagem pro Claude olhar */
+export const MAX_STYLE_IMAGES = 12
+
+/** imagens e vídeos das pastas de assets do formato (o áudio fica de fora) */
+export async function styleAssets(format?: Format): Promise<StyleAsset[]> {
+  const out: StyleAsset[] = []
+  for (const dir of format?.assetFolders ?? []) {
+    const list = await api.scanFolder(dir).catch(() => ({ error: '' }))
+    if ('error' in list) continue
+    const folder = dir.split(/[\\/]/).filter(Boolean).pop() ?? 'pasta'
+    for (const f of list) {
+      if (f.kind === 'audio') continue
+      if (out.length >= MAX_STYLE_ASSETS) return out
+      const ext = f.name.match(/\.\w+$/)?.[0]?.toLowerCase() ?? ''
+      const base = f.rel.replace(/\.\w+$/, '').replace(/[^\w.-]+/g, '_').slice(0, 40)
+      out.push({ path: f.path, rel: `${folder}/${f.rel.replace(/\\/g, '/')}`, kind: f.kind, name: `estilo-${out.length + 1}-${base}${ext}` })
+    }
+  }
+  return out
+}
+
+/** os assets do estilo que a animação usa (vão pra pasta da prévia/clipe com o nome que ela pede) */
+export const assetFiles = (assets: StyleAsset[], html: string) => assets.filter((a) => html.includes(a.name)).map((a) => ({ src: a.path, name: a.name }))
+
 /** memória de motion em texto (mais novas primeiro, com limite de tamanho) */
 export function memorySection(memory: MotionMemoryItem[] | undefined, max = 14000) {
   if (!memory?.length) return ''
@@ -468,6 +503,8 @@ export function blockPrompt(o: {
   edges?: EdgeInfo[]
   /** ajuste em cima da prévia atual: o HTML dela e os pedidos (o último é o novo) */
   adjust?: { html: string; tweaks: { text: string; names: string[] }[] }
+  /** assets das pastas do estilo; os `shown` primeiros chegam como imagem a partir da imagem `first` */
+  assets?: { list: StyleAsset[]; first: number; shown: number }
 }) {
   const b = o.block
   const d = blockDur(b)
@@ -514,8 +551,20 @@ export function blockPrompt(o: {
   if (o.falas) L.push('## Roteiro do vídeo (só as falas, pra entender o tema)', o.falas.slice(0, 12000), '')
   L.push('## Direção de motion', MOTION_DIRECTION, syncDirection(blockSync(b)), '')
   L.push(safeZoneDirection(safeZones(o.format?.aspect, o.size.w, o.size.h), o.size), '')
+  const rules = o.format?.rules?.trim()
+  if (rules) L.push('## Regras do estilo (respeite)', rules, '')
   const guide = o.format?.motion?.learned?.guide
   if (guide) L.push('## Guia de estilo do formato', guide, '')
+  if (o.assets?.list.length) {
+    const a = o.assets
+    L.push(
+      '## Assets do estilo (as pastas fixas deste formato)',
+      'São os arquivos que este estilo sempre usa (ex.: pngtuber, logo, molduras, fundos). Quando as regras, o guia ou as instruções pedirem algum deles (ex.: o pngtuber no canto), USE o arquivo de verdade, nunca um desenho inventado no lugar: ele está na mesma pasta do HTML com o nome abaixo. Imagem: <img src="nome">. Vídeo: <video src="nome" muted playsinline></video> (o Typos sincroniza o tempo; não use autoplay nem mexa em currentTime). Escolha pela pasta e pelo nome o que combina com o momento (ex.: a expressão do pngtuber que casa com a fala).',
+      ...a.list.map((x) => `- ${x.name} ← ${x.rel} (${x.kind === 'image' ? 'imagem' : 'vídeo'})`),
+      a.shown ? `As imagens ${a.first} a ${a.first + a.shown - 1} são as ${a.shown} primeiras imagens desta lista, na mesma ordem.` : '',
+      ''
+    )
+  }
   const m = o.format?.motion
   if (m?.colors?.length) L.push('Cores: ' + m.colors.join(', '))
   if (m?.fonts) L.push(`Fontes: título ${m.fonts.title ?? '-'}, subtítulo ${m.fonts.subtitle ?? '-'}, texto ${m.fonts.body ?? '-'}, destaque ${m.fonts.accent ?? '-'}`)
@@ -674,6 +723,12 @@ export async function generatePreview(c: PreviewCtx) {
     if (!html) throw new Error('Não achei o HTML da prévia atual. Gere a prévia de novo.')
     adjust = { html, tweaks: c.adjust.tweaks.map((t, i) => ({ text: t.text, names: tf[i].map((f) => f.name) })) }
   }
+  const list = await styleAssets(c.format)
+  const shownAssets = list.filter((a) => a.kind === 'image' && /\.(png|jpe?g|webp|gif|bmp)$/i.test(a.path)).slice(0, MAX_STYLE_IMAGES)
+  // as imagens dos assets vêm por último (depois dos anexos, do vídeo de baixo, das emendas e dos ajustes)
+  const baseImages = [...files.map((f) => absPath(f.a)), ...(under?.frames.map((f) => f.path) ?? []), ...edges.map((e) => e.frame), ...tf.flat().map((f) => absPath(f.a))]
+  const shownSet = new Set(shownAssets)
+  const assets = { list: [...shownAssets, ...list.filter((a) => !shownSet.has(a))], first: baseImages.length + 1, shown: shownAssets.length }
   const prompt = blockPrompt({
     block: b,
     format: c.format,
@@ -686,24 +741,26 @@ export async function generatePreview(c: PreviewCtx) {
     size,
     under,
     edges,
-    adjust
+    adjust,
+    assets
   })
-  const images = [...files.map((f) => absPath(f.a)), ...(under?.frames.map((f) => f.path) ?? []), ...edges.map((e) => e.frame), ...tf.flat().map((f) => absPath(f.a))]
+  const images = [...baseImages, ...shownAssets.map((a) => a.path)]
   if (c.signal?.aborted) throw new Error('Cancelado.')
   const r = await waitAi(c, adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', [0.17, 0.62], api.motionTrain({ prompt, images, id: b.id }))
   if ('error' in r) throw new Error(r.error)
   let html = parseDemo(r.text)
   if (!html) throw new Error('A IA respondeu fora do formato (sem o HTML da animação). Tente de novo.')
-  const playFiles = [
+  const playFiles = (h: string) => [
     ...files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
     ...tf.flat().map((f) => ({ src: absPath(f.a), name: f.name })),
     ...(under ? [{ src: under.video, name: UNDER_NAME }] : []),
-    ...edgeFiles(edges)
+    ...edgeFiles(edges),
+    ...assetFiles(list, h)
   ]
   // safe zone: mede a animação e, se algo ficou fora do lugar, devolve pro Claude corrigir (uma vez)
   const zones = safeZones(c.format?.aspect, size.w, size.h)
   const check = async (h: string): Promise<LayoutIssue[]> => {
-    const got = await api.motionCheckLayout({ dir: c.dir, block: b.id, html: h, seconds: blockDur(b), width: size.w, height: size.h, files: playFiles, probe: layoutProbe(zones) })
+    const got = await api.motionCheckLayout({ dir: c.dir, block: b.id, html: h, seconds: blockDur(b), width: size.w, height: size.h, files: playFiles(h), probe: layoutProbe(zones) })
     if ('error' in got) {
       if (got.error === 'Cancelado.') throw new Error(got.error)
       return []
@@ -725,7 +782,8 @@ export async function generatePreview(c: PreviewCtx) {
       size,
       under,
       edges,
-      adjust: { html, tweaks: [...(adjust?.tweaks ?? []), { text: issuesTweak(issues, zones), names: [] }] }
+      adjust: { html, tweaks: [...(adjust?.tweaks ?? []), { text: issuesTweak(issues, zones), names: [] }] },
+      assets
     })
     const f = await waitAi(
       c,
@@ -754,7 +812,7 @@ export async function generatePreview(c: PreviewCtx) {
     height: size.h,
     fps: PREVIEW_FPS,
     wav,
-    files: playFiles
+    files: playFiles(html)
   })
   if ('error' in v) throw new Error(v.error)
   return {
@@ -825,7 +883,8 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
       ...files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
       ...tweakFiles(b.tweaks).flat().map((f) => ({ src: absPath(f.a), name: f.name })),
       ...(under ? [{ src: under.video, name: UNDER_NAME }] : []),
-      ...edgeFiles(edges)
+      ...edgeFiles(edges),
+      ...(html.includes('estilo-') ? assetFiles(await styleAssets(c.format), html) : [])
     ]
   })
   if ('error' in v) throw new Error(v.error)

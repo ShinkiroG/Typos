@@ -94,6 +94,8 @@ interface Props {
   onAudioSettings: () => void
   /** formato do projeto (estilo e memória de motion dos blocos de instrução) */
   format?: Format
+  /** todos os formatos (um bloco pode usar outro estilo no lugar do do vídeo) */
+  formats?: Format[]
   onFormatChange?: (f: Format) => void
   /** botão "Preparar Clipes" (abre o workspace Criar Clipes) */
   onPrepareClips?: () => void
@@ -138,6 +140,7 @@ export function Montage({
   wpm,
   onAudioSettings,
   format,
+  formats,
   onFormatChange,
   onPrepareClips,
   prepareLabel,
@@ -448,6 +451,12 @@ export function Montage({
     () => (frame ? { ...(format ?? { id: '', name: 'Clipes', wpm, maxSeconds: null }), aspect: frame } : format),
     [format, frame, wpm]
   )
+  /** estilo de um bloco: o que ele escolheu (no quadro desta timeline) ou o do vídeo */
+  const styleOf = (b: InstructionBlock) => (b.formatId ? formats?.find((f) => f.id === b.formatId) : undefined)
+  const formatFor = (b: InstructionBlock): Format | undefined => {
+    const own = styleOf(b)
+    return own ? { ...own, aspect: blockFormat?.aspect ?? own.aspect } : blockFormat
+  }
 
   useEffect(() => {
     api.ffmpegInfo().then(setFfmpeg)
@@ -1107,7 +1116,7 @@ export function Montage({
         dur,
         script: getBlocks(),
         lang,
-        format: blockFormat,
+        format: formatFor(b),
         dir,
         onStage: (label, pct, span, frames) => setBlockBusy((cur) => (cur?.label === 'Cancelando…' ? cur : { id, label, pct, span, t0, frames })),
         signal: ac.signal,
@@ -1162,7 +1171,7 @@ export function Montage({
         dur,
         script: getBlocks(),
         lang,
-        format: blockFormat,
+        format: formatFor(b),
         dir,
         onStage: (label, pct, span, frames) => setBlockBusy((cur) => (cur?.label === 'Cancelando…' ? cur : { id: b.id, label, pct, span, t0, frames })),
         signal: ac.signal,
@@ -1186,7 +1195,7 @@ export function Montage({
     const t0 = Date.now()
     setBlockBusy({ id: b.id, label: 'Preparando o clipe…', pct: null, t0 })
     try {
-      const video = await generateClip({ block: b, data: base.data, engine, dur, format: blockFormat, dir, onStage: (label, pct, span, frames) => setBlockBusy({ id: b.id, label, pct, span, t0, frames }) })
+      const video = await generateClip({ block: b, data: base.data, engine, dur, format: formatFor(b), dir, onStage: (label, pct, span, frames) => setBlockBusy({ id: b.id, label, pct, span, t0, frames }) })
       const info = await api.probeMedia(video)
       if ('error' in info) throw new Error(info.error)
       const d = dataRef.current
@@ -1235,7 +1244,7 @@ export function Montage({
     const t0 = Date.now()
     setBlockBusy({ id, label: 'Preparando o clipe…', pct: null, t0 })
     try {
-      const video = await generateClip({ block: b, data: dataRef.current, engine, dur, format: blockFormat, dir, onStage: (label, pct, span, frames) => setBlockBusy({ id, label, pct, span, t0, frames }) })
+      const video = await generateClip({ block: b, data: dataRef.current, engine, dur, format: formatFor(b), dir, onStage: (label, pct, span, frames) => setBlockBusy({ id, label, pct, span, t0, frames }) })
       const info = await api.probeMedia(video)
       if ('error' in info) throw new Error(info.error)
       const d = dataRef.current
@@ -1275,13 +1284,15 @@ export function Montage({
       setBlockSel((s) => (s === id ? null : s))
       setBlockOpen((s) => (s === id ? null : s))
       setSelected([clip.id])
-      if (format && onFormatChange) {
+      // a memória vai pro estilo que o bloco usou
+      const style = styleOf(b) ?? format
+      if (style && onFormatChange) {
         const html = await fetch(fileUrl(b.preview.html))
           .then((r) => r.text())
           .catch(() => '')
         const item = await memoryFromBlock(b, html)
-        const motion = format.motion ?? { refs: [] }
-        onFormatChange({ ...format, motion: { ...motion, memory: [...(motion.memory ?? []), item] } })
+        const motion = style.motion ?? { refs: [] }
+        onFormatChange({ ...style, motion: { ...motion, memory: [...(motion.memory ?? []), item] } })
       }
     } catch (e) {
       const msg = (e as Error).message
@@ -2218,6 +2229,8 @@ export function Montage({
             data={data}
             dir={dir}
             patch={(p, g) => patchBlock(curBlock.id, p, g)}
+            formats={formats}
+            videoFormat={format}
             busy={blockBusy}
             onGenerate={() => makePreview(curBlock.id)}
             onAdjust={(t) => makePreview(curBlock.id, t)}
@@ -2744,6 +2757,8 @@ export function Montage({
           data={data}
           dir={dir}
           patch={(p, g) => patchBlock(openBlock.id, p, g)}
+          formats={formats}
+          videoFormat={format}
           busy={blockBusy}
           onGenerate={() => makePreview(openBlock.id)}
           onAdjust={(t) => makePreview(openBlock.id, t)}

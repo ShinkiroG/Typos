@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine } from 'lucide-react'
-import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type InstructionBlock, type MontageData } from '../lib'
+import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type Format, type InstructionBlock, type MontageData } from '../lib'
 import { blockDur, blockLabel, blockSync, isImage, neighborOf, neighborText, previewStale } from './blocks'
 
 const fmtTc = (t: number) => {
@@ -69,12 +69,16 @@ interface FormProps {
   data?: MontageData
   dir: string
   patch: (p: Partial<InstructionBlock>, gesture?: string) => void
+  /** os estilos (formatos) que o bloco pode usar no lugar do estilo do vídeo */
+  formats?: Format[]
+  /** o estilo do vídeo (o que vale quando o bloco não escolhe outro) */
+  videoFormat?: Format
 }
 
 const toBlockAtt = (a: Attachment): BlockAttachment => ({ ...a, use: 'insert' })
 
 /** campos do bloco: nome, tempo, modo, instruções e anexos (o mesmo no painel e na janela) */
-export function BlockForm({ b, data, dir, patch, big }: FormProps & { big?: boolean }) {
+export function BlockForm({ b, data, dir, patch, big, formats, videoFormat }: FormProps & { big?: boolean }) {
   const g = 'blk-' + b.id
   const [dropping, setDropping] = useState(false)
   const addAtts = (list: Attachment[]) => list.length && patch({ attachments: [...b.attachments, ...list.map(toBlockAtt)] })
@@ -122,6 +126,21 @@ export function BlockForm({ b, data, dir, patch, big }: FormProps & { big?: bool
           <Sparkles size={12} /> Dinâmico
         </button>
       </div>
+      {!!formats?.length && (
+        <label className="blk-label blk-style" title="Estilo de motion só deste bloco (guia, cores, fontes, regras, pastas de assets e memória). Vale na próxima prévia.">
+          Estilo deste bloco
+          <select value={b.formatId && formats.some((f) => f.id === b.formatId) ? b.formatId : ''} onChange={(e) => patch({ formatId: e.target.value || undefined })}>
+            <option value="">Estilo do vídeo{videoFormat ? ` (${videoFormat.name})` : ''}</option>
+            {formats
+              .filter((f) => f.id !== videoFormat?.id)
+              .map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+          </select>
+        </label>
+      )}
       <label className="blk-label blk-sync" title="Quanto o motion acompanha o que é dito no trecho. Vale na próxima prévia.">
         <span>
           Sincronia com a fala <b>{blockSync(b).toFixed(2).replace('.', ',')}</b>
@@ -438,7 +457,7 @@ export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenera
         </button>
       </div>
       <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={p.onGenerate} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} heard={p.heard} />
-      <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} />
+      <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} formats={p.formats} videoFormat={p.videoFormat} />
     </div>
   )
 }
@@ -463,7 +482,7 @@ export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate:
         </div>
         <div className="blk-window-body">
           <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={p.onGenerate} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} heard={p.heard} big />
-          <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} big />
+          <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} formats={p.formats} videoFormat={p.videoFormat} big />
         </div>
       </div>
     </div>

@@ -775,6 +775,8 @@ export interface InstructionBlock {
   fromPrev?: boolean
   /** termina chegando no primeiro quadro do que toca logo depois (motion até o próximo) */
   toNext?: boolean
+  /** estilo (formato) só deste bloco; vazio = o estilo do vídeo */
+  formatId?: string
 }
 
 /** um pedido de ajuste na prévia de um bloco */
