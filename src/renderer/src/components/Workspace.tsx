@@ -1336,6 +1336,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
             wpm={wpm}
             format={clipsFormat}
+            formats={formats}
             onFormatChange={(f) => onFormatsChange(formats.map((x) => (x.id === f.id ? f : x)))}
             onAudioSettings={() => setAudioOpen(true)}
             onApprove={(id, on) => queueRender([shortRenderId(id)], on)}
@@ -1380,6 +1381,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             wpm={wpm}
             onAudioSettings={() => setAudioOpen(true)}
             format={format}
+            formats={formats}
             onFormatChange={(f) => onFormatsChange(formats.map((x) => (x.id === f.id ? f : x)))}
             lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
             getBlocks={() => {
