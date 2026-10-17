@@ -22,9 +22,11 @@ import {
   ExternalLink,
   FolderOpen,
   BookmarkPlus,
-  Brain
+  Brain,
+  Star
 } from 'lucide-react'
-import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type MotionMemoryItem, type FontCase, DEFAULT_FONT_CASES, refWeights } from '../lib'
+import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type MotionMemoryItem, type FontCase, DEFAULT_FONT_CASES, refWeights, styleFoldersOf, STYLE_FOLDER_ROLES, type StyleFolder, type StyleFolderRole } from '../lib'
+import { ASSETS_ANSWER, assetsOnlyPrompt, collectStudy, folderName, guessRole, MAX_STUDY_IMAGES, parseAssets, studyImages, studySection, studyStale } from './assets'
 import { FontPicker } from './FontPicker'
 import { YoutubeDownload } from '../components/YoutubeDownload'
 import { askText } from '../components/AskDialog'
@@ -46,6 +48,7 @@ const TRANSITIONS = ['corte seco', 'whip / swipe', 'zoom through', 'glitch', 'fa
 const BACKGROUNDS = ['sólido escuro', 'gradiente suave', 'textura / grão', 'gameplay desfocado', 'papel / colagem', 'grid / tech', 'ilustração plana', 'foto com overlay']
 const PACES: MotionStyle['pace'][] = ['calmo', 'médio', 'frenético']
 const PREFERRED_LANGS = ['pt-BR', 'pt-PT', 'en-US', 'en-GB', 'es-ES']
+const STUDY_BUSY = 'Estudando os assets do estilo…'
 
 const emptyMotion = (f: Format): MotionStyle => ({
   // referências antigas (Formatos → referência pro motion) entram como imagens
@@ -56,7 +59,7 @@ const emptyMotion = (f: Format): MotionStyle => ({
 })
 
 /** o pedido que vai pra IA, com tudo que o autor escolheu */
-function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: string, installed: string[]) {
+function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: string, installed: string[], assets: string[] = []) {
   const [w, h] = f.aspect === '9:16' ? [540, 960] : f.aspect === '1:1' ? [720, 720] : f.aspect === '4:5' ? [576, 720] : [960, 540]
   const lines: string[] = []
   lines.push(`Você é diretor de motion design de vídeos para YouTube. Vou te ensinar um ESTILO DE MOTION pra eu usar sempre neste formato de vídeo: "${f.name}" (${f.aspect}).`)
@@ -107,6 +110,10 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
     lines.push('## Fontes instaladas no PC (escolha só daqui, pelo nome exato)')
     lines.push(installed.join(' | '))
   }
+  if (assets.length) {
+    lines.push('')
+    lines.push(...assets)
+  }
   if (imageList.length) {
     lines.push('')
     lines.push('## Imagens (na ordem em que foram enviadas)')
@@ -124,6 +131,7 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
     `Um arquivo HTML completo e autocontido (CSS e JS inline, sem internet, sem imagens externas), em ${w}x${h} px preenchendo a página toda (body sem margem, overflow hidden), que demonstra o estilo animado em loop contínuo de 8 a 12 segundos: abertura com o título "${sample}", um lower third/legenda, um destaque de número ou dado, e uma transição do estilo. Use as fontes pelo nome (font-family) e as cores do estilo; anime com CSS keyframes ou requestAnimationFrame.`
   )
   lines.push('</demo>')
+  if (assets.length) lines.push(...ASSETS_ANSWER)
   return lines.join('\n')
 }
 
@@ -209,6 +217,18 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
       return { motion: { ...mm, ...(typeof p === 'function' ? p(mm) : p) } }
     })
   const clean = ({ __dirty, ...x }: Format) => x as Format
+
+  // ---------- pastas do estilo ----------
+  const folders = styleFoldersOf(f)
+  /** grava as pastas e espelha as visuais no campo antigo (versões anteriores do Typos só leem ele) */
+  const setFolders = (list: StyleFolder[]) => patch({ styleFolders: list, assetFolders: list.filter((x) => x.role === 'visual').map((x) => x.path) })
+  const patchFolder = (path: string, p: Partial<StyleFolder>) => setFolders(folders.map((x) => (x.path === path ? { ...x, ...p } : x)))
+  const addFolder = async () => {
+    const p = await api.pickFolder()
+    if (!p || folders.some((x) => x.path === p)) return
+    const list = await api.scanFolder(p).catch(() => ({ error: '' }))
+    setFolders([...styleFoldersOf(fRef.current), { path: p, role: 'error' in list ? 'visual' : guessRole(list) }])
+  }
 
   const save = (next: Format = f) => {
     onChange(saved ? formats.map((x) => (x.id === editId ? clean(next) : x)) : [...formats, clean(next)])
@@ -335,21 +355,38 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
     return out.slice(0, MAX_IMAGES)
   }
 
-  const canTrain = m.refs.length > 0 || !!m.instruction?.trim() || !!m.colors?.length
+  const canTrain = m.refs.length > 0 || !!m.instruction?.trim() || !!m.colors?.length || folders.length > 0
+  /** as pastas do estilo pro pedido: a lista (com a análise dos sons) e as primeiras imagens */
+  const studyInput = async (room: number) => {
+    const items = await collectStudy(f, setBusy)
+    const imgs = studyImages(items).slice(0, Math.max(0, room))
+    return { section: studySection(folders, items), images: imgs.map((x) => ({ path: x.path, desc: `asset do estilo "${x.rel}"` })) }
+  }
+  const assetsGuideOf = (guide: string, provider: string) => ({ at: new Date().toISOString(), provider, guide, folders: folders.map((x) => `${x.role}|${x.path}`) })
   const train = async () => {
     setError('')
     setBusy('O Claude está estudando as referências…')
     const t0 = Date.now()
     const tick = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000)
     try {
-      const images = await collectImages()
+      const refImages = await collectImages()
+      const study = folders.length ? await studyInput(MAX_IMAGES - refImages.length) : null
+      const images = [...refImages, ...(study?.images ?? [])]
       setBusy('O Claude está estudando as referências…')
       setSent(images.length)
-      const r = await api.motionTrain({ prompt: buildPrompt(f, m, images.map((i) => i.desc), sample, fonts), images: images.map((i) => i.path) })
+      const r = await api.motionTrain({ prompt: buildPrompt(f, m, images.map((i) => i.desc), sample, fonts, study?.section), images: images.map((i) => i.path) })
       if ('error' in r) throw new Error(r.error)
       const { guide, demo } = parseAnswer(r.text)
       if (!guide && !demo) throw new Error('A IA respondeu fora do formato. Tente de novo.')
-      const next = { ...fRef.current, motion: { ...(fRef.current.motion ?? m), learned: { at: new Date().toISOString(), provider: r.provider, guide: guide || r.text, demoHtml: demo } } }
+      const assetsGuide = study ? parseAssets(r.text) : ''
+      const next = {
+        ...fRef.current,
+        motion: {
+          ...(fRef.current.motion ?? m),
+          learned: { at: new Date().toISOString(), provider: r.provider, guide: guide || r.text, demoHtml: demo },
+          ...(assetsGuide ? { assetsGuide: assetsGuideOf(assetsGuide, r.provider) } : {})
+        }
+      }
       // treino custa tempo: já salva
       save(next)
       setReplay((n) => n + 1)
@@ -358,6 +395,26 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
     } finally {
       clearInterval(tick)
       setElapsed(0)
+      setBusy(null)
+    }
+  }
+
+  /** só o guia de assets (sem refazer o guia e a demo do estilo) */
+  const studyAssets = async () => {
+    setError('')
+    setBusy(STUDY_BUSY)
+    try {
+      const study = await studyInput(MAX_STUDY_IMAGES)
+      setBusy(STUDY_BUSY)
+      const r = await api.motionTrain({ prompt: assetsOnlyPrompt(f, study.section, study.images.map((x) => x.desc)), images: study.images.map((x) => x.path) })
+      if ('error' in r) throw new Error(r.error)
+      const guide = parseAssets(r.text)
+      if (!guide) throw new Error('A IA respondeu fora do formato. Tente de novo.')
+      // estudo custa tempo: já salva
+      save({ ...fRef.current, motion: { ...(fRef.current.motion ?? m), assetsGuide: assetsGuideOf(guide, r.provider) } })
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
       setBusy(null)
     }
   }
@@ -518,24 +575,49 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
             <textarea rows={2} value={f.rules ?? ''} placeholder="Ex.: pngtuber no canto inferior direito, legenda amarela, nada de emoji…" onChange={(e) => patch({ rules: e.target.value })} />
           </label>
           <div className="st-field">
-            <span>Assets frequentes (aparecem nas Pastas quando este estilo está ativo)</span>
-            <div className="st-folders">
-              {(f.assetFolders ?? []).map((p) => (
-                <span key={p} className="st-chip on" title={p}>
-                  {p.split(/[\\/]/).pop()}
-                  <X size={11} onClick={() => patch({ assetFolders: (f.assetFolders ?? []).filter((x) => x !== p) })} />
-                </span>
+            <span>Pastas do estilo (assets que valem pra todo roteiro com este estilo; o Typos só guarda o caminho)</span>
+            <div className="st-sfolders">
+              {folders.map((x) => (
+                <div key={x.path} className="st-sfolder">
+                  <button className={'icon-btn' + (x.star ? ' on' : '')} title={x.star ? 'Favorita: o Claude usa com mais frequência' : 'Marcar como favorita'} onClick={() => patchFolder(x.path, { star: !x.star })}>
+                    <Star size={13} fill={x.star ? 'currentColor' : 'none'} />
+                  </button>
+                  <span className="st-sfolder-name" title={x.path}>
+                    <FolderOpen size={12} /> {folderName(x.path)}
+                  </span>
+                  <select value={x.role} title="Categoria: Visual entra sempre; Material bruto, SFX e Música entram quando o bloco liga “Usar o Material bruto”" onChange={(e) => patchFolder(x.path, { role: e.target.value as StyleFolderRole })}>
+                    {STYLE_FOLDER_ROLES.map((r) => (
+                      <option key={r.role} value={r.role}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input value={x.note ?? ''} placeholder="o que tem / quando usar (opcional)" onChange={(e) => patchFolder(x.path, { note: e.target.value })} />
+                  <button className="icon-btn" title="Tirar a pasta do estilo (os arquivos continuam no PC)" onClick={() => setFolders(folders.filter((y) => y.path !== x.path))}>
+                    <X size={13} />
+                  </button>
+                </div>
               ))}
-              <button
-                className="btn small"
-                onClick={async () => {
-                  const p = await api.pickFolder()
-                  if (p && !(f.assetFolders ?? []).includes(p)) patch({ assetFolders: [...(f.assetFolders ?? []), p] })
-                }}
-              >
-                <FolderPlus size={12} /> Pasta
-              </button>
+              <div className="st-sfolder-bar">
+                <button className="btn small" onClick={addFolder}>
+                  <FolderPlus size={12} /> Pasta
+                </button>
+                {folders.length > 0 && (
+                  <button
+                    className="btn small"
+                    disabled={!!busy}
+                    onClick={studyAssets}
+                    title="O Typos analisa os sons (impacto, volume, energia) e o Claude escreve o guia de como usar cada asset. O treino do estilo também faz isso."
+                  >
+                    {busy === STUDY_BUSY ? <Loader2 size={12} className="spin" /> : <Brain size={12} />} {m.assetsGuide ? 'Estudar os assets de novo' : 'Estudar os assets'}
+                  </button>
+                )}
+                {m.assetsGuide && studyStale(f) && <span className="st-warn">as pastas mudaram desde o último estudo</span>}
+              </div>
             </div>
+            <small className="muted">
+              Visual do estilo (logo, pngtuber, molduras) o motion pode usar sempre. Material bruto, SFX e Música entram junto do Material bruto do projeto quando o bloco liga “Usar o Material bruto”.
+            </small>
           </div>
         </section>
 
@@ -810,7 +892,7 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
             <small>
               {busy?.startsWith('O Claude')
                 ? `${elapsed}s · analisando ${sent} imagem(ns) com calma`
-                : `${m.refs.length} referência(s) · ~${estimate} imagem(ns) vão junto`}
+                : `${m.refs.length} referência(s) · ~${estimate} imagem(ns) vão junto${folders.length ? ` · ${folders.length} pasta(s) de assets` : ''}`}
             </small>
           </span>
         </button>
@@ -876,6 +958,20 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
               </button>
             </div>
             <div className="st-guide-text">{f.motion.learned.guide}</div>
+          </div>
+        )}
+
+        {m.assetsGuide && (
+          <div className="st-guide">
+            <div className="st-guide-head">
+              <span>
+                Guia dos assets · {new Date(m.assetsGuide.at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+              </span>
+              <button className="icon-btn" title="Copiar guia dos assets (markdown)" onClick={() => navigator.clipboard.writeText(m.assetsGuide!.guide)}>
+                <Copy size={13} />
+              </button>
+            </div>
+            <div className="st-guide-text">{m.assetsGuide.guide}</div>
           </div>
         )}
 

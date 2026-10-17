@@ -14,8 +14,13 @@ import {
   type InstructionBlock,
   type MediaKind,
   type MontageData,
-  type MotionMemoryItem
+  type MotionMemoryItem,
+  type SoundProfile,
+  profileText,
+  styleFoldersOf,
+  type StyleFolderRole
 } from '../lib'
+import { roleLabel } from '../style/assets'
 import { envAt, envPoints, spans, type MontageEngine } from './engine'
 import type { ScriptBlock } from './autocut'
 import { jobPct, runningLabel, speechFiles, watchJobs } from './transcripts'
@@ -465,10 +470,12 @@ const MAX_STYLE_ASSETS = 60
 /** quantos assets vão também como imagem pro Claude olhar */
 export const MAX_STYLE_IMAGES = 12
 
-/** imagens e vídeos das pastas de assets do formato (o áudio fica de fora) */
+/** imagens e vídeos das pastas visuais do estilo (o áudio fica de fora; sons vêm das pastas de SFX e Música com o Material bruto) */
 export async function styleAssets(format?: Format): Promise<StyleAsset[]> {
   const out: StyleAsset[] = []
-  for (const dir of format?.assetFolders ?? []) {
+  for (const dir of styleFoldersOf(format)
+    .filter((x) => x.role === 'visual')
+    .map((x) => x.path)) {
     const list = await api.scanFolder(dir).catch(() => ({ error: '' }))
     if ('error' in list) continue
     const folder = dir.split(/[\\/]/).filter(Boolean).pop() ?? 'pasta'
@@ -495,20 +502,30 @@ export interface RawFile {
   /** nome do arquivo na pasta da prévia */
   name: string
   duration?: number
-  /** pasta da Montagem de onde vem */
+  /** pasta da Montagem de onde vem (os das pastas do estilo: a categoria da Montagem que combina) */
   bin: string
+  /** veio de uma pasta do estilo (não do projeto) */
+  style?: StyleFolderRole
+  /** análise do som (impacto, volume, energia), quando deu pra ler */
+  profile?: SoundProfile
 }
 const MAX_RAW = 120
+/** das pastas do estilo (contam à parte, pra o bruto do projeto não tomar o lugar delas) */
+const MAX_STYLE_RAW = 60
 /** de uma pasta vinculada do PC (bibliotecas de som podem ter milhares de arquivos) */
 const MAX_RAW_PER_LINK = 40
 /** quantas imagens do bruto vão também como imagem pro Claude olhar */
 export const MAX_RAW_IMAGES = 8
 
+/** o que entra de cada categoria: SFX e Música só som; Material bruto tudo */
+const roleWants = (role: string | undefined, kind: MediaKind) => role === 'raw' || ((role === 'sfx' || role === 'music') && kind === 'audio')
+
 /**
  * O Material bruto do projeto (imagens, vídeos e sons, inclusive das pastas vinculadas do PC) e os sons da pasta SFX.
- * Primeiro o que já foi importado na Montagem; depois as pastas vinculadas, as ⭐ antes.
+ * Primeiro o que já foi importado na Montagem; depois as pastas vinculadas, as ⭐ antes. Por último as pastas
+ * do estilo (Material bruto, SFX e Música), que valem pra todo roteiro com esse estilo.
  */
-export async function rawFiles(data: MontageData): Promise<RawFile[]> {
+export async function rawFiles(data: MontageData, format?: Format): Promise<RawFile[]> {
   const bins = new Map(data.bins.map((x) => [x.id, x]))
   const chain = (id: string) => {
     const out: MontageData['bins'] = []
@@ -518,14 +535,14 @@ export async function rawFiles(data: MontageData): Promise<RawFile[]> {
   const roleOf = (id: string) => chain(id)[0]?.role
   const out: RawFile[] = []
   const seen = new Set<string>()
-  const add = (f: Omit<RawFile, 'name'>) => {
-    if (seen.has(f.path) || out.length >= MAX_RAW) return
+  const add = (f: Omit<RawFile, 'name'>, fromStyle = false) => {
+    if (seen.has(f.path) || (!fromStyle && out.length >= MAX_RAW)) return
     seen.add(f.path)
     const ext = f.path.match(/\.\w+$/)?.[0]?.toLowerCase() ?? ''
     const base = (f.path.split(/[\\/]/).pop() ?? 'arquivo').replace(/\.\w+$/, '').replace(/[^\w.-]+/g, '_').slice(0, 40)
     out.push({ ...f, name: `bruto-${out.length + 1}-${base}${ext}` })
   }
-  const wanted = (bin: string, kind: MediaKind) => roleOf(bin) === 'raw' || (roleOf(bin) === 'sfx' && kind === 'audio')
+  const wanted = (bin: string, kind: MediaKind) => roleWants(roleOf(bin), kind)
   for (const m of data.media) {
     if (m.motionHtml || m.motionBlock || !wanted(m.bin, m.kind)) continue
     add({ path: m.path, rel: [...chain(m.bin).map((x) => x.name), m.name].join('/'), kind: m.kind, duration: m.duration, bin: m.bin })
@@ -538,7 +555,31 @@ export async function rawFiles(data: MontageData): Promise<RawFile[]> {
     const where = chain(x.id).map((y) => y.name)
     for (const f of list.filter((f) => wanted(x.id, f.kind)).slice(0, MAX_RAW_PER_LINK)) add({ path: f.path, rel: [...where, f.rel.replace(/\\/g, '/')].join('/'), kind: f.kind, bin: x.id })
   }
+  const project = out.length
+  const folders = styleFoldersOf(format)
+    .filter((x) => x.role !== 'visual')
+    .sort((a, z) => Number(!!z.star) - Number(!!a.star))
+  for (const x of folders) {
+    if (out.length - project >= MAX_STYLE_RAW) break
+    const list = await api.scanFolder(x.path).catch(() => ({ error: '' }))
+    if ('error' in list) continue
+    // ao aprovar, o som vira mídia na categoria da Montagem que combina (SFX ou Material bruto)
+    const bin = data.bins.find((y) => !y.parent && y.role === (x.role === 'sfx' ? 'sfx' : 'raw'))?.id ?? ''
+    const folder = x.path.split(/[\\/]/).filter(Boolean).pop() ?? 'pasta'
+    const room = MAX_STYLE_RAW - (out.length - project)
+    for (const f of list.filter((f) => roleWants(x.role, f.kind)).slice(0, Math.min(MAX_RAW_PER_LINK, room)))
+      add({ path: f.path, rel: ['Estilo', roleLabel(x.role), folder, f.rel.replace(/\\/g, '/')].join('/'), kind: f.kind, bin, style: x.role }, true)
+  }
   return out
+}
+
+/** lê o perfil dos sons da lista (impacto, volume, energia); o que não der fica sem */
+export async function withProfiles(list: RawFile[]): Promise<RawFile[]> {
+  const audio = list.filter((f) => f.kind === 'audio')
+  if (!audio.length || !api.soundProfiles) return list
+  const got = await api.soundProfiles(audio.map((f) => f.path)).catch(() => [])
+  const by = new Map(audio.map((f, i) => [f.path, got[i] ?? undefined]))
+  return list.map((f) => (by.get(f.path) ? { ...f, profile: by.get(f.path) } : f))
 }
 
 /** os sons que o Claude pediu na tag <sons> (só arquivos da lista, dentro do bloco) */
@@ -748,15 +789,26 @@ export function blockPrompt(o: {
       ''
     )
   }
+  const assetsGuide = o.format?.motion?.assetsGuide?.guide
+  if (assetsGuide && (o.assets?.list.length || o.raw?.list.some((f) => f.style))) L.push('## Como usar os assets do estilo (o que você estudou no treino do estilo)', assetsGuide, '')
   const raw = o.raw?.list.length ? o.raw : null
   const rawSounds = !!raw?.list.some((f) => f.kind === 'audio' || f.kind === 'video')
   if (raw) {
-    const kind = (f: RawFile) => (f.kind === 'image' ? 'imagem' : f.kind === 'video' ? 'vídeo' : 'som') + (f.duration ? `, ${f.duration.toFixed(1)} s` : '')
+    const kind = (f: RawFile) =>
+      (f.kind === 'image' ? 'imagem' : f.kind === 'video' ? 'vídeo' : f.style === 'music' ? 'música' : 'som') +
+      (f.profile ? `, ${f.profile.duration.toFixed(1)} s; ${profileText(f.profile)}` : f.duration ? `, ${f.duration.toFixed(1)} s` : '')
+    const fromStyle = raw.list.some((f) => f.style)
+    const notes = styleFoldersOf(o.format).filter((x) => x.role !== 'visual' && (x.note?.trim() || x.star))
     L.push(
-      '## Material bruto do projeto (o autor pediu pra você usar)',
+      fromStyle ? '## Material bruto do projeto e pastas do estilo (o autor pediu pra você usar)' : '## Material bruto do projeto (o autor pediu pra você usar)',
       'São os arquivos deste vídeo: gravações, prints, imagens, vídeos e sons. Use o que combinar com a fala e as instruções deste trecho, de verdade (o arquivo, não um desenho inventado no lugar), sem forçar: se nada combinar, não use. Eles estão na mesma pasta do HTML com o nome abaixo. Imagem: <img src="nome">. Vídeo: <video src="nome" muted playsinline></video> (o Typos sincroniza o tempo; não use autoplay nem mexa em currentTime).',
+      fromStyle ? 'Os que começam com "Estilo/" são a biblioteca fixa deste estilo (trilhas, efeitos, materiais que o autor usa em todo vídeo dele), não só deste roteiro.' : '',
+      ...(notes.length ? ['Pastas do estilo:', ...notes.map((x) => `- Estilo/${roleLabel(x.role)}/${x.path.split(/[\\/]/).filter(Boolean).pop()}${x.star ? ' ⭐ favorita (use com mais frequência)' : ''}${x.note?.trim() ? ': ' + x.note.trim() : ''}`)] : []),
       rawSounds
         ? 'Som (efeito, trilha, ou o som de um vídeo da lista): NÃO ponha <audio> no HTML (ele não é gravado). Liste na tag <sons> do fim da resposta, com o segundo em que entra; o Typos mixa com a narração e, quando o autor aprovar, vira um corte de áudio na timeline. Som é tempero: poucos, nos momentos certos (uma entrada, um impacto, um número), com volume que não cubra a fala.'
+        : '',
+      raw.list.some((f) => f.profile)
+        ? 'Nos sons analisados, "impacto" é quanto tempo depois do começo do arquivo vem o momento mais forte, e a energia vai de 0 (silêncio) a 9 (o mais alto do arquivo). O "em" da tag <sons> é onde o ARQUIVO começa: pra o impacto cair no segundo X do bloco (o número aparecendo, o corte, a batida), use em = X − impacto. Trilha com começo calmo pode entrar antes e crescer junto com o motion.'
         : '',
       ...raw.list.map((f) => `- ${f.name} ← ${f.rel} (${kind(f)})`),
       raw.shown ? `As imagens ${raw.first} a ${raw.first + raw.shown - 1} são as ${raw.shown} primeiras imagens desta lista, na mesma ordem.` : '',
@@ -935,7 +987,8 @@ export async function generatePreview(c: PreviewCtx) {
   const shownSet = new Set(shownAssets)
   const assets = { list: [...shownAssets, ...list.filter((a) => !shownSet.has(a))], first: baseImages.length + 1, shown: shownAssets.length }
   // o Material bruto (se o bloco pediu): as imagens dele vêm depois das dos assets
-  const rawList = b.useRaw ? await rawFiles(c.data) : []
+  if (b.useRaw) c.onStage('Lendo o Material bruto e analisando os sons…', null, [0.17, 0.17])
+  const rawList = b.useRaw ? await withProfiles(await rawFiles(c.data, c.format)) : []
   const shownRaw = rawList.filter((f) => f.kind === 'image' && /\.(png|jpe?g|webp|gif|bmp)$/i.test(f.path)).slice(0, MAX_RAW_IMAGES)
   const shownRawSet = new Set(shownRaw)
   const raw = {
@@ -1113,7 +1166,7 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
       ...(under ? [{ src: under.video, name: UNDER_NAME }] : []),
       ...edgeFiles(edges),
       ...(html.includes('estilo-') ? assetFiles(await styleAssets(c.format), html) : []),
-      ...(html.includes('bruto-') ? assetFiles(await rawFiles(c.data), html) : [])
+      ...(html.includes('bruto-') ? assetFiles(await rawFiles(c.data, c.format), html) : [])
     ]
   })
   if ('error' in v) throw new Error(v.error)

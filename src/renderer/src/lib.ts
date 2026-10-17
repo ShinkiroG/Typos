@@ -162,12 +162,53 @@ export interface Format {
   /** o formato tem referência visual de motion? (imagens/vídeos em userData/format-media) */
   motionRef?: boolean
   motionRefFiles?: string[]
-  /** pastas de assets que esse formato sempre usa (aparecem nas Pastas quando ele está ativo) */
+  /** pastas de assets que esse formato sempre usa (aparecem nas Pastas quando ele está ativo); antigas, hoje espelha as pastas "visual" de styleFolders */
   assetFolders?: string[]
+  /** pastas do PC ligadas ao estilo, com categoria (ver styleFoldersOf) */
+  styleFolders?: StyleFolder[]
   /** treino de motion (workspace Estilo) */
   motion?: MotionStyle
   /** só na tela de Formatos: editado e ainda não salvo */
   __dirty?: boolean
+}
+
+/**
+ * Categoria de uma pasta do estilo. visual: logo, pngtuber, molduras (o motion sempre pode usar);
+ * raw, sfx e music: como as categorias da Montagem, entram junto do Material bruto do projeto
+ * quando o bloco liga "Usar o Material bruto".
+ */
+export type StyleFolderRole = 'visual' | 'raw' | 'sfx' | 'music'
+export interface StyleFolder {
+  /** a pasta do PC (só a referência: nada é copiado) */
+  path: string
+  role: StyleFolderRole
+  /** favorita: o Claude usa com mais frequência (e vem primeiro na lista) */
+  star?: boolean
+  /** o que tem nela ou quando usar (vai pro Claude) */
+  note?: string
+}
+export const STYLE_FOLDER_ROLES: { role: StyleFolderRole; label: string }[] = [
+  { role: 'visual', label: 'Visual do estilo' },
+  { role: 'raw', label: 'Material bruto' },
+  { role: 'sfx', label: 'SFX' },
+  { role: 'music', label: 'Música' }
+]
+/** as pastas do estilo (estilos antigos só tinham assetFolders, todas visuais) */
+export const styleFoldersOf = (f?: Format): StyleFolder[] => f?.styleFolders ?? (f?.assetFolders ?? []).map((path) => ({ path, role: 'visual' as const }))
+
+/** perfil de um som (main/soundProfile.ts): impacto, começo, fim, volume e curva de energia */
+export type SoundProfile = NonNullable<Awaited<ReturnType<typeof window.api.soundProfiles>>[number]>
+
+/** o perfil em uma linha, como vai pro Claude */
+export function profileText(p: SoundProfile) {
+  const s = (x: number) => (x < 10 ? x.toFixed(2) : x.toFixed(1)).replace(/\.?0+$/, '') + ' s'
+  return [
+    `começa em ${s(p.attack)}`,
+    `impacto em ${s(p.peakAt)}`,
+    `some em ${s(p.tail)}`,
+    p.lufs !== undefined ? `${Math.round(p.lufs)} LUFS` : `pico ${Math.round(p.peakDb)} dBFS`,
+    `energia (0–9) a cada ${String(p.step).replace('.', ',')} s: ${p.env}`
+  ].join(', ')
 }
 
 export interface MotionRef {
@@ -222,6 +263,14 @@ export interface MotionStyle {
   pace?: 'calmo' | 'médio' | 'frenético'
   /** memória de motion: exemplos aprovados que as prévias e o render seguem */
   memory?: MotionMemoryItem[]
+  /** o que o Claude estudou nas pastas do estilo: como usar cada asset (markdown); vai junto pros blocos */
+  assetsGuide?: {
+    at: string
+    provider: string
+    guide: string
+    /** as pastas estudadas (pra avisar quando mudarem) */
+    folders: string[]
+  }
   /** o que a IA aprendeu: guia do estilo + demo animada */
   learned?: {
     at: string

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { SoundProfile } from '../main/soundProfile'
 
 type AiProvider = 'claude-code' | 'anthropic' | 'openai'
 
@@ -161,6 +162,8 @@ const api = {
   proxyAudio: (path: string): Promise<string | { error: string }> => ipcRenderer.invoke('media:proxy', path),
   /** cópia 720p só pra prévia de vídeo pesado (4K, HEVC, ProRes…); null = o original já toca leve */
   proxyVideo: (path: string): Promise<string | null> => ipcRenderer.invoke('media:proxyVideo', path),
+  /** perfil de cada som (null se não deu pra ler): impacto, começo, fim, volume e curva de energia */
+  soundProfiles: (paths: string[]): Promise<(SoundProfile | null)[]> => ipcRenderer.invoke('media:soundProfiles', paths),
   loudness: (path: string, start: number, dur: number): Promise<{ i: number; tp: number } | null> => ipcRenderer.invoke('media:loudness', path, start, dur),
   mediaExists: (paths: string[]): Promise<boolean[]> => ipcRenderer.invoke('media:exists', paths),
   missingMedia: (paths: string[]): Promise<string[]> => ipcRenderer.invoke('media:missing', paths),
