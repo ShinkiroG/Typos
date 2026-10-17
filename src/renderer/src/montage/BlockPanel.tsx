@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine } from 'lucide-react'
 import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type Format, type InstructionBlock, type MontageData } from '../lib'
+import { PromptMenu } from './PromptMenu'
+import { rememberPrompt } from './prompts'
 import { blockDur, blockLabel, blockSync, isImage, neighborOf, neighborText, previewStale } from './blocks'
 
 const fmtTc = (t: number) => {
@@ -173,9 +175,20 @@ export function BlockForm({ b, data, dir, patch, big, formats, videoFormat }: Fo
           )
         })}
       </div>
-      <label className="blk-label">
-        {b.dynamic ? 'Dicas (opcional): o motion sai da fala do trecho' : 'Como você imagina o motion'}
+      <div className="blk-label">
+        <span className="blk-label-head">
+          <label htmlFor={g + '-text'}>{b.dynamic ? 'Dicas (opcional): o motion sai da fala do trecho' : 'Como você imagina o motion'}</label>
+          <PromptMenu
+            text={b.text}
+            onPick={(t) => {
+              // o texto que estava no campo não se perde: vai pros recentes
+              rememberPrompt(b.text)
+              patch({ text: t })
+            }}
+          />
+        </span>
         <textarea
+          id={g + '-text'}
           rows={big ? 10 : 6}
           value={b.text}
           placeholder={
@@ -185,7 +198,7 @@ export function BlockForm({ b, data, dir, patch, big, formats, videoFormat }: Fo
           }
           onChange={(e) => patch({ text: e.target.value }, g + 't')}
         />
-      </label>
+      </div>
       <div className="blk-atts">
         <div className="blk-atts-head">
           <span>Anexos</span>
@@ -443,6 +456,12 @@ export function BlockPreviewBox({
   )
 }
 
+/** gera a prévia e guarda o texto nos prompts recentes */
+const generate = (p: { b: InstructionBlock; onGenerate: () => void }) => {
+  rememberPrompt(p.b.text)
+  p.onGenerate()
+}
+
 /** painel da direita (inspetor) com o bloco selecionado */
 export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onOpen: () => void; onRemove: () => void; heard?: React.ReactNode }) {
   return (
@@ -456,7 +475,7 @@ export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenera
           <Trash2 size={13} />
         </button>
       </div>
-      <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={p.onGenerate} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} heard={p.heard} />
+      <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} heard={p.heard} />
       <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} formats={p.formats} videoFormat={p.videoFormat} />
     </div>
   )
@@ -481,7 +500,7 @@ export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate:
           </button>
         </div>
         <div className="blk-window-body">
-          <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={p.onGenerate} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} heard={p.heard} big />
+          <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} heard={p.heard} big />
           <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} formats={p.formats} videoFormat={p.videoFormat} big />
         </div>
       </div>

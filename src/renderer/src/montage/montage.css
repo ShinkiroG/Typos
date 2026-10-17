@@ -1164,6 +1164,101 @@
   color: var(--muted);
   font-size: 10.5px;
 }
+/* cabeçalho do campo do motion: título + botão dos prompts salvos */
+.blk-label-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.blk-label-head .prm-btn {
+  margin-left: auto;
+  padding: 2px;
+}
+.prm-btn.on {
+  color: var(--text);
+}
+/* menu dos prompts recentes e favoritos */
+.prm-menu {
+  position: fixed;
+  z-index: 80;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 5px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+  font: 12px var(--font-ui);
+}
+.prm-save {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 3px;
+  padding: 7px 8px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+}
+.prm-save:hover:not(:disabled) {
+  background: var(--bg-3);
+}
+.prm-save:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.prm-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+}
+.prm-item:hover,
+.prm-item.cur {
+  background: var(--bg-3);
+}
+.prm-text {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  padding: 6px 8px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-line;
+  line-height: 1.35;
+}
+.prm-item .icon-btn {
+  flex: none;
+  padding: 3px;
+  opacity: 0.55;
+}
+.prm-item:hover .icon-btn,
+.prm-item .icon-btn.on {
+  opacity: 1;
+}
+.prm-item .icon-btn.on {
+  color: #fbbf24;
+}
+.prm-item .icon-btn.on svg {
+  fill: currentColor;
+}
+.prm-empty {
+  color: var(--muted);
+  padding: 8px;
+  line-height: 1.4;
+}
 .blk-label textarea {
   resize: vertical;
   background: var(--bg);
