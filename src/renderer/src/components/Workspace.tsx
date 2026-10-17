@@ -80,13 +80,17 @@ import { MenuBar, type Menu } from './MenuBar'
 import { AudioSettings } from './AudioSettings'
 import { SnippetModal, type SnippetDraft } from './SnippetModal'
 import { KeysEditor } from './KeysEditor'
+import { HistoryModal } from './HistoryModal'
 
 interface Props {
   dir: string
   data: ProjectData
   /** rascunho em autosaves/ (ainda não foi salvo num lugar escolhido) */
   draft: boolean
-  onSavedAs: (dir: string) => void
+  /** salvou em outra pasta ou moveu: reabre de lá (a mídia de dentro da pasta mudou de caminho) */
+  onSavedAs: (dir: string, notice: string) => void
+  /** aviso pra mostrar assim que abre */
+  notice?: string
   formats: Format[]
   onFormatsChange: (f: Format[]) => void
   library: LibraryItem[]
@@ -95,8 +99,10 @@ interface Props {
   onOpenSettings: () => void
   registerFlush: (fn: (() => Promise<void>) | null) => void
   /** trocar de roteiro pelo menu Arquivo (novo / abrir / recente) */
-  /** restore: volta o roteiro pra uma cópia automática (versão) e reabre */
-  onSwitchProject: (kind: 'new' | 'open' | 'restore', dir?: string, version?: string) => void
+  /** restore: volta o roteiro pra uma versão do histórico (id + nome da cópia) e reabre */
+  onSwitchProject: (kind: 'new' | 'open' | 'restore', dir?: string, version?: { id: string; name: string }) => void
+  /** abriu um roteiro já carregado (versão aberta como cópia) */
+  onOpened: (r: { dir: string; data: ProjectData; draft: boolean }) => void
 }
 
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error'
@@ -127,7 +133,7 @@ const afterCurrentBlock = (editor: Editor) => {
   return $from.depth >= 1 ? $from.after(1) : editor.state.doc.content.size
 }
 
-export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChange, library, onLibraryChange, onClose, onOpenSettings, registerFlush, onSwitchProject }: Props) {
+export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onFormatsChange, library, onLibraryChange, onClose, onOpenSettings, registerFlush, onSwitchProject, onOpened }: Props) {
   setProjectDir(dir)
   // a pasta muda depois do "Salvar…"; handlers criados uma vez leem daqui
   const dirRef = useRef(dir)
@@ -266,8 +272,9 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
       return true
     }
   })
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [toast, setToast] = useState(() =>
-    repaired.current ? 'O corte automático foi pra faixa "Corte automático", logo abaixo da narração original (que ficou silenciada pra comparar: clique no alto-falante da faixa).' : ''
+    notice || repaired.current ? notice || 'O corte automático foi pra faixa "Corte automático", logo abaixo da narração original (que ficou silenciada pra comparar: clique no alto-falante da faixa).' : ''
   )
   const [aiUsage, setAiUsage] = useState<Parameters<Parameters<typeof api.onAiUsage>[0]>[0] | null>(null)
   useEffect(() => {
@@ -807,20 +814,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
             )
           }
         },
-        {
-          label: 'Versões anteriores',
-          items: async () => {
-            const list = await api.listVersions(dir)
-            if (!list.length) return [{ label: 'Nenhuma cópia ainda (sai uma a cada 3 min de edição)', disabled: true }]
-            return list.map((v) => ({
-              label: `${versionWhen(v.at)} · ${v.words.toLocaleString('pt-BR')} palavras`,
-              onClick: () => {
-                if (confirm(`Voltar o roteiro pra versão de ${versionWhen(v.at)}?\n\nO roteiro de agora também fica guardado nas versões, dá pra voltar pra ele.`))
-                  onSwitchProject('restore', dir, v.name)
-              }
-            }))
-          }
-        },
+        { label: 'Histórico de versões…', onClick: async () => (await save(), setHistoryOpen(true)) },
         { sep: true },
         { label: 'Copiar referências pro rodapé', onClick: () => setRefsOpen(true) },
         { label: 'Copiar pedido pro Claude', onClick: () => sendToClaude() },
@@ -895,8 +889,7 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     const r = await api.moveProject(dirRef.current, title)
     if (!r) return
     if ('error' in r) return setToast(r.error)
-    onSavedAs(r.dir)
-    setToast('Roteiro movido pra ' + r.dir)
+    onSavedAs(r.dir, 'Roteiro movido pra ' + r.dir)
   }
 
   const snapshot = useCallback(() => {
@@ -922,26 +915,37 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
     return { out, md }
   }, [data])
 
+  /** grava; devolve a pasta de rascunho se a pasta do roteiro sumiu (quiet: quem chamou continua dali) */
+  const persist = useCallback(
+    async (quiet: boolean): Promise<string | undefined> => {
+      window.clearTimeout(timer.current)
+      const snap = snapshot()
+      if (!snap) return
+      setSaveState('saving')
+      const r = await api.saveProject(dirRef.current, snap.out, snap.md)
+      setSaveState(r && typeof r === 'object' && 'error' in r ? 'error' : 'saved')
+      if (r && typeof r === 'object' && 'rescued' in r) {
+        if (!quiet)
+          onSavedAs(r.rescued, 'A pasta do roteiro não existe mais (foi renomeada ou movida?). Nada se perdeu: o roteiro foi guardado como rascunho. Use Arquivo → Salvar… pra escolher onde ele fica.')
+        return r.rescued
+      }
+    },
+    [snapshot, onSavedAs]
+  )
   const save = useCallback(async () => {
-    window.clearTimeout(timer.current)
-    const snap = snapshot()
-    if (!snap) return
-    setSaveState('saving')
-    const r = await api.saveProject(dirRef.current, snap.out, snap.md)
-    setSaveState(r && typeof r === 'object' && 'error' in r ? 'error' : 'saved')
-  }, [snapshot])
+    await persist(false)
+  }, [persist])
   saveRef.current = save
 
   const saveAs = useCallback(async () => {
-    await save()
+    const from = (await persist(true)) ?? dirRef.current
     const snap = snapshot()
     if (!snap) return
-    const r = await api.saveProjectAs(dirRef.current, snap.out, snap.md)
+    const r = await api.saveProjectAs(from, snap.out, snap.md)
     if (!r) return
     if ('error' in r) return setToast(r.error)
-    onSavedAs(r.dir)
-    setToast('Salvo em ' + r.dir)
-  }, [save, snapshot, onSavedAs])
+    onSavedAs(r.dir, 'Salvo em ' + r.dir)
+  }, [persist, snapshot, onSavedAs])
 
   // título/formato também salvam
   const first = useRef(true)
@@ -1913,6 +1917,15 @@ export function Workspace({ dir, data, draft, onSavedAs, formats, onFormatsChang
           }}
         />
       )}
+      {historyOpen && (
+        <HistoryModal
+          dir={dirRef.current}
+          current={editor?.getJSON()}
+          onClose={() => setHistoryOpen(false)}
+          onRestore={(d, id, name) => onSwitchProject('restore', d, { id, name })}
+          onOpenCopy={(r) => onOpened(r)}
+        />
+      )}
       {refsOpen && editor && (
         <RefsPanel
           refs={allReferences(editor)}
@@ -2017,15 +2030,6 @@ function gridLayout(left: boolean, right: boolean, timeline: boolean, leftW = 23
     gridTemplateRows: (context ? '94px' : '52px') + ' 1fr ' + (timeline ? 'auto ' : '') + '32px',
     gridTemplateAreas: [row('top'), '"' + mid.join(' ') + '"', timeline && row('timeline'), row('status')].filter(Boolean).join(' ')
   }
-}
-
-/** "há 12 min", "hoje 14:05", "12/10 09:30" */
-function versionWhen(at: number) {
-  const min = Math.round((Date.now() - at) / 60000)
-  if (min < 60) return min <= 1 ? 'agora há pouco' : `há ${min} min`
-  const d = new Date(at)
-  const hm = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-  return d.toDateString() === new Date().toDateString() ? `hoje ${hm}` : `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${hm}`
 }
 
 /** dólar curto: centavos de fração quando é pouco (US$ 0,031) */

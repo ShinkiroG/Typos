@@ -13,10 +13,28 @@ export interface WhisperJob {
   error?: string
 }
 
+/** uma cópia do histórico (ver main/historyCore.ts) */
+export interface HistoryVersion {
+  name: string
+  at: number
+  reason: 'auto' | 'abertura' | 'corte' | 'antes-de-voltar' | 'salvar-como' | 'importado'
+  words: number
+}
+export interface HistoryProject {
+  id: string
+  title: string
+  dir: string
+  exists: boolean
+  versions: number
+  lastAt: number
+}
+
 const api = {
   newProject: () => ipcRenderer.invoke('project:new'),
   openProject: (dir?: string) => ipcRenderer.invoke('project:open', dir),
-  saveProject: (dir: string, data: unknown, markdown: string) => ipcRenderer.invoke('project:save', dir, data, markdown),
+  /** rescued: a pasta não existia mais; o roteiro foi gravado num rascunho novo */
+  saveProject: (dir: string, data: unknown, markdown: string): Promise<true | { rescued: string } | { error: string }> =>
+    ipcRenderer.invoke('project:save', dir, data, markdown),
   saveProjectAs: (dir: string, data: unknown, markdown: string): Promise<{ dir: string } | { error: string } | null> =>
     ipcRenderer.invoke('project:saveAs', dir, data, markdown),
   recentProjects: () => ipcRenderer.invoke('project:recent'),
@@ -30,9 +48,14 @@ const api = {
     ipcRenderer.on('project:exportProgress', (_e, pct) => cb(pct))
   },
   logError: (text: string) => ipcRenderer.send('log:renderer', text),
-  /** cópias automáticas do roteiro (as 10 mais novas, uma a cada 3 min no máximo) */
-  listVersions: (dir: string): Promise<{ name: string; at: number; words: number; title: string }[]> => ipcRenderer.invoke('versions:list', dir),
-  restoreVersion: (dir: string, name: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('versions:restore', dir, name),
+  /** histórico de versões (main/history.ts): todos os roteiros com cópias, inclusive de pasta sumida */
+  historyProjects: (): Promise<HistoryProject[]> => ipcRenderer.invoke('history:projects'),
+  /** versões de um roteiro, pela pasta (aberto) ou pelo id */
+  historyList: (ref: { dir?: string; id?: string }): Promise<{ id: string | null; title: string; dir: string; exists: boolean; versions: HistoryVersion[] }> =>
+    ipcRenderer.invoke('history:list', ref),
+  historyRead: (id: string, name: string): Promise<any | null> => ipcRenderer.invoke('history:read', id, name),
+  historyRestore: (dir: string, id: string, name: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('history:restore', dir, id, name),
+  historyOpenCopy: (id: string, name: string): Promise<{ dir: string; data: any; draft: true } | { error: string }> => ipcRenderer.invoke('history:openCopy', id, name),
   removeRecent: (dir: string) => ipcRenderer.invoke('project:removeRecent', dir),
   drafts: (keep?: string): Promise<{ dir: string; title: string; updatedAt: string; preview: string }[]> =>
     ipcRenderer.invoke('project:drafts', keep),
