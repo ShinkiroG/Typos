@@ -749,6 +749,22 @@ export interface BlockPreview {
   safeIssues?: string[]
   /** tamanho (px) em que o HTML foi escrito; o clipe final amplia a partir dele */
   size?: { w: number; h: number }
+  /** sons do Material bruto que o Claude pôs no motion (tempo a partir do começo do bloco); viram cortes de áudio ao aprovar */
+  sounds?: BlockSound[]
+}
+
+/** um som posto pelo Claude no motion de um bloco */
+export interface BlockSound {
+  path: string
+  name: string
+  /** começo (s) a partir do começo do bloco */
+  at: number
+  /** volume 0–1 */
+  vol: number
+  /** duração do arquivo (s), lida ao mixar a prévia */
+  duration?: number
+  /** a pasta da Montagem de onde ele veio (pra virar mídia ao aprovar) */
+  bin?: string
 }
 
 /** Bloco de instrução: um pedaço de tempo da faixa de vídeo com instruções de motion pro Claude. */
@@ -777,6 +793,8 @@ export interface InstructionBlock {
   toNext?: boolean
   /** estilo (formato) só deste bloco; vazio = o estilo do vídeo */
   formatId?: string
+  /** o Claude pode usar o Material bruto do projeto (imagens, vídeos e sons, mais os sons da pasta SFX) */
+  useRaw?: boolean
 }
 
 /** um pedido de ajuste na prévia de um bloco */
