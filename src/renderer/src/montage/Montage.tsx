@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
+  Maximize2,
+  Minimize2,
   Play,
   Pause,
   SkipBack,
@@ -119,11 +121,19 @@ interface Props {
 const VIEW_ZOOMS = [0.1, 0.25, 0.33, 0.5, 0.75, 1, 1.5, 2]
 
 const LAYOUT_KEY = 'typos.montageLayout'
+const LAYOUT_DEF = { pool: 300, insp: 280, tl: 300 }
 const loadLayout = () => {
   try {
-    return { pool: 300, insp: 280, tl: 300, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? '{}') }
+    return { ...LAYOUT_DEF, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? '{}') }
   } catch {
-    return { pool: 300, insp: 280, tl: 300 }
+    return { ...LAYOUT_DEF }
+  }
+}
+const saveLayout = (l: typeof LAYOUT_DEF) => {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(l))
+  } catch {
+    /* sem storage */
   }
 }
 
@@ -186,17 +196,22 @@ export function Montage({
       el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerup', up)
       setLayout((l: typeof layout) => {
-        try {
-          localStorage.setItem(LAYOUT_KEY, JSON.stringify(l))
-        } catch {
-          /* sem storage */
-        }
+        saveLayout(l)
         return l
       })
     }
     el.addEventListener('pointermove', move)
     el.addEventListener('pointerup', up)
   }
+  // duplo clique na divisória volta ao tamanho padrão
+  const resetSplit = (which: 'pool' | 'insp' | 'tl') =>
+    setLayout((l: typeof layout) => {
+      const next = { ...l, [which]: LAYOUT_DEF[which] }
+      saveLayout(next)
+      return next
+    })
+  // visualizador ampliado: some a mídia e o inspetor, o vídeo fica com a largura toda (F ou duplo clique no vídeo)
+  const [maxView, setMaxView] = useState(false)
 
   // ---------- gravação ----------
   const recRef = useRef<Recorder | null>(null)
@@ -1344,12 +1359,15 @@ export function Montage({
       if (isKey(e, 'mt.block')) return run(addBlock)
       if (isKey(e, 'mt.zoomIn')) return run(() => zoomBy(1.4))
       if (isKey(e, 'mt.zoomOut')) return run(() => zoomBy(1 / 1.4))
+      if (isKey(e, 'mt.viewFit')) return run(() => setView('fit'))
+      if (isKey(e, 'mt.viewMax')) return run(() => setMaxView((v) => !v))
       if (e.ctrlKey || e.metaKey || e.altKey) return
       if ((k === 'arrowup' || k === 'arrowdown') && (recRef.current || rehearseRef.current))
         run(() => setPrompterWpm(prompterWpmRef.current + (k === 'arrowup' ? 10 : -10)))
       else if ((k === 'delete' || k === 'backspace') && blockSel) run(() => removeBlock(blockSel))
       else if ((k === 'delete' || k === 'backspace') && gap && !selected.length) run(() => closeGap(gap))
       else if (k === 'escape' && gap) run(() => setGap(null))
+      else if (k === 'escape' && maxView) run(() => setMaxView(false))
       else if (k === 'delete' || k === 'backspace') run(() => remove(e.shiftKey))
       else if (k === 'arrowleft') run(() => (e.shiftKey ? jumpCut(-1) : seek(posRef.current - 1 / 30)))
       else if (k === 'arrowright') run(() => (e.shiftKey ? jumpCut(1) : seek(posRef.current + 1 / 30)))
@@ -1619,13 +1637,20 @@ export function Montage({
     <div
       className="montage"
       ref={rootRef}
-      style={{ gridTemplateColumns: `${layout.pool}px minmax(0, 1fr) ${layout.insp}px`, gridTemplateRows: `minmax(120px, 1fr) 40px ${layout.tl}px` }}
+      style={{
+        gridTemplateColumns: maxView ? '0 minmax(0, 1fr) 0' : `${layout.pool}px minmax(0, 1fr) ${layout.insp}px`,
+        gridTemplateRows: `minmax(120px, 1fr) 40px ${layout.tl}px`
+      }}
     >
-      <div className="mt-split v" style={{ left: layout.pool - 3, bottom: layout.tl + 40 }} onPointerDown={(e) => startSplit('pool', e)} title="Arraste pra mudar a largura" />
-      <div className="mt-split v" style={{ right: layout.insp - 3, bottom: layout.tl + 40 }} onPointerDown={(e) => startSplit('insp', e)} title="Arraste pra mudar a largura" />
-      <div className="mt-split h" style={{ bottom: layout.tl + 40 - 3 }} onPointerDown={(e) => startSplit('tl', e)} title="Arraste pra mudar a altura da timeline" />
+      {!maxView && (
+        <>
+          <div className="mt-split v" style={{ left: layout.pool - 3, bottom: layout.tl + 40 }} onPointerDown={(e) => startSplit('pool', e)} onDoubleClick={() => resetSplit('pool')} title="Arraste pra mudar a largura (duplo clique volta ao padrão)" />
+          <div className="mt-split v" style={{ right: layout.insp - 3, bottom: layout.tl + 40 }} onPointerDown={(e) => startSplit('insp', e)} onDoubleClick={() => resetSplit('insp')} title="Arraste pra mudar a largura (duplo clique volta ao padrão)" />
+        </>
+      )}
+      <div className="mt-split h" style={{ bottom: layout.tl + 40 - 3 }} onPointerDown={(e) => startSplit('tl', e)} onDoubleClick={() => resetSplit('tl')} title="Arraste pra mudar a altura da prévia e da timeline (duplo clique volta ao padrão)" />
       {/* ---------- mídia do projeto ---------- */}
-      <section className="mt-pool">
+      <section className="mt-pool" hidden={maxView}>
         {poolTop}
         <div className="mt-bins">
           {data.bins.filter((b) => !b.parent).map((b) => (
@@ -2075,6 +2100,11 @@ export function Montage({
             } as React.CSSProperties
           }
           ref={screenRef}
+          onDoubleClick={(e) => {
+            // duplo clique no vídeo amplia/volta (não no teleprompter nem no player da mídia aberta)
+            if (source || (e.target as HTMLElement).closest('.mt-prompter, button')) return
+            setMaxView((v) => !v)
+          }}
         >
           {source ? (
             source.kind === 'image' ? (
@@ -2207,7 +2237,7 @@ export function Montage({
           <select
             className="mt-view-zoom"
             value={String(view)}
-            title={`Tamanho do vídeo no visualizador (${seqW}×${seqH}). Ajustar cabe na tela; 100% é o tamanho real. Ctrl+roda do mouse em cima do vídeo também muda.`}
+            title={`Tamanho do vídeo no visualizador (${seqW}×${seqH}). Ajustar cabe na tela; 100% é o tamanho real. Ctrl+roda do mouse em cima do vídeo também muda; ${keyHint('mt.viewFit')} volta pro Ajustar.`}
             onChange={(e) => setView(e.target.value === 'fit' ? 'fit' : Number(e.target.value))}
           >
             <option value="fit">Ajustar</option>
@@ -2217,6 +2247,13 @@ export function Montage({
               </option>
             ))}
           </select>
+          <button
+            className={'icon-btn' + (maxView ? ' on' : '')}
+            title={maxView ? `Voltar o visualizador ao tamanho normal (${keyHint('mt.viewMax')} ou Esc)` : `Ampliar o visualizador: esconde a mídia e o inspetor (${keyHint('mt.viewMax')} ou duplo clique no vídeo)`}
+            onClick={() => setMaxView((v) => !v)}
+          >
+            {maxView ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
           <button className="icon-btn" title="Áudio: microfone, saída e níveis" onClick={onAudioSettings}>
             <Settings2 size={15} />
           </button>
@@ -2224,7 +2261,7 @@ export function Montage({
       </section>
 
       {/* ---------- inspetor ---------- */}
-      <section className="mt-inspector">
+      <section className="mt-inspector" hidden={maxView}>
         {curBlock ? (
           <BlockInspector
             b={curBlock}
