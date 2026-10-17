@@ -14,7 +14,8 @@ import { initRender } from './render'
 import { initMotionPreview } from './motionPreview'
 import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, framesAt, initDownloads, findFfmpeg, findYtDlp, type FrameWeights } from './media'
 import { initWhisper } from './whisper'
-import { initVersions, snapshotVersion } from './versions'
+import { initHistory, beforeSave, snapshotNow, projectId, adoptDir, onOpen } from './history'
+import { relocatePaths } from './historyCore'
 import { initRelink } from './relink'
 import { initExportProject, fixExternalPaths } from './exportProject'
 
@@ -298,7 +299,7 @@ initMotionPreview()
 initMedia()
 initDownloads()
 initWhisper()
-initVersions()
+initHistory({ newDraftDir })
 initRelink()
 initExportProject()
 initLog(async () => {
@@ -357,11 +358,16 @@ function emptyProject(title: string) {
   }
 }
 
-ipcMain.handle('project:new', async () => {
+async function newDraftDir() {
   const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
   const dir = join(draftsDir(), `rascunho-${stamp}-${randomUUID().slice(0, 4)}`)
   await fs.mkdir(join(dir, ASSETS_DIR), { recursive: true })
-  const data = emptyProject('Sem título')
+  return dir
+}
+
+ipcMain.handle('project:new', async () => {
+  const dir = await newDraftDir()
+  const data = { ...emptyProject('Sem título'), id: randomUUID() }
   await writeJson(join(dir, PROJECT_FILE), data)
   return { dir, data, draft: true }
 })
@@ -377,7 +383,8 @@ ipcMain.handle('project:open', async (_e, dir?: string): Promise<Result<{ dir: s
   const raw = await readJson<any>(file, null)
   if (!raw) return { error: `Não consegui ler o ${PROJECT_FILE}.` }
   // veio de um "Exportar projeto" aberto em outro PC: mídia de fora aponta pra _midia-externa daqui
-  const data = fixExternalPaths(dir, raw)
+  // id do histórico, mídia que apontava pro rascunho apagado, cópias antigas de .typos-versoes
+  const data = await onOpen(dir, fixExternalPaths(dir, raw))
   if (!isDraft(dir)) await touchRecent(dir, data.title ?? basename(dir))
   return { dir, data, draft: isDraft(dir) }
 })
@@ -473,7 +480,8 @@ function queued<T>(dir: string, job: () => Promise<T>): Promise<T> {
 ipcMain.handle('project:save', (_e, dir: string, data: any, markdown: string): Promise<Result<true>> =>
   queued(dir, async () => {
     try {
-      await snapshotVersion(dir).catch((err) => console.warn('versões:', err))
+      const diskText = await fs.readFile(join(dir, PROJECT_FILE), 'utf8').catch(() => null)
+      await beforeSave(dir, diskText, data)
       await writeJson(join(dir, PROJECT_FILE), data)
       await fs.writeFile(join(dir, MARKDOWN_FILE), markdown, 'utf8')
       await syncProjectFiles(dir, data).catch((err) => console.warn('arquivos do projeto:', err))
@@ -501,10 +509,16 @@ ipcMain.handle('project:saveAs', async (_e, dir: string, data: any, markdown: st
   if (resolve(target) === resolve(dir)) return { dir }
   if (existsSync(join(target, PROJECT_FILE))) return { error: 'Já existe um roteiro nessa pasta. Escolha outro nome.' }
   try {
-    await fs.cp(dir, target, { recursive: true })
-    await writeJson(join(target, PROJECT_FILE), data)
+    await snapshotNow(dir, 'salvar-como').catch((err) => console.warn('histórico:', err))
+    await fs.cp(dir, target, { recursive: true, filter: (src) => basename(src) !== '.typos-versoes' })
+    // a mídia de dentro da pasta (gravações, anexos) passa a apontar pra cópia: o rascunho vai ser apagado
+    const out = relocatePaths(data, dir, target)
+    // rascunho salvo continua o mesmo roteiro (mesmo histórico); cópia de um roteiro salvo é outro
+    out.id = isDraft(dir) ? await projectId(dir, await readJson<any>(join(dir, PROJECT_FILE), null)) : randomUUID()
+    await writeJson(join(target, PROJECT_FILE), out)
     await fs.writeFile(join(target, MARKDOWN_FILE), markdown, 'utf8')
-    await syncProjectFiles(target, data).catch((err) => console.warn('arquivos do projeto:', err))
+    await syncProjectFiles(target, out).catch((err) => console.warn('arquivos do projeto:', err))
+    await adoptDir(target, out.id, out.title).catch((err) => console.warn('histórico:', err))
     if (isDraft(dir)) await fs.rm(dir, { recursive: true, force: true })
     await touchRecent(target, data.title)
     await rememberParent(target)
@@ -991,6 +1005,8 @@ ipcMain.handle('project:move', async (_e, dir: string, title: string): Promise<R
     const esc = (s: string) => JSON.stringify(s).slice(1, -1)
     const fixed = text.split(esc(dir + sep)).join(esc(target + sep))
     if (fixed !== text) await fs.writeFile(file, fixed, 'utf8')
+    const moved = await readJson<any>(file, null)
+    if (moved?.id) await adoptDir(target, moved.id, title).catch((err) => console.warn('histórico:', err))
     const list = await readJson<Recent[]>(settingsFile('recent.json'), [])
     await writeJson(settingsFile('recent.json'), list.filter((x) => x.dir !== dir))
     await touchRecent(target, title)

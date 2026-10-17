@@ -66,7 +66,7 @@ function UpdateBanner() {
 }
 
 export default function App() {
-  const [session, setSession] = useState<{ key: string; dir: string; data: ProjectData; draft: boolean } | null>(null)
+  const [session, setSession] = useState<{ key: string; dir: string; data: ProjectData; draft: boolean; notice?: string } | null>(null)
   const [formats, setFormats] = useState<Format[]>([])
   const [library, setLibrary] = useState<LibraryItem[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -102,7 +102,17 @@ export default function App() {
           dir={session.dir}
           data={session.data}
           draft={session.draft}
-          onSavedAs={(dir) => setSession((s) => (s ? { ...s, dir, draft: false } : s))}
+          notice={session.notice}
+          onSavedAs={async (dir, notice) => {
+            // reabre da pasta nova: o roteiro.json de lá já aponta a mídia pra dentro dela
+            const r = await api.openProject(dir)
+            if (r && !r.error) setSession({ key: uid(), dir: r.dir, data: r.data, draft: !!r.draft, notice })
+            else setSession((s) => (s ? { ...s, dir, draft: false } : s))
+          }}
+          onOpened={async (r) => {
+            await flush.current?.()
+            setSession({ key: uid(), dir: r.dir, data: r.data, draft: r.draft })
+          }}
           formats={formats}
           onFormatsChange={changeFormats}
           library={library}
@@ -114,7 +124,7 @@ export default function App() {
             // salva o que está aberto antes de trocar
             await flush.current?.()
             if (kind === 'restore' && dir && version) {
-              const v = await api.restoreVersion(dir, version)
+              const v = await api.historyRestore(dir, version.id, version.name)
               if ('error' in v) return alert(v.error)
             }
             const r = kind === 'new' ? await api.newProject() : await api.openProject(dir)

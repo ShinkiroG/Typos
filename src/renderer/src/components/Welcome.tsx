@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FilePlus2, FolderOpen, Settings, X, Trash2, FileClock, History, PenLine, Film, Palette, Clapperboard, ArrowRight, Lightbulb, Play } from 'lucide-react'
+import { FilePlus2, FolderOpen, Settings, X, Trash2, FileClock, History, PenLine, Film, Palette, Clapperboard, ArrowRight, Lightbulb, Play, ArchiveRestore } from 'lucide-react'
+import { HistoryModal } from './HistoryModal'
 import { api, type ProjectData } from '../lib'
 import '../home.css'
 import logoUrl from '../assets/logo.png'
@@ -124,6 +125,7 @@ export function Welcome({
   const [recent, setRecent] = useState<Recent[]>([])
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [error, setError] = useState('')
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [intro, setIntro] = useState<false | 'day' | 'night'>(() => (shouldPlayIntro() ? (isNight() ? 'night' : 'day') : false))
   /** clicar no logo repete a abertura, alternando dia/noite */
   const lastIntro = useRef<'day' | 'night'>(isNight() ? 'day' : 'night')
@@ -171,6 +173,18 @@ export function Welcome({
         </div>
       </div>
 
+      {historyOpen && (
+        <HistoryModal
+          onClose={() => setHistoryOpen(false)}
+          onRestore={async (dir, id, name) => {
+            const r = await api.historyRestore(dir, id, name)
+            if ('error' in r) return alert(r.error)
+            handle(await api.openProject(dir))
+          }}
+          onOpenCopy={handle}
+        />
+      )}
+
       <button className="icon-btn welcome-gear" title="Configurações" onClick={onOpenSettings}>
         <Settings size={18} />
       </button>
@@ -191,6 +205,9 @@ export function Welcome({
             </button>
             <button className="btn big" onClick={async () => handle(await api.openProject())}>
               <FolderOpen size={18} /> Abrir pasta…
+            </button>
+            <button className="btn big" onClick={() => setHistoryOpen(true)} title="Versões guardadas de todos os roteiros, inclusive os de pasta apagada ou movida">
+              <ArchiveRestore size={18} /> Histórico…
             </button>
           </div>
           {error && <div className="error">{error}</div>}
