@@ -162,12 +162,39 @@ function scriptIn(data: MontageData, b: InstructionBlock, script: ScriptBlock[])
   return script.filter((s) => idx.has(s.index) && s.text.trim()).map((s) => s.text.trim())
 }
 
-/** só as falas do roteiro (sem prompts nem instruções): é o tema do vídeo */
+/** as falas do roteiro (sem prompts nem instruções), com os capítulos como "# título": é o tema e a estrutura do vídeo */
 export const scriptFalas = (script: ScriptBlock[]) =>
   script
-    .filter((s) => s.type === 'paragraph' && s.text.trim())
-    .map((s) => s.text.trim())
+    .filter((s) => (s.type === 'paragraph' || s.type === 'chapter') && s.text.trim())
+    .map((s) => (s.type === 'chapter' ? '# ' + s.text.trim() : s.text.trim()))
     .join('\n')
+
+/** em que capítulo o bloco está e os letterings capitulares que passam por ele (tempos a partir do começo do bloco) */
+export interface ChapterInfo {
+  title: string
+  letterings: { label: string; t0: number; t1: number }[]
+}
+
+/**
+ * Capítulo do bloco: o último capítulo do roteiro antes das falas que tocam nele (pelo corte automático);
+ * sem falas ligadas, o último lettering que começa antes do fim do bloco.
+ */
+export function chapterAt(data: MontageData, b: InstructionBlock, script: ScriptBlock[]): ChapterInfo | null {
+  const markers = (data.markers ?? []).filter((m) => m.kind === 'lettering')
+  const letterings = markers
+    .filter((m) => m.dur > 0 && m.t < b.end && m.t + m.dur > b.start)
+    .map((m) => ({ label: m.label, t0: Math.max(0, m.t - b.start), t1: Math.min(blockDur(b), m.t + m.dur - b.start) }))
+  const idx = audioIn(data, b)
+    .map((c) => c.block)
+    .filter((i): i is number => i !== undefined)
+  let title = ''
+  if (idx.length) {
+    const first = Math.min(...idx)
+    title = script.filter((s) => s.type === 'chapter' && s.index < first && s.text.trim()).pop()?.text.trim() ?? ''
+  }
+  if (!title) title = markers.filter((m) => m.t < b.end).pop()?.label.trim() ?? ''
+  return title || letterings.length ? { title, letterings } : null
+}
 
 // ---------- o vídeo que está embaixo do bloco ----------
 /** a timeline só com as faixas de vídeo do bloco pra baixo (a primeira faixa da lista é a de cima); `all` = todas */
@@ -496,6 +523,8 @@ export function blockPrompt(o: {
   hasAudio: boolean
   scriptHere: string[]
   falas: string
+  /** capítulo do bloco e letterings capitulares que passam por ele */
+  chapter?: ChapterInfo | null
   files: { a: BlockAttachment; name: string }[]
   size: { w: number; h: number }
   under?: UnderInfo | null
@@ -521,6 +550,16 @@ export function blockPrompt(o: {
     b.text.trim() || (b.dynamic ? '(nenhuma: deduza da fala)' : '(vazio: deduza da fala)'),
     ''
   ]
+  const ch = o.chapter
+  if (ch) {
+    L.push('## Capítulo')
+    if (ch.title) L.push(`Este bloco está no capítulo "${ch.title}". Use pra entender do que esta parte do vídeo trata.`)
+    for (const l of ch.letterings)
+      L.push(
+        `- De ${l.t0.toFixed(1)}s a ${l.t1.toFixed(1)}s (a partir do começo do bloco) o vídeo mostra o lettering capitular "${l.label}" (a transição de capítulo, feita à parte, por cima de tudo). Não repita esse título nem ponha texto que dispute com ele nesse intervalo: deixe o centro da tela livre ou faça o motion emendar com ele (entrando quando ele sai).`
+      )
+    L.push('')
+  }
   if (o.files.length) {
     L.push('## Anexos (as imagens chegam pra você na mesma ordem: a 1ª imagem é o anexo 1, e assim por diante)')
     o.files.forEach(({ a, name }, i) => {
@@ -548,7 +587,7 @@ export function blockPrompt(o: {
   else L.push(o.heardError ? `(não deu pra transcrever: ${o.heardError})` : '(só silêncio ou música)')
   if (o.scriptHere.length) L.push('', 'Falas do roteiro que caem aqui (use pra acertar nomes e termos; a fala gravada manda, inclusive improvisos):', ...o.scriptHere.map((s) => '> ' + s))
   L.push('')
-  if (o.falas) L.push('## Roteiro do vídeo (só as falas, pra entender o tema)', o.falas.slice(0, 12000), '')
+  if (o.falas) L.push('## Roteiro do vídeo (só as falas, com os capítulos como "# título", pra entender o tema)', o.falas.slice(0, 12000), '')
   L.push('## Direção de motion', MOTION_DIRECTION, syncDirection(blockSync(b)), '')
   L.push(safeZoneDirection(safeZones(o.format?.aspect, o.size.w, o.size.h), o.size), '')
   const rules = o.format?.rules?.trim()
@@ -729,6 +768,7 @@ export async function generatePreview(c: PreviewCtx) {
   const baseImages = [...files.map((f) => absPath(f.a)), ...(under?.frames.map((f) => f.path) ?? []), ...edges.map((e) => e.frame), ...tf.flat().map((f) => absPath(f.a))]
   const shownSet = new Set(shownAssets)
   const assets = { list: [...shownAssets, ...list.filter((a) => !shownSet.has(a))], first: baseImages.length + 1, shown: shownAssets.length }
+  const chapter = chapterAt(c.data, b, c.script)
   const prompt = blockPrompt({
     block: b,
     format: c.format,
@@ -737,6 +777,7 @@ export async function generatePreview(c: PreviewCtx) {
     hasAudio,
     scriptHere: scriptIn(c.data, b, c.script),
     falas: scriptFalas(c.script),
+    chapter,
     files,
     size,
     under,
@@ -778,6 +819,7 @@ export async function generatePreview(c: PreviewCtx) {
       hasAudio,
       scriptHere: scriptIn(c.data, b, c.script),
       falas: scriptFalas(c.script),
+      chapter,
       files,
       size,
       under,
