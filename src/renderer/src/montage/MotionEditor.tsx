@@ -220,6 +220,7 @@ export function MotionEditor(p: {
             }}
             title={extend !== null ? 'Como o motion continua (opcional)' : range ? 'Pedir alteração do trecho marcado' : 'Pedir alteração do motion'}
             allowEmpty={extend !== null}
+            draftKey={`motion:${b.id}`}
             sendLabel={extend !== null ? `Continuar até ${f2(extend)} s` : 'Enviar alteração'}
           />
         </div>
