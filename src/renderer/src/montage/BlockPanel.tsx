@@ -213,6 +213,16 @@ export function BlockForm({ b, data, dir, patch, big, formats, videoFormat }: Fo
           onChange={(e) => patch({ text: e.target.value }, g + 't')}
         />
       </div>
+      <div className="blk-label">
+        <label htmlFor={g + '-neg'}>O que evitar (soma com o do estilo)</label>
+        <textarea
+          id={g + '-neg'}
+          rows={2}
+          value={b.negative ?? ''}
+          placeholder="Ex.: sem texto na tela, nada de gráfico 3D, não cobrir o rosto…"
+          onChange={(e) => patch({ negative: e.target.value }, g + 'n')}
+        />
+      </div>
       <div className="blk-atts">
         <div className="blk-atts-head">
           <span>Anexos</span>

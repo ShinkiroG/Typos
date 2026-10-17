@@ -159,6 +159,8 @@ export interface Format {
   lang?: string
   /** estilo do vídeo: regras, overlays, identidade de motion, pngtuber… (vai junto pra IA) */
   rules?: string
+  /** prompt negativo do estilo: o que a IA nunca deve fazer no motion */
+  negative?: string
   /** o formato tem referência visual de motion? (imagens/vídeos em userData/format-media) */
   motionRef?: boolean
   motionRefFiles?: string[]
@@ -828,6 +830,8 @@ export interface InstructionBlock {
   dynamic?: boolean
   /** como o autor imagina o motion */
   text: string
+  /** prompt negativo do bloco: o que evitar neste motion (soma com o do estilo) */
+  negative?: string
   attachments: BlockAttachment[]
   preview?: BlockPreview
   /** o autor aprovou a prévia (o render reaproveita a ideia) */

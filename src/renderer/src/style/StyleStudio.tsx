@@ -94,6 +94,7 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
   }
   const needList = dyn.length > 0 || !ft.title || !ft.subtitle || !ft.body || !ft.accent
   if (f.rules?.trim()) lines.push(`- Regras do estilo: ${f.rules.trim()}`)
+  if (f.negative?.trim()) lines.push(`- O que EVITAR (prompt negativo, nada disso pode aparecer): ${f.negative.trim()}`)
   if (m.instruction?.trim()) {
     lines.push('')
     lines.push('## Instrução do autor')
@@ -573,6 +574,10 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
           <label className="st-field">
             Regras do estilo (valem sempre que a IA mexe no roteiro)
             <textarea rows={2} value={f.rules ?? ''} placeholder="Ex.: pngtuber no canto inferior direito, legenda amarela, nada de emoji…" onChange={(e) => patch({ rules: e.target.value })} />
+          </label>
+          <label className="st-field">
+            O que evitar (prompt negativo: vale em todo motion deste estilo)
+            <textarea rows={2} value={f.negative ?? ''} placeholder="Ex.: nada de emoji, sem fundo branco, sem texto girando, sem neon…" onChange={(e) => patch({ negative: e.target.value })} />
           </label>
           <div className="st-field">
             <span>Pastas do estilo (assets que valem pra todo roteiro com este estilo; o Typos só guarda o caminho)</span>
