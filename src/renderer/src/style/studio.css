@@ -772,3 +772,49 @@
   overflow: hidden;
   color: color-mix(in srgb, var(--text) 80%, transparent);
 }
+
+/* pastas do estilo */
+.st-sfolders {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.st-sfolder {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 1fr) auto minmax(120px, 2fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+.st-sfolder-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.st-sfolder select,
+.st-sfolder input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 6px;
+  color: var(--text);
+  font: 12px var(--font-ui);
+  min-width: 0;
+}
+.st-sfolder .icon-btn.on {
+  color: #f5c542;
+}
+.st-sfolder-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.st-warn {
+  font-size: 11px;
+  color: #f5a142;
+}

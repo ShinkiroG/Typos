@@ -68,7 +68,8 @@ import {
   queueRenderItems,
   shortRenderId,
   type RenderItemId,
-  type RenderSettings
+  type RenderSettings,
+  styleFoldersOf
 } from '../lib'
 import { shortKey } from '../shorts/shorts'
 import { LibraryPanel, SNIPPET_MIME } from './LibraryPanel'
@@ -1505,7 +1506,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
               onDelete={(i) => onLibraryChange(library.filter((x) => x.id !== i.id))}
             />
           ) : (
-            <FoldersPanel extra={format?.assetFolders ?? []} />
+            <FoldersPanel extra={styleFoldersOf(format).map((x) => x.path)} />
           )}
         </aside>
       )}

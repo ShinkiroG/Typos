@@ -179,13 +179,13 @@ export function BlockForm({ b, data, dir, patch, big, formats, videoFormat }: Fo
       <div className="blk-chain">
         <label
           className={'blk-chain-opt' + (b.useRaw ? ' on' : '')}
-          title="O Claude vê a lista do Material bruto do projeto (e os sons da pasta SFX) e usa o que combinar com o trecho: imagens e vídeos no motion e sons mixados com a narração. Ao aprovar, os sons viram cortes de áudio na timeline. Vale na próxima prévia."
+          title="O Claude vê a lista do Material bruto do projeto (e os sons da pasta SFX), mais as pastas de Material bruto, SFX e Música do estilo, e usa o que combinar com o trecho: imagens e vídeos no motion e sons mixados com a narração. Ao aprovar, os sons viram cortes de áudio na timeline. Vale na próxima prévia."
         >
           <input type="checkbox" checked={!!b.useRaw} onChange={(e) => patch({ useRaw: e.target.checked })} />
           <FolderOpen size={12} />
           <span>
             Usar o Material bruto
-            <small>imagens, vídeos e sons do projeto (e a pasta SFX)</small>
+            <small>imagens, vídeos e sons do projeto, a pasta SFX e as pastas do estilo</small>
           </span>
         </label>
       </div>

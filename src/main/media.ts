@@ -4,6 +4,7 @@ import { join, dirname, basename, extname } from 'path'
 import { promises as fs, existsSync } from 'fs'
 import { createHash } from 'crypto'
 import { loadSettings } from './settings'
+import { profileFromPcm, wavPcm, type SoundProfile } from './soundProfile'
 
 /**
  * Mídia da Montagem: tudo que precisa de ffmpeg (duração, áudio de prévia, transcrição, exportar).
@@ -207,6 +208,7 @@ export function initMedia() {
   ipcMain.handle('media:proxy', (_e, path: string) => proxyAudio(path))
   ipcMain.handle('media:proxyVideo', (_e, path: string) => proxyVideo(path))
   ipcMain.handle('media:loudness', (_e, path: string, start: number, dur: number) => loudness(path, start, dur))
+  ipcMain.handle('media:soundProfiles', (_e, paths: string[]) => soundProfiles(paths))
   ipcMain.handle('media:exists', (_e, paths: string[]) => paths.map((p) => existsSync(p)))
 }
 
@@ -228,6 +230,48 @@ export async function loudness(path: string, start: number, dur: number): Promis
   } catch {
     return null
   }
+}
+
+// ---------- perfil de sons (efeitos e trilhas das pastas do estilo e do bruto) ----------
+const profiles = new Map<string, Promise<SoundProfile | null>>()
+
+/** perfil de um som (impacto, começo, fim, volume, curva de energia); fica em cache no disco por arquivo */
+export function soundProfile(path: string): Promise<SoundProfile | null> {
+  let p = profiles.get(path)
+  if (p) return p
+  p = (async () => {
+    const file = join(mediaCacheDir(), (await keyOf(path, 'perfil1').catch(() => 'x')) + '.perfil.json')
+    if (file.endsWith('x.perfil.json')) return null
+    const cached = await fs.readFile(file, 'utf8').then((t) => JSON.parse(t) as SoundProfile | null).catch(() => undefined)
+    if (cached !== undefined) return cached
+    const wav = await proxyAudio(path)
+    if (typeof wav !== 'string') return null
+    const pcm = wavPcm(await fs.readFile(wav))
+    const prof = pcm && profileFromPcm(pcm.pcm, pcm.rate)
+    if (prof) {
+      const l = await loudness(path, 0, Math.min(prof.duration, 600)).catch(() => null)
+      if (l) prof.lufs = Math.round(l.i * 10) / 10
+    }
+    await fs.writeFile(file, JSON.stringify(prof ?? null)).catch(() => null)
+    return prof ?? null
+  })()
+  profiles.set(path, p)
+  p.catch(() => profiles.delete(path))
+  return p
+}
+
+/** vários perfis, 3 de cada vez (bibliotecas de som têm muitos arquivos curtos) */
+export async function soundProfiles(paths: string[]) {
+  const out: (SoundProfile | null)[] = new Array(paths.length).fill(null)
+  let next = 0
+  const worker = async () => {
+    while (next < paths.length) {
+      const i = next++
+      out[i] = await soundProfile(paths[i]).catch(() => null)
+    }
+  }
+  await Promise.all([worker(), worker(), worker()])
+  return out
 }
 
 /** quadros espalhados pelo vídeo (jpg 640px), pra IA "ver" o estilo; ficam em cache por arquivo */
