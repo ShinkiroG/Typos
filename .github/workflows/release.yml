@@ -1,0 +1,55 @@
+# Publica a versão do package.json no GitHub Releases, sem precisar do PC.
+# Dispara sozinho quando uma tag v* é enviada, ou à mão em Actions → Release → Run workflow
+# (aí publica a main como está, criando a tag v<versão>).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: Notas da versão
+        required: false
+
+permissions:
+  contents: write
+
+concurrency: release
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # a tag enviada tem que bater com o version do package.json
+      - name: Conferir versão
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          v=$(node -p "require('./package.json').version")
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::A tag $GITHUB_REF_NAME não bate com o package.json (v$v)"
+            exit 1
+          fi
+      - run: npm run dist
+      - name: Publicar
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          # numa tag anotada, a mensagem dela vira as notas da versão
+          if [ -z "$NOTES" ] && [ "$GITHUB_REF_TYPE" = tag ]; then
+            git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+            if [ "$(git cat-file -t "$GITHUB_REF_NAME")" = tag ]; then
+              NOTES=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")
+            fi
+          fi
+          npm run release -- "$NOTES"

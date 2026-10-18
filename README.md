@@ -67,4 +67,4 @@ npm run dev        # abre em modo dev (F12 = DevTools)
 npm run dist       # gera dist/Typos-Setup-x.y.z.exe e o .zip
 npm run release -- "notas"   # publica no GitHub Releases (precisa do gh logado)
 ```
-Pra lançar uma versão nova: suba o `version` no package.json, rode `dist` e depois `release`.
+Pra lançar uma versão nova: suba o `version` no package.json e, com isso na main, rode o workflow **Release** em Actions (ou envie a tag `vX.Y.Z`). O GitHub compila no Windows e publica sozinho. Pelo PC ainda dá: rode `dist` e depois `release`.

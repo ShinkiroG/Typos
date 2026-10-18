@@ -23,6 +23,9 @@ const zip = `dist/Typos-${version}-portable.zip`
 writeFileSync(`${zip}.sha256`, createHash('sha256').update(readFileSync(zip)).digest('hex') + '\n')
 files.push(`${zip}.sha256`)
 
-const notes = process.argv.slice(2).join(' ') || `Typos ${version}`
-execFileSync('gh', ['release', 'create', tag, ...files, '--title', `Typos ${version}`, '--notes', notes], { stdio: 'inherit' })
+const notes = process.argv.slice(2).join(' ').trim() || `Typos ${version}`
+const args = ['release', 'create', tag, ...files, '--title', `Typos ${version}`, '--notes', notes]
+// no GitHub Actions, a tag (se ainda não existir) aponta pro commit que foi compilado
+if (process.env.GITHUB_SHA) args.push('--target', process.env.GITHUB_SHA)
+execFileSync('gh', args, { stdio: 'inherit' })
 console.log(`\nPublicado: https://github.com/ShinkiroG/Typos/releases/tag/${tag}`)
