@@ -50,6 +50,7 @@ import {
 import { api, clipDur, clipEndT, fileUrl, RESOLUTIONS, uid, type Attachment, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
 import { SILENCE_DEFAULT, silenceCut, silenceStats, suggestThreshold, type SilenceOpts } from './silence'
+import { blocksMoved, fitBlocksToLetterings, silenceStart, timelineSilences } from './letterings'
 import { Recorder } from '../audio'
 import { askText } from '../components/AskDialog'
 import { YoutubeDownload } from '../components/YoutubeDownload'
@@ -495,6 +496,9 @@ export function Montage({
   const [histOpen, setHistOpen] = useState(false)
   const change = useCallback(
     (next: MontageData, gesture?: string) => {
+      // lettering de capítulo é transição: os blocos que passam por ele são cortados em volta
+      const prev = dataRef.current
+      if (next.markers !== prev.markers || blocksMoved(prev, next)) next = fitBlocksToLetterings(next)
       if (!gesture || gesture !== lastGesture.current) {
         stamps.current.set(dataRef.current, Date.now())
         past.current.push(dataRef.current)
@@ -1519,7 +1523,9 @@ export function Montage({
     const cur = dataRef.current
     const marked = new Set((cur.markers ?? []).map((m) => m.block))
     const ch = chs.find((c) => !marked.has(c.index)) ?? chs[0]
-    const mk: MontageMarker = { id: uid(), kind: 'lettering', t: at ?? posRef.current, dur: cur.letteringDur ?? 3, block: ch.index, label: ch.text.trim() }
+    // entra no silêncio mais perto (onde a fala para), que é onde a transição de capítulo cabe
+    const t = silenceStart(at ?? posRef.current, timelineSilences(cur, (id) => engine.get(id)?.peaks, silOpts))
+    const mk: MontageMarker = { id: uid(), kind: 'lettering', t, dur: cur.letteringDur ?? 3, block: ch.index, label: ch.text.trim() }
     change({ ...cur, markers: [...(cur.markers ?? []), mk].sort((a, b) => a.t - b.t) })
   }
   const patchMarker = (id: string, patch: Partial<MontageMarker>) =>
@@ -2341,7 +2347,7 @@ export function Montage({
           ms
         </label>
         <span className="mt-sep" />
-        <button className="btn small mt-mark-btn" title="Marca no cursor onde entra o lettering do capítulo (L)" onClick={() => addLettering()}>
+        <button className="btn small mt-mark-btn" title="Marca o lettering do capítulo (L): entra no silêncio mais perto do cursor e corta os blocos de instrução em volta dele (é a transição)" onClick={() => addLettering()}>
           <Type size={13} /> <span className="lbl">Lettering</span>
         </button>
         <label className="mt-splice-len" title="Tempo fixo de cada lettering novo (segundos)">
