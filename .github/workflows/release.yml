@@ -52,4 +52,5 @@ jobs:
               NOTES=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")
             fi
           fi
-          npm run release -- "$NOTES"
+          export NOTES
+          npm run release
