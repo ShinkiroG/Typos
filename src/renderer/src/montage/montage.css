@@ -2350,3 +2350,18 @@
 .mt-inspector[hidden] {
   display: none;
 }
+
+/* ---------- lettering de capítulo no visualizador (o mesmo que o render grava por cima de tudo) ---------- */
+.mt-screen > iframe.mt-lettering {
+  grid-area: 1 / 1;
+  aspect-ratio: var(--frame, var(--seq));
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  border: 0;
+  pointer-events: none;
+}
+.mt-screen.zoomed > iframe.mt-lettering {
+  height: var(--zh);
+  max-width: none;
+}
