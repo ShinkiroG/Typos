@@ -50,6 +50,7 @@ import {
 import { api, clipDur, clipEndT, fileUrl, RESOLUTIONS, uid, type Attachment, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
 import { SILENCE_DEFAULT, silenceCut, silenceStats, suggestThreshold, type SilenceOpts } from './silence'
+import { letteringHtml } from '../render/plan'
 import { blocksMoved, fitBlocksToLetterings, silenceStart, timelineSilences } from './letterings'
 import { Recorder } from '../audio'
 import { askText } from '../components/AskDialog'
@@ -588,7 +589,10 @@ export function Montage({
         playheadRef.current.style.visibility = behind ? 'hidden' : ''
       }
       if (tcRef.current) tcRef.current.textContent = fmtTc(t)
-      if (!source) syncPicture(t)
+      if (!source) {
+        syncPicture(t)
+        syncLettering(t)
+      }
       const r = recRef.current
       if (r && meterRef.current) {
         const db = r.level()
@@ -624,6 +628,29 @@ export function Montage({
     return () => cancelAnimationFrame(raf)
   }, [active, pps, engine, source])
 
+  /** lettering de capítulo por cima de tudo, o mesmo HTML que o render grava, no tempo da agulha */
+  const letRef = useRef<HTMLIFrameElement>(null)
+  const formatRef = useRef(format)
+  formatRef.current = format
+  const syncLettering = (t: number) => {
+    const f = letRef.current
+    if (!f) return
+    const mk = (dataRef.current.markers ?? []).find((m) => m.kind === 'lettering' && m.dur > 0 && t >= m.t && t < m.t + m.dur)
+    if (!mk) {
+      if (f.style.visibility !== 'hidden') f.style.visibility = 'hidden'
+      return
+    }
+    const html = letteringHtml(mk.label, mk.dur, formatRef.current)
+    if (f.dataset.html !== html) {
+      f.srcdoc = html
+      f.dataset.html = html
+    }
+    f.style.visibility = 'visible'
+    for (const a of f.contentDocument?.getAnimations() ?? []) {
+      a.pause()
+      a.currentTime = (t - mk.t) * 1000
+    }
+  }
   /** quadro da faixa de vídeo mais de cima que tem algo nesse instante */
   const syncPicture = (t: number) => {
     const v = videoRef.current
@@ -2125,6 +2152,7 @@ export function Montage({
             <>
               <video ref={videoRef} muted playsInline />
               <img ref={imgRef} alt="" style={{ visibility: 'hidden' }} />
+              <iframe ref={letRef} className="mt-lettering" title="Lettering" tabIndex={-1} style={{ visibility: 'hidden' }} />
             </>
           )}
           {!source && prompter && (rec || rehearse) && (
