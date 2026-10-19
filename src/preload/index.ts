@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { SoundProfile } from '../main/soundProfile'
 
-type AiProvider = 'claude-code' | 'anthropic' | 'openai'
+type AiProvider = 'claude-code' | 'codex' | 'anthropic' | 'openai'
 
 /** um arquivo na fila do Whisper (ver main/whisper.ts) */
 export interface WhisperJob {
@@ -131,7 +131,7 @@ const api = {
   aiStatus: (): Promise<{
     providers: { id: AiProvider; label: string; caps: ('text' | 'image')[]; configured: boolean; detail: string }[]
     routes: { text: AiProvider | null; image: AiProvider | null }
-    models: { anthropicModel: string; openaiTextModel: string; openaiImageModel: string; claudeCodePath: string }
+    models: { anthropicModel: string; openaiTextModel: string; openaiImageModel: string; claudeCodePath: string; codexPath: string; codexModel: string }
   }> => ipcRenderer.invoke('ai:status'),
   aiSet: (patch: Record<string, string | null>) => ipcRenderer.invoke('ai:set', patch),
   aiTest: (id: AiProvider): Promise<{ ok: boolean; message: string }> => ipcRenderer.invoke('ai:test', id),

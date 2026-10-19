@@ -94,7 +94,8 @@ const usd = (n: number) => 'US$ ' + n.toFixed(n < 1 ? 3 : 2).replace('.', ',')
  */
 export async function metered<T>(provider: string, dir: string | undefined, fn: () => Promise<T>): Promise<T> {
   const project = dir || current
-  const paid = provider !== 'claude-code'
+  // Claude Code e Codex rodam no plano do usuário: não contam no gasto
+  const paid = provider !== 'claude-code' && provider !== 'codex'
   if (paid && project) {
     const b = await readBudget(project)
     if (b.cap !== undefined && b.spent >= b.cap)

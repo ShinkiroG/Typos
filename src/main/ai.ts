@@ -1,5 +1,5 @@
 import { app, ipcMain } from 'electron'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { promises as fs, existsSync } from 'fs'
 import { spawn, execFile } from 'child_process'
 import { randomUUID } from 'crypto'
@@ -13,16 +13,18 @@ import { chargeAnthropic, chargeOpenAI, initAiMeter, metered } from './aiMeter'
  *
  *  - claude-code: o Claude Code instalado neste PC (usa o plano do usuário, sem chave)
  *  - anthropic:   API da Anthropic (chave própria, paga por uso)
- *  - openai:      API da OpenAI (chave própria; a única que gera imagem)
+ *  - codex:       o Codex (CLI da OpenAI) instalado neste PC, logado com a conta do ChatGPT (usa o plano, sem chave; gera imagem)
+ *  - openai:      API da OpenAI (chave própria, paga por uso; gera imagem)
  *
  * Chaves ficam só no settings.json do userData e nunca voltam pro renderer.
  */
 
-export type ProviderId = 'claude-code' | 'anthropic' | 'openai'
+export type ProviderId = 'claude-code' | 'codex' | 'anthropic' | 'openai'
 type Task = 'text' | 'image'
 
 const CAPS: Record<ProviderId, Task[]> = {
   'claude-code': ['text'],
+  codex: ['text', 'image'],
   anthropic: ['text'],
   openai: ['text', 'image']
 }
@@ -66,10 +68,12 @@ function run(file: string, args: string[], opts: { cwd?: string; input?: string;
   })
 }
 
-const whereClaude = () =>
-  new Promise<string | null>((resolve) =>
-    execFile('where', ['claude'], { windowsHide: true }, (e, out) => resolve(e ? null : out.split(/\r?\n/).find((l) => l.trim()) ?? null))
+/** tudo que o "where" acha pra esse comando (vazio se nada) */
+const whereAll = (cmd: string) =>
+  new Promise<string[]>((resolve) =>
+    execFile('where', [cmd], { windowsHide: true }, (e, out) => resolve(e ? [] : out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)))
   )
+const whereClaude = async () => (await whereAll('claude'))[0] ?? null
 
 /** Onde está o Claude Code: caminho escolhido > comando no PATH > instalador oficial. */
 export async function findClaudeCode(s: AiSettings): Promise<{ path: string; source: string } | null> {
@@ -80,6 +84,55 @@ export async function findClaudeCode(s: AiSettings): Promise<{ path: string; sou
   for (const p of [join(home, '.local', 'bin', 'claude.exe'), join(home, '.claude', 'local', 'claude.exe')])
     if (existsSync(p)) return { path: p, source: 'instalação oficial' }
   return null
+}
+
+// ---------- Codex: achar o executável ----------
+/**
+ * O npm instala o Codex como codex.cmd (um script que chama o codex.exe de verdade).
+ * O spawn não roda .cmd sem shell, então vamos direto no .exe que vem no pacote.
+ */
+function codexExeFromNpm(binDir: string): string | null {
+  const arm = process.arch === 'arm64'
+  const pkg = arm ? 'codex-win32-arm64' : 'codex-win32-x64'
+  const triple = arm ? 'aarch64-pc-windows-msvc' : 'x86_64-pc-windows-msvc'
+  const roots = [join(binDir, 'node_modules', '@openai', 'codex', 'node_modules', '@openai', pkg), join(binDir, 'node_modules', '@openai', pkg), join(binDir, 'node_modules', '@openai', 'codex')]
+  for (const r of roots)
+    for (const p of [join(r, 'vendor', triple, 'bin', 'codex.exe'), join(r, 'vendor', triple, 'codex', 'codex.exe')]) if (existsSync(p)) return p
+  return null
+}
+
+/** Onde está o Codex: caminho escolhido > comando no PATH > instalação do npm. */
+export async function findCodex(s: AiSettings): Promise<{ path: string; source: string } | null> {
+  if (s.codexPath && existsSync(s.codexPath)) return { path: s.codexPath, source: 'caminho escolhido' }
+  const found = await whereAll('codex')
+  const exe = found.find((p) => /\.exe$/i.test(p))
+  if (exe) return { path: exe, source: 'comando codex' }
+  for (const p of found) {
+    const real = codexExeFromNpm(dirname(p))
+    if (real) return { path: real, source: 'comando codex (npm)' }
+  }
+  const npmBin = join(process.env.APPDATA ?? join(app.getPath('home'), 'AppData', 'Roaming'), 'npm')
+  const real = codexExeFromNpm(npmBin)
+  return real ? { path: real, source: 'instalação do npm' } : null
+}
+
+const CODEX_LOGIN_MSG = 'O Codex não está logado. Abra um terminal, rode "codex login" e entre com sua conta do ChatGPT.'
+
+/** roda "codex exec" com o pedido pela entrada padrão e devolve a última mensagem do agente */
+async function codexExec(s: AiSettings, prompt: string, opts: { cwd: string; sandbox: 'read-only' | 'workspace-write'; extra?: string[]; timeoutMs: number; signal?: AbortSignal }) {
+  const cx = await findCodex(s)
+  if (!cx) throw new Error('Codex não encontrado neste PC. Instale e faça login (Configurações → IA).')
+  const outFile = join(app.getPath('temp'), `typos-codex-${randomUUID().slice(0, 8)}.txt`)
+  const args = ['exec', '--skip-git-repo-check', '--color', 'never', '--sandbox', opts.sandbox, '-C', opts.cwd, '-o', outFile, ...(s.codexModel ? ['-m', s.codexModel] : []), ...(opts.extra ?? []), '-']
+  const r = await run(cx.path, args, { cwd: opts.cwd, input: prompt, timeoutMs: opts.timeoutMs, signal: opts.signal })
+  const last = await fs.readFile(outFile, 'utf8').catch(() => '')
+  await fs.rm(outFile, { force: true }).catch(() => null)
+  if (r.code === 0 && last.trim()) return { text: last.trim(), out: r.out }
+  if (opts.signal?.aborted) throw new Error('Cancelado.')
+  const why = (r.err || r.out || '').toString().trim()
+  if (/not logged in|log ?in|unauthori[sz]ed|\b401\b|auth/i.test(why)) throw new Error(CODEX_LOGIN_MSG)
+  if (r.err.includes('(tempo esgotado)')) throw new Error('Codex: tempo esgotado. Tente de novo.')
+  throw new Error(`Codex: ${why.split(/\r?\n/).filter(Boolean).slice(-4).join(' ').slice(0, 300) || 'falhou sem mensagem'}`)
 }
 
 // ---------- tarefas por fornecedor ----------
@@ -111,6 +164,13 @@ async function textClaudeCode(s: AiSettings, job: TextJob) {
   const why = (parsed?.result || r.err || r.out || '').toString().trim()
   if (/log ?in|auth|credential|\/login/i.test(why)) throw new Error('O Claude Code não está logado. Abra um terminal, rode "claude" e faça o login.')
   throw new Error(`Claude Code: ${why.slice(0, 300) || 'falhou sem mensagem'}`)
+}
+
+async function textCodex(s: AiSettings, job: TextJob) {
+  const prompt = `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. Não mexa em nenhum arquivo. Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}`
+  const cwd = job.dir && existsSync(job.dir) ? job.dir : app.getPath('temp')
+  const r = await codexExec(s, prompt, { cwd, sandbox: 'read-only', extra: ['--ephemeral'], timeoutMs: Math.min(30 * 60000, job.timeoutMs ?? 180000) })
+  return r.text
 }
 
 async function textAnthropic(s: AiSettings, job: TextJob) {
@@ -169,10 +229,69 @@ async function imageOpenAI(s: AiSettings, prompt: string, aspect: string) {
   return Buffer.from(b64, 'base64')
 }
 
+const ASPECT_WORDS: Record<string, string> = {
+  '16:9': 'horizontal 16:9 (paisagem)',
+  '9:16': 'vertical 9:16 (retrato, tela de celular)',
+  '4:5': 'vertical 4:5',
+  '1:1': 'quadrada 1:1'
+}
+
+/** novas imagens .png/.webp/.jpg nessa pasta (e subpastas) desde t0, a mais nova primeiro */
+async function newImagesSince(dir: string, t0: number): Promise<string[]> {
+  const out: { p: string; t: number }[] = []
+  const walk = async (d: string, depth: number) => {
+    if (depth > 4) return
+    for (const e of await fs.readdir(d, { withFileTypes: true }).catch(() => [] as import('fs').Dirent[])) {
+      const p = join(d, e.name)
+      if (e.isDirectory()) await walk(p, depth + 1)
+      else if (/\.(png|webp|jpe?g)$/i.test(e.name)) {
+        const st = await fs.stat(p).catch(() => null)
+        if (st && st.mtimeMs >= t0 - 2000) out.push({ p, t: st.mtimeMs })
+      }
+    }
+  }
+  await walk(dir, 0)
+  return out.sort((a, b) => b.t - a.t).map((x) => x.p)
+}
+
+/** Codex gera com a ferramenta image_gen dele (no plano do ChatGPT) e a gente pega o arquivo */
+async function imageCodex(s: AiSettings, prompt: string, aspect: string) {
+  const work = join(app.getPath('userData'), 'codex-image', randomUUID().slice(0, 8))
+  await fs.mkdir(work, { recursive: true })
+  const t0 = Date.now()
+  try {
+    const ask = [
+      'Use a sua ferramenta embutida de gerar imagem (image_gen) para criar UMA imagem, sem perguntar nada.',
+      `Formato: ${ASPECT_WORDS[aspect] ?? aspect}.`,
+      'Depois copie o arquivo gerado para esta pasta com o nome imagem.png e responda só "ok".',
+      '',
+      'Descrição da imagem:',
+      prompt
+    ].join('\n')
+    const r = await codexExec(s, ask, { cwd: work, sandbox: 'workspace-write', extra: ['--json', '--enable', 'image_generation'], timeoutMs: 10 * 60000 })
+    // 1) a cópia que ele fez aqui; 2) o caminho que o evento da imagem traz; 3) a mais nova em generated_images
+    const candidates = await newImagesSince(work, t0)
+    for (const m of r.out.matchAll(/"saved_path"\s*:\s*("(?:[^"\\]|\\.)*")/g)) {
+      try {
+        candidates.push(JSON.parse(m[1]))
+      } catch {
+        /* ignora */
+      }
+    }
+    const codexHome = process.env.CODEX_HOME || join(app.getPath('home'), '.codex')
+    candidates.push(...(await newImagesSince(join(codexHome, 'generated_images'), t0)))
+    const file = candidates.find((p) => existsSync(p))
+    if (!file) throw new Error('O Codex não devolveu imagem. Veja se o seu plano do ChatGPT inclui geração de imagem e tente de novo.')
+    return await fs.readFile(file)
+  } finally {
+    await fs.rm(work, { recursive: true, force: true }).catch(() => null)
+  }
+}
+
 // ---------- status / teste ----------
 async function status() {
   const s = (await loadSettings()).ai ?? {}
-  const cc = await findClaudeCode(s)
+  const [cc, cx] = await Promise.all([findClaudeCode(s), findCodex(s)])
   return {
     providers: [
       {
@@ -181,6 +300,13 @@ async function status() {
         caps: CAPS['claude-code'],
         configured: !!cc,
         detail: cc ? `${cc.source}: ${cc.path}` : 'não encontrado: instale e faça login'
+      },
+      {
+        id: 'codex' as const,
+        label: 'Codex do ChatGPT (este PC)',
+        caps: CAPS.codex,
+        configured: !!cx,
+        detail: cx ? `${cx.source}: ${cx.path}${s.codexModel ? ` · modelo ${s.codexModel}` : ''}` : 'não encontrado: instale e faça login'
       },
       {
         id: 'anthropic' as const,
@@ -204,7 +330,9 @@ async function status() {
       anthropicModel: s.anthropicModel || DEFAULT_MODELS.anthropic,
       openaiTextModel: s.openaiTextModel || DEFAULT_MODELS.openaiText,
       openaiImageModel: s.openaiImageModel || DEFAULT_MODELS.openaiImage,
-      claudeCodePath: s.claudeCodePath ?? ''
+      claudeCodePath: s.claudeCodePath ?? '',
+      codexPath: s.codexPath ?? '',
+      codexModel: s.codexModel ?? ''
     }
   }
 }
@@ -218,6 +346,13 @@ async function test(id: ProviderId): Promise<{ ok: boolean; message: string }> {
       const v = await run(cc.path, ['--version'], { timeoutMs: 20000 })
       const reply = await textClaudeCode(s, { instruction: 'Responda exatamente: OK', input: 'teste de conexão do Typos' })
       return { ok: /ok/i.test(reply), message: `Funcionando · ${v.out.trim() || 'Claude Code'} · respondeu "${reply.slice(0, 40)}"` }
+    }
+    if (id === 'codex') {
+      const cx = await findCodex(s)
+      if (!cx) return { ok: false, message: 'Codex não encontrado. Instale (veja as instruções) e abra o Typos de novo.' }
+      const v = await run(cx.path, ['--version'], { timeoutMs: 20000 })
+      const reply = await textCodex(s, { instruction: 'Responda exatamente: OK', input: 'teste de conexão do Typos' })
+      return { ok: /ok/i.test(reply), message: `Funcionando · ${v.out.trim() || 'Codex'} · respondeu "${reply.slice(0, 40)}"` }
     }
     if (id === 'anthropic') {
       const reply = await textAnthropic(s, { instruction: 'Responda exatamente: OK', input: 'teste de conexão do Typos' })
@@ -236,9 +371,16 @@ async function routeFor(task: Task): Promise<ProviderId> {
   if (chosen) return chosen
   throw new Error(
     task === 'image'
-      ? 'Nenhuma IA escolhida pra gerar imagem. Em Configurações → IA, escolha uma conexão que gera imagem (ex.: OpenAI).'
+      ? 'Nenhuma IA escolhida pra gerar imagem. Em Configurações → IA, escolha uma conexão que gera imagem (Codex ou OpenAI).'
       : 'Nenhuma IA escolhida pra texto. Em Configurações → IA, escolha uma conexão.'
   )
+}
+
+function textBy(provider: ProviderId, s: AiSettings, job: TextJob) {
+  if (provider === 'claude-code') return textClaudeCode(s, job)
+  if (provider === 'codex') return textCodex(s, job)
+  if (provider === 'anthropic') return textAnthropic(s, job)
+  return textOpenAI(s, job)
 }
 
 export function initAi() {
@@ -250,7 +392,7 @@ export function initAi() {
     const next: AiSettings = { ...cur }
     for (const k of ['anthropicKey', 'openaiKey'] as const)
       if (typeof patch[k] === 'string') next[k] = patch[k]!.trim() || undefined
-    for (const k of ['anthropicModel', 'openaiTextModel', 'openaiImageModel', 'claudeCodePath'] as const)
+    for (const k of ['anthropicModel', 'openaiTextModel', 'openaiImageModel', 'claudeCodePath', 'codexPath', 'codexModel'] as const)
       if (typeof patch[k] === 'string') next[k] = patch[k]!.trim() || undefined
     if (patch.routeText !== undefined) next.routeText = patch.routeText || undefined
     if (patch.routeImage !== undefined) next.routeImage = patch.routeImage || undefined
@@ -263,9 +405,7 @@ export function initAi() {
     try {
       const provider = await routeFor('text')
       const s = (await loadSettings()).ai ?? {}
-      const text = await metered(provider, job.dir, () =>
-        provider === 'claude-code' ? textClaudeCode(s, job) : provider === 'anthropic' ? textAnthropic(s, job) : textOpenAI(s, job)
-      )
+      const text = await metered(provider, job.dir, () => textBy(provider, s, job))
       return { text, provider }
     } catch (e: any) {
       return { error: String(e?.message ?? e) }
@@ -278,7 +418,7 @@ export function initAi() {
       const provider = await routeFor('image')
       if (!CAPS[provider].includes('image')) throw new Error('A conexão escolhida não gera imagem.')
       const s = (await loadSettings()).ai ?? {}
-      const bytes = await metered(provider, dir, () => imageOpenAI(s, prompt, aspect))
+      const bytes = await metered(provider, dir, () => (provider === 'codex' ? imageCodex(s, prompt, aspect) : imageOpenAI(s, prompt, aspect)))
       const name = `ia-${prompt.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30) || 'imagem'}-${randomUUID().slice(0, 8)}.png`
       await fs.mkdir(join(dir, 'assets'), { recursive: true })
       await fs.writeFile(join(dir, 'assets', name), bytes)
@@ -332,6 +472,29 @@ async function motionClaudeCode(s: AiSettings, job: MotionTrainJob, signal?: Abo
     if (r.err.includes('(tempo esgotado)')) throw new Error('Claude Code: tempo esgotado (30 min sem resposta). Tente de novo; se repetir, encurte o bloco ou as instruções.')
     const why = (parsed?.result || r.err || r.out || '').toString().trim()
     throw new Error(`Claude Code: ${why.slice(0, 300) || 'falhou sem mensagem'}`)
+  } finally {
+    await fs.rm(work, { recursive: true, force: true }).catch(() => null)
+  }
+}
+
+async function motionCodex(s: AiSettings, job: MotionTrainJob, signal?: AbortSignal) {
+  // mesma ideia do Claude Code: as imagens vão pra uma pasta de trabalho e entram anexadas no pedido
+  const work = join(app.getPath('userData'), 'motion-train', randomUUID().slice(0, 8))
+  await fs.mkdir(work, { recursive: true })
+  const names: string[] = []
+  for (const [i, p] of job.images.slice(0, 50).entries()) {
+    const name = `ref-${String(i + 1).padStart(2, '0')}${p.match(/\.\w+$/)?.[0] ?? '.jpg'}`
+    if (await fs.copyFile(p, join(work, name)).then(() => true, () => false)) names.push(name)
+  }
+  try {
+    const r = await codexExec(s, `${job.prompt}\n\nNão mexa em nenhum arquivo. Responda só com o resultado.`, {
+      cwd: work,
+      sandbox: 'read-only',
+      extra: ['--ephemeral', ...names.map((n) => `--image=${join(work, n)}`)],
+      timeoutMs: 30 * 60000,
+      signal
+    })
+    return r.text
   } finally {
     await fs.rm(work, { recursive: true, force: true }).catch(() => null)
   }
@@ -393,7 +556,13 @@ export function initMotionAi() {
       const stopped = new Promise<never>((_, rej) => ac.signal.addEventListener('abort', () => rej(new Error('Cancelado.')), { once: true }))
       const text = await Promise.race([
         metered(provider, undefined, () =>
-          provider === 'claude-code' ? motionClaudeCode(s, job, ac.signal) : provider === 'anthropic' ? motionAnthropic(s, job, ac.signal) : motionOpenAI(s, job)
+          provider === 'claude-code'
+            ? motionClaudeCode(s, job, ac.signal)
+            : provider === 'codex'
+              ? motionCodex(s, job, ac.signal)
+              : provider === 'anthropic'
+                ? motionAnthropic(s, job, ac.signal)
+                : motionOpenAI(s, job)
         ),
         stopped
       ])

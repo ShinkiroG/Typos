@@ -1076,7 +1076,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
     provider?: string
   }
   const [aiJob, setAiJob] = useState<AiJob | null>(null)
-  const PROVIDER_LABEL: Record<string, string> = { 'claude-code': 'Claude Code', anthropic: 'Claude (API)', openai: 'ChatGPT (API)' }
+  const PROVIDER_LABEL: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex', anthropic: 'Claude (API)', openai: 'ChatGPT (API)' }
 
   const neighborText = (pos: number, dir: -1 | 1) => {
     const ed = editorRef.current
@@ -1564,7 +1564,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
           >
             ✨ IA {aiUsage.ok ? '' : '(falhou) '}
             {aiUsage.ms < 60000 ? `${Math.max(1, Math.round(aiUsage.ms / 1000))} s` : formatTime(aiUsage.ms / 1000)}
-            {aiUsage.provider === 'claude-code' ? ' · no seu plano' : aiUsage.cost === null ? ' · custo ?' : ` · ${usd(aiUsage.cost)}`}
+            {aiUsage.provider === 'claude-code' || aiUsage.provider === 'codex' ? ' · no seu plano' : aiUsage.cost === null ? ' · custo ?' : ` · ${usd(aiUsage.cost)}`}
             {aiUsage.spent !== undefined && ` · projeto ${usd(aiUsage.spent)}${aiUsage.cap !== undefined ? ' de ' + usd(aiUsage.cap) : ''}`}
           </button>
         )}

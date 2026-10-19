@@ -6,8 +6,9 @@ type Status = Awaited<ReturnType<typeof api.aiStatus>>
 type ProviderId = Status['providers'][number]['id']
 
 const INSTALL_CMD = 'irm https://claude.ai/install.ps1 | iex'
+const CODEX_INSTALL_CMD = 'npm install -g @openai/codex'
 
-/** Conexões de IA (Claude Code, API da Anthropic, API da OpenAI) e quem faz cada tarefa. */
+/** Conexões de IA (Claude Code, Codex, API da Anthropic, API da OpenAI) e quem faz cada tarefa. */
 export function AiSection({ currentDir }: { currentDir?: string }) {
   const [st, setSt] = useState<Status | null>(null)
   const [tests, setTests] = useState<Partial<Record<ProviderId, { busy?: boolean; ok?: boolean; message?: string }>>>({})
@@ -91,6 +92,36 @@ export function AiSection({ currentDir }: { currentDir?: string }) {
             onBlur={(e) => e.target.value !== st.models.claudeCodePath && set({ claudeCodePath: e.target.value })}
           />
         </label>
+      </div>
+
+      <div className="ai-card">
+        <Head id="codex" />
+        <p className="muted small">{p('codex').detail} · usa o seu plano do ChatGPT (Plus, Pro…), sem chave · texto e imagem</p>
+        {!p('codex').configured && (
+          <div className="ai-install">
+            <Terminal size={13} /> No PowerShell (precisa do Node.js): <code>{CODEX_INSTALL_CMD}</code>
+            <button className="icon-btn" title="Copiar comando" onClick={() => navigator.clipboard.writeText(CODEX_INSTALL_CMD)}>
+              <Copy size={12} />
+            </button>
+            <div className="muted small">
+              Depois abra um terminal novo, rode <code>codex login</code> e entre com sua conta do ChatGPT.
+            </div>
+          </div>
+        )}
+        <div className="ai-row2">
+          <label className="ai-field">
+            Caminho do codex.exe (opcional)
+            <input
+              placeholder="achado sozinho se estiver instalado"
+              defaultValue={st.models.codexPath}
+              onBlur={(e) => e.target.value !== st.models.codexPath && set({ codexPath: e.target.value })}
+            />
+          </label>
+          <label className="ai-field">
+            Modelo (opcional)
+            <input placeholder="o padrão do Codex" defaultValue={st.models.codexModel} onBlur={(e) => e.target.value !== st.models.codexModel && set({ codexModel: e.target.value })} />
+          </label>
+        </div>
       </div>
 
       <div className="ai-card">
@@ -183,7 +214,7 @@ export function AiSection({ currentDir }: { currentDir?: string }) {
         <div className="ai-routes">
           <b>Gasto deste projeto</b>
           <p className="muted small">
-            Só conta o que é pago por uso (chave da Anthropic ou da OpenAI), calculado pelos tokens de cada pedido. O Claude Code usa o seu plano e fica de fora. O
+            Só conta o que é pago por uso (chave da Anthropic ou da OpenAI), calculado pelos tokens de cada pedido. O Claude Code e o Codex usam o seu plano e ficam de fora. O
             último pedido aparece na barra de baixo.
           </p>
           <label>

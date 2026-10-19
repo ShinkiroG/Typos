@@ -3,7 +3,7 @@ import type { Editor } from '@tiptap/react'
 import { Sparkles, Send, X, Loader2, Replace, ListPlus, Copy, Check, ImagePlus } from 'lucide-react'
 import { api, blockLabel, inlineMd, mdToJson } from '../lib'
 
-const PROVIDER_LABEL: Record<string, string> = { 'claude-code': 'Claude Code', anthropic: 'Claude (API)', openai: 'ChatGPT (API)' }
+const PROVIDER_LABEL: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex', anthropic: 'Claude (API)', openai: 'ChatGPT (API)' }
 
 /** atalhos de pedido por tipo de bloco */
 const QUICK: Record<string, { label: string; ask: string }[]> = {
