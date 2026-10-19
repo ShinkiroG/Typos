@@ -20,7 +20,7 @@ interface Props {
 }
 
 const KIND_LABEL: Record<Op['kind'], string> = { same: 'igual', change: 'alterado', del: 'removido', add: 'novo' }
-const PROVIDER_LABEL: Record<string, string> = { 'claude-code': 'Claude Code', anthropic: 'Claude (API)', openai: 'ChatGPT (API)' }
+const PROVIDER_LABEL: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex', anthropic: 'Claude (API)', openai: 'ChatGPT (API)' }
 
 /** Bloco da versão sugerida "por cima" do original: texto e ajustes novos, mas anexos/ritmo do original ficam. */
 function merged(a: JSONContent, b: JSONContent): JSONContent {

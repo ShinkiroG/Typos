@@ -11,8 +11,12 @@ export interface AiSettings {
   openaiImageModel?: string
   /** caminho manual do claude.exe, se não for achado sozinho */
   claudeCodePath?: string
-  routeText?: 'claude-code' | 'anthropic' | 'openai'
-  routeImage?: 'claude-code' | 'anthropic' | 'openai'
+  /** caminho manual do codex.exe, se não for achado sozinho */
+  codexPath?: string
+  /** modelo do Codex (vazio = o padrão do Codex) */
+  codexModel?: string
+  routeText?: 'claude-code' | 'codex' | 'anthropic' | 'openai'
+  routeImage?: 'claude-code' | 'codex' | 'anthropic' | 'openai'
 }
 
 export interface AppSettings {

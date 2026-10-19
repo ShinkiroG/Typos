@@ -3,7 +3,7 @@ import { Sparkles, Send, Loader2, FileDiff, Copy, Check, Trash2 } from 'lucide-r
 import { askAboutScript, requestDraft } from '../review'
 import type { JSONContent } from '@tiptap/core'
 
-const PROVIDER_LABEL: Record<string, string> = { 'claude-code': 'Claude Code', anthropic: 'Claude (API)', openai: 'ChatGPT (API)' }
+const PROVIDER_LABEL: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex', anthropic: 'Claude (API)', openai: 'ChatGPT (API)' }
 
 interface Msg {
   ask: string
