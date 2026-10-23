@@ -17,11 +17,6 @@ export const setLetteringDefault = (v: boolean) => {
 export const letteringOn = (attrs?: Record<string, any>) => (attrs?.lettering ?? letteringDefault) as boolean
 export const letteringAttr = (on: boolean) => (on === letteringDefault ? null : on)
 
-/** estilo do formato ativo: vai junto em todo pedido de texto pra IA */
-let aiStyle = ''
-export const setAiStyle = (rules: string) => {
-  aiStyle = rules.trim()
-}
 export const api: typeof window.api = {
   ...window.api,
   aiText: (job) =>
@@ -30,8 +25,7 @@ export const api: typeof window.api = {
       instruction:
         job.instruction +
         '\n\nTrechos entre **asteriscos duplos** estão em negrito no roteiro: é ênfase na fala (o narrador destaca). Mantenha e use **negrito** do mesmo jeito.' +
-        '\n[CAPÍTULO + LETTERING] = esse capítulo abre com um lettering capitular no vídeo (transição de capítulo com o nome dele); [CAPÍTULO] sozinho = sem lettering.' +
-        (aiStyle ? `\n\nRegras do estilo deste vídeo (respeite):\n${aiStyle}` : '')
+        '\n[CAPÍTULO + LETTERING] = esse capítulo abre com um lettering capitular no vídeo (transição de capítulo com o nome dele); [CAPÍTULO] sozinho = sem lettering.'
     })
 }
 
@@ -157,7 +151,7 @@ export interface Format {
   maxSeconds: number | null
   /** idioma do corretor ortográfico ("pt-BR", "en-US"… ou "off"); vazio = pt-BR */
   lang?: string
-  /** estilo do vídeo: regras, overlays, identidade de motion, pngtuber… (vai junto pra IA) */
+  /** instrução do estilo pro Claude: como é o visual/motion (vai no treino e em todo motion; nunca no Roteiro) */
   rules?: string
   /** prompt negativo do estilo: o que a IA nunca deve fazer no motion */
   negative?: string
@@ -242,6 +236,16 @@ export interface FontCase {
 }
 
 /** os dois pesos de uma referência (referências antigas vêm do slider único) */
+/** estilos antigos tinham "Regras do estilo" e "Instrução pro Claude" separadas: junta tudo em rules */
+export function migrateFormat(f: Format): Format {
+  const instr = f.motion?.instruction?.trim()
+  if (!f.motion || f.motion.instruction === undefined) return f
+  const { instruction: _, ...motion } = f.motion
+  const rules = f.rules?.trim() ?? ''
+  const merged = !instr || rules.includes(instr) ? rules : rules ? `${rules}\n\n${instr}` : instr
+  return { ...f, rules: merged || undefined, motion }
+}
+
 export function refWeights(r: MotionRef) {
   const f = r.focus ?? 50
   return { aesthetic: r.aesthetic ?? 100 - f, motion: r.motion ?? f, frameByFrame: !!r.frameByFrame && (r.motion ?? f) >= 100 }
@@ -252,7 +256,7 @@ export const DEFAULT_FONT_CASES = (): FontCase[] =>
 
 export interface MotionStyle {
   refs: MotionRef[]
-  /** o que o autor quer ensinar (texto livre pro Claude) */
+  /** antigo: a instrução pro Claude separada; hoje vive em Format.rules (ver migrateFormat) */
   instruction?: string
   /** as 4 fontes principais do projeto */
   fonts?: { title?: string; subtitle?: string; body?: string; accent?: string }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Download, X } from 'lucide-react'
-import { api, uid, type Format, type LibraryItem, type ProjectData } from './lib'
+import { api, uid, migrateFormat, type Format, type LibraryItem, type ProjectData } from './lib'
 import { Welcome } from './components/Welcome'
 import { Workspace } from './components/Workspace'
 import { SettingsModal } from './components/SettingsModal'
@@ -73,7 +73,7 @@ export default function App() {
   const flush = useRef<(() => Promise<void>) | null>(null)
 
   useEffect(() => {
-    api.loadFormats().then(setFormats)
+    api.loadFormats().then((fs: Format[]) => setFormats(fs.map(migrateFormat)))
     api.loadLibrary().then(setLibrary)
     api.onFlush(async () => {
       await flush.current?.()
