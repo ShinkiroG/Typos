@@ -57,11 +57,12 @@ import { YoutubeDownload } from '../components/YoutubeDownload'
 import { SfxFinder, type SfxLib } from '../components/SfxFinder'
 import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H, findGap, mediaLen, splitClip, trackHeight, type GapSel, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
-import { CLIP_ENC, blockDur, blockFromClip, blockLabel, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale, rangeTweak, soundsToTimeline } from './blocks'
+import { CLIP_ENC, blockDur, blockFromClip, blockLabel, blockWindows, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale, rangeTweak, soundsToTimeline } from './blocks'
 import { MotionEditor } from './MotionEditor'
 import { BlockInspector, BlockWindow, busyOverall, type BlockBusy } from './BlockPanel'
 import { AudioReadButton, BlockHeardRow, useBlockHeard } from './AudioRead'
-import { jobPct, recheckRead, runningLabel, watchJobs } from './transcripts'
+import { TranscriptModal } from './TranscriptModal'
+import { jobPct, recheckRead, runningLabel, speechFiles, watchJobs } from './transcripts'
 import { describeChange } from './history'
 import { isKey, keyOf } from '../keys'
 
@@ -1076,6 +1077,20 @@ export function Montage({
   const blocks = data.blocks ?? []
   const curBlock = blocks.find((b) => b.id === blockSel) ?? null
   const openBlock = blocks.find((b) => b.id === blockOpen) ?? null
+  // transcrição aberta: a de um bloco (só o trecho dele) ou a dos arquivos da timeline
+  const [transcript, setTranscript] = useState<{ block: string } | { paths?: string[] } | null>(null)
+  const transcriptView = (() => {
+    if (!transcript) return null
+    const nameOf = (p: string) => data.media.find((m) => m.path === p)?.name || p.split(/[\\/]/).pop() || p
+    if ('block' in transcript) {
+      const b = blocks.find((x) => x.id === transcript.block)
+      if (!b) return null
+      const win = blockWindows(data, b)
+      return { title: `Transcrição · ${blockLabel(b)}`, files: [...win].map(([path, windows]) => ({ path, name: nameOf(path), windows })) }
+    }
+    const files = speechFiles(data).filter((f) => !transcript.paths || transcript.paths.includes(f.path))
+    return { title: files.length === 1 ? `Transcrição · ${files[0].name}` : 'Transcrição do áudio', files }
+  })()
   const patchBlock = (id: string, p: Partial<InstructionBlock>, gesture?: string) => {
     const d = dataRef.current
     change({ ...d, blocks: (d.blocks ?? []).map((b) => (b.id === id ? { ...b, ...p } : b)) }, gesture)
@@ -2219,7 +2234,7 @@ export function Montage({
             onAdjust={(t) => makePreview(curBlock.id, t)}
             onCancel={cancelBlock}
             onApprove={() => approveBlock(curBlock.id)}
-            heard={<BlockHeardRow data={data} b={curBlock} lang={lang} />}
+            heard={<BlockHeardRow data={data} b={curBlock} lang={lang} onOpen={() => setTranscript({ block: curBlock.id })} />}
             onOpen={() => setBlockOpen(curBlock.id)}
             onRemove={() => removeBlock(curBlock.id)}
           />
@@ -2453,7 +2468,14 @@ export function Montage({
           </button>
         )}
         {wstatus && ffmpeg?.whisper && (
-          <AudioReadButton data={data} lang={lang} ready={!!model?.ready} onNeedModel={downloadModel} others={otherTimelines} />
+          <AudioReadButton
+            data={data}
+            lang={lang}
+            ready={!!model?.ready}
+            onNeedModel={downloadModel}
+            others={otherTimelines}
+            onOpenTranscript={(path) => setTranscript({ paths: path ? [path] : undefined })}
+          />
         )}
         {onSyncScript && (
           <button
@@ -2747,8 +2769,19 @@ export function Montage({
           onAdjust={(t) => makePreview(openBlock.id, t)}
           onCancel={cancelBlock}
           onApprove={() => approveBlock(openBlock.id)}
-          heard={<BlockHeardRow data={data} b={openBlock} lang={lang} />}
+          heard={<BlockHeardRow data={data} b={openBlock} lang={lang} onOpen={() => setTranscript({ block: openBlock.id })} />}
           onClose={() => setBlockOpen(null)}
+        />
+      )}
+      {transcriptView && (
+        <TranscriptModal
+          title={transcriptView.title}
+          files={transcriptView.files}
+          data={data}
+          lang={lang}
+          ready={!!model?.ready}
+          change={change}
+          onClose={() => setTranscript(null)}
         />
       )}
 

@@ -99,7 +99,7 @@ export const watchJobs = (f: () => void) => subscribe(f)
 const nameOf = (p: string) => p.split(/[\\/]/).pop() ?? p
 
 /**
- * Arquivos com fala de uma timeline: cortes com som em faixas ligadas, menos os da pasta SFX.
+ * Arquivos com fala de uma timeline: cortes com som em faixas ligadas e armadas pra escuta, menos os da pasta SFX.
  * É o que o corte automático, os blocos e o Criar Clipes vão precisar transcrever.
  */
 export function speechFiles(d: MontageData): { path: string; name: string }[] {
@@ -109,7 +109,7 @@ export function speechFiles(d: MontageData): { path: string; name: string }[] {
     for (let i = 0; cur?.parent && i < 20; i++) cur = binById.get(cur.parent)
     return cur?.role
   }
-  const muted = new Set(d.tracks.filter((t) => t.muted).map((t) => t.id))
+  const muted = new Set(d.tracks.filter((t) => t.muted || t.deaf).map((t) => t.id))
   const media = new Map(d.media.map((m) => [m.id, m]))
   const out = new Map<string, string>()
   for (const c of d.clips) {

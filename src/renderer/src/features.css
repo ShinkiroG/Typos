@@ -2258,6 +2258,17 @@ body.resizing * {
   background: #ff4d6d;
   box-shadow: 0 0 8px #ff4d6d;
 }
+.mt-listen {
+  color: var(--accent, #7aa2ff);
+  flex: none;
+}
+.mt-head > span + .mt-listen {
+  margin-left: auto;
+}
+.mt-listen.off {
+  color: var(--muted);
+  opacity: 0.7;
+}
 .mt-clip.rec {
   background: color-mix(in srgb, #ff4d6d 35%, var(--bg-3));
   border-color: #ff4d6d;
@@ -2623,4 +2634,114 @@ body.resizing * {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+/* transcrição do que foi ouvido: corrigir palavras e prender prompts nas falas */
+.modal.tr-modal {
+  width: min(760px, 94vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+.tr-modal h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tr-modal h3 .icon-btn {
+  margin-left: auto;
+}
+.tr-help {
+  margin: -6px 0 10px;
+}
+.tr-body {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  line-height: 1.7;
+}
+.tr-file + .tr-file {
+  margin-top: 14px;
+}
+.tr-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.tr-todo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.tr-line {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 4px;
+}
+.tr-time {
+  flex: none;
+  width: 38px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  padding-top: 3px;
+  user-select: none;
+}
+.tr-text {
+  flex: 1;
+}
+.tr-word {
+  border-radius: 3px;
+  cursor: text;
+}
+.tr-word:hover {
+  background: var(--bg-3);
+}
+.tr-word.fixed {
+  color: #ffd166;
+  border-bottom: 1px dashed #ffd166;
+}
+.tr-prompt {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 6px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-size: 11px;
+  color: var(--c-prompt);
+  border: 1px solid color-mix(in srgb, var(--c-prompt) 50%, transparent);
+  border-radius: 10px;
+  user-select: none;
+}
+.ctx-menu.tr-menu {
+  z-index: 80;
+}
+.ctx-menu.tr-menu button span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tr-fix-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 14px;
 }

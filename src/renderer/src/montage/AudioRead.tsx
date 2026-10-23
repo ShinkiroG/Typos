@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Check, ChevronDown, ChevronUp, CircleDashed, Ear, Layers, Loader2, X } from 'lucide-react'
+import { AlertTriangle, Check, ChevronDown, ChevronUp, CircleDashed, Ear, FileText, Layers, Loader2, X } from 'lucide-react'
 import { api, type InstructionBlock, type MontageData } from '../lib'
-import { blockSpeech } from './blocks'
+import { audioIn, blockSpeech } from './blocks'
 import { jobLabel, readAudio, readState, speechFiles, useReadCache, useWhisperJobs, type ReadState, type WhisperJob } from './transcripts'
 
 /**
@@ -28,13 +28,16 @@ export function AudioReadButton({
   lang,
   ready,
   onNeedModel,
-  others
+  others,
+  onOpenTranscript
 }: {
   data: MontageData
   lang: string
   /** modelo do Whisper baixado */
   ready: boolean
   onNeedModel: () => void
+  /** abre a transcrição (pra corrigir e pôr prompts); sem caminho, a de todos os arquivos */
+  onOpenTranscript?: (path?: string) => void
   /** as outras timelines do projeto (principal e recortes do Criar Clipes), pro "Ler todas" */
   others?: () => MontageData[]
 }) {
@@ -97,6 +100,18 @@ export function AudioReadButton({
                 <small className={x.s.kind === 'error' ? 'ar-err' : ''} title={x.s.kind === 'error' ? x.s.error : undefined}>
                   {stateText(x.s)}
                 </small>
+                {x.s.kind === 'done' && onOpenTranscript && (
+                  <button
+                    className="icon-btn"
+                    title="Abrir a transcrição: corrigir palavras e pôr prompts nas falas"
+                    onClick={() => {
+                      setOpen(false)
+                      onOpenTranscript(x.path)
+                    }}
+                  >
+                    <FileText size={11} />
+                  </button>
+                )}
                 {(x.s.kind === 'running' || x.s.kind === 'queued') && (
                   <button className="icon-btn" title="Parar de ler este arquivo" onClick={() => api.whisperCancel(x.path, lang)}>
                     <X size={11} />
@@ -110,6 +125,18 @@ export function AudioReadButton({
             <button className="btn small primary" disabled={!pending.length} onClick={() => read(pending.map((x) => x.path))}>
               <Ear size={12} /> {pending.length ? `Ler esta timeline (${pending.length})` : 'Tudo lido'}
             </button>
+            {onOpenTranscript && done > 0 && (
+              <button
+                className="btn small"
+                title="Abre a transcrição do que já foi lido: corrigir palavras e pôr prompts nas falas (o bloco de instrução lê junto)"
+                onClick={() => {
+                  setOpen(false)
+                  onOpenTranscript()
+                }}
+              >
+                <FileText size={12} /> Abrir transcrição
+              </button>
+            )}
             {others && (
               <button
                 className="btn small"
@@ -162,11 +189,16 @@ export function useBlockHeard(data: MontageData, lang: string) {
 }
 
 /** linha da janela do bloco: "Som do trecho: lido ✓ / lendo 40% / não lido [Ler agora]" */
-export function BlockHeardRow({ data, b, lang }: { data: MontageData; b: InstructionBlock; lang: string }) {
+export function BlockHeardRow({ data, b, lang, onOpen }: { data: MontageData; b: InstructionBlock; lang: string; onOpen?: () => void }) {
   const paths = blockSpeech(data, b)
   const cache = useReadCache(paths, lang)
   const jobs = useWhisperJobs()
-  if (!paths.length) return <div className="blk-heard-row none">Som do trecho: sem fala embaixo deste bloco</div>
+  if (!paths.length)
+    return (
+      <div className="blk-heard-row none">
+        Som do trecho: {audioIn(data, b).length ? 'as faixas de áudio daqui estão desarmadas pra escuta' : 'sem fala embaixo deste bloco'}
+      </div>
+    )
   const states = paths.map((p) => ({ p, s: readState(p, lang, cache, jobs) }))
   const pending = states.filter((x) => x.s.kind === 'todo' || x.s.kind === 'error')
   const run = states.find((x) => x.s.kind === 'running')?.s as { job: WhisperJob } | undefined
@@ -182,6 +214,11 @@ export function BlockHeardRow({ data, b, lang }: { data: MontageData; b: Instruc
       {cache && pending.length > 0 && !run && !queued && (
         <button className="btn small" title="Lê o áudio em segundo plano: pode fechar a janela" onClick={() => readAudio(pending.map((x) => x.p), lang)}>
           Ler agora
+        </button>
+      )}
+      {onOpen && states.some((x) => x.s.kind === 'done') && (
+        <button className="btn small" title="Abrir o que foi ouvido neste trecho: corrigir palavras e pôr prompts em falas específicas (a prévia lê junto)" onClick={onOpen}>
+          <FileText size={12} /> Transcrição
         </button>
       )}
     </div>
