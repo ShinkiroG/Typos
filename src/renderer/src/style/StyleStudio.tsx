@@ -93,12 +93,11 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
       lines.push(c.mode === 'favorites' && c.favorites.length ? `  - ${c.name}: use só estas favoritas → ${c.favorites.map((x) => `"${x}"`).join(', ')}` : `  - ${c.name}: DINÂMICA — escolha você a melhor fonte instalada pra isso`)
   }
   const needList = dyn.length > 0 || !ft.title || !ft.subtitle || !ft.body || !ft.accent
-  if (f.rules?.trim()) lines.push(`- Regras do estilo: ${f.rules.trim()}`)
   if (f.negative?.trim()) lines.push(`- O que EVITAR (prompt negativo, nada disso pode aparecer): ${f.negative.trim()}`)
-  if (m.instruction?.trim()) {
+  if (f.rules?.trim()) {
     lines.push('')
-    lines.push('## Instrução do autor')
-    lines.push(m.instruction.trim())
+    lines.push('## Instrução do autor (como é o estilo)')
+    lines.push(f.rules.trim())
   }
   const links = m.refs.filter((r) => r.kind === 'link' && r.url)
   if (links.length) {
@@ -356,7 +355,7 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
     return out.slice(0, MAX_IMAGES)
   }
 
-  const canTrain = m.refs.length > 0 || !!m.instruction?.trim() || !!m.colors?.length || folders.length > 0
+  const canTrain = m.refs.length > 0 || !!f.rules?.trim() || !!m.colors?.length || folders.length > 0
   /** as pastas do estilo pro pedido: a lista (com a análise dos sons) e as primeiras imagens */
   const studyInput = async (room: number) => {
     const items = await collectStudy(f, setBusy)
@@ -571,16 +570,8 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
               </select>
             </label>
           </div>
-          <label className="st-field">
-            Regras do estilo (valem sempre que a IA mexe no roteiro)
-            <textarea rows={2} value={f.rules ?? ''} placeholder="Ex.: pngtuber no canto inferior direito, legenda amarela, nada de emoji…" onChange={(e) => patch({ rules: e.target.value })} />
-          </label>
-          <label className="st-field">
-            O que evitar (prompt negativo: vale em todo motion deste estilo)
-            <textarea rows={2} value={f.negative ?? ''} placeholder="Ex.: nada de emoji, sem fundo branco, sem texto girando, sem neon…" onChange={(e) => patch({ negative: e.target.value })} />
-          </label>
           <div className="st-field">
-            <span>Pastas do estilo (assets que valem pra todo roteiro com este estilo; o Typos só guarda o caminho)</span>
+            <span>Pastas do estilo (assets que valem pra todo vídeo com este estilo; o Typos só guarda o caminho)</span>
             <div className="st-sfolders">
               {folders.map((x) => (
                 <div key={x.path} className="st-sfolder">
@@ -731,13 +722,21 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
 
         <section className="st-sec">
           <h4>Instrução pro Claude</h4>
-          <textarea
-            className="st-instr"
-            rows={4}
-            value={m.instruction ?? ''}
-            placeholder="Explique o estilo com suas palavras: o que te chama atenção nessas referências, o que você quer igual, o que é proibido…"
-            onChange={(e) => patchM({ instruction: e.target.value })}
-          />
+          <p className="muted small">Vale no treino e em todo motion deste estilo. Não entra no Roteiro.</p>
+          <label className="st-field">
+            Como é o estilo
+            <textarea
+              className="st-instr"
+              rows={4}
+              value={f.rules ?? ''}
+              placeholder="Explique com suas palavras: o que te chama atenção nas referências, o que você quer igual, pngtuber no canto inferior direito, legenda amarela…"
+              onChange={(e) => patch({ rules: e.target.value })}
+            />
+          </label>
+          <label className="st-field">
+            O que evitar
+            <textarea rows={2} value={f.negative ?? ''} placeholder="Ex.: nada de emoji, sem fundo branco, sem texto girando, sem neon…" onChange={(e) => patch({ negative: e.target.value })} />
+          </label>
         </section>
 
         <section className="st-sec">

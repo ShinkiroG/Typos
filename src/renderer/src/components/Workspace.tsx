@@ -59,7 +59,6 @@ import {
   type ShortClip,
   type ShortsData,
   defaultMontage,
-  setAiStyle,
   setLetteringDefault,
   letteringOn,
   letteringAttr,
@@ -293,10 +292,6 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
   /** formato dos Clipes: o próprio (ex.: Shorts/Vertical) ou, sem escolha, o mesmo da Montagem */
   const clipsFormat = formats.find((f) => f.id === shorts?.formatId) ?? format
   const wpm = customWpm ?? format?.wpm ?? 150
-  useEffect(() => {
-    const guide = format?.motion?.learned?.guide
-    setAiStyle([format?.rules ?? '', guide ? `Guia de motion deste formato (siga nos prompts de motion):\n${guide}` : ''].filter(Boolean).join('\n\n'))
-  }, [format?.rules, format?.motion?.learned?.guide])
 
   // refs pros handlers do editor (que são criados uma vez só)
   const editorRef = useRef<Editor | null>(null)
