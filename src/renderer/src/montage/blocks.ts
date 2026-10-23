@@ -24,6 +24,7 @@ import { roleLabel } from '../style/assets'
 import { envAt, envPoints, spans, type MontageEngine } from './engine'
 import type { ScriptBlock } from './autocut'
 import { jobPct, runningLabel, speechFiles, watchJobs } from './transcripts'
+import { applyFixes, inPrompt } from './transcriptEdits'
 import { planRender, type VLayer } from '../render/plan'
 import { issuesTweak, layoutProbe, safeZoneDirection, safeZones, type LayoutIssue } from './safezone'
 
@@ -92,15 +93,46 @@ export function audioIn(data: MontageData, b: InstructionBlock) {
   return data.clips.filter((c) => !muted.has(c.track) && media.get(c.media)?.hasAudio && c.start < b.end && clipEndT(c) > b.start)
 }
 
+/** cortes que o bloco ouve: os de `audioIn` menos os das faixas desarmadas pra escuta */
+export function heardClips(data: MontageData, b: InstructionBlock) {
+  const deaf = new Set(data.tracks.filter((t) => t.deaf).map((t) => t.id))
+  return audioIn(data, b).filter((c) => !deaf.has(c.track))
+}
+
+/** pedaços de cada arquivo (tempos do arquivo) que tocam dentro do bloco: o que a transcrição do bloco mostra */
+export function blockWindows(data: MontageData, b: InstructionBlock): Map<string, [number, number][]> {
+  const media = new Map(data.media.map((m) => [m.id, m]))
+  const speech = new Set(blockSpeech(data, b))
+  const out = new Map<string, [number, number][]>()
+  for (const c of heardClips(data, b)) {
+    const path = media.get(c.media)!.path
+    if (!speech.has(path)) continue
+    const a = c.in + Math.max(0, b.start - c.start)
+    const z = c.in + Math.min(clipEndT(c), b.end) - c.start
+    if (z > a) out.set(path, [...(out.get(path) ?? []), [a, z] as [number, number]].sort((x, y) => x[0] - y[0]))
+  }
+  return out
+}
+
+/** prompt do autor preso a palavras faladas dentro do bloco (tempos a partir do começo do bloco) */
+export interface HeardPrompt {
+  t0: number
+  t1: number
+  /** as palavras do trecho (já corrigidas) */
+  words: string
+  text: string
+}
+
 /** arquivos com fala que tocam no bloco (o que precisa estar lido pra prévia sair sem esperar o Whisper) */
 export function blockSpeech(data: MontageData, b: InstructionBlock) {
   const speech = new Set(speechFiles(data).map((f) => f.path))
   const media = new Map(data.media.map((m) => [m.id, m]))
-  return [...new Set(audioIn(data, b).map((c) => media.get(c.media)!.path))].filter((p) => speech.has(p))
+  return [...new Set(heardClips(data, b).map((c) => media.get(c.media)!.path))].filter((p) => speech.has(p))
 }
 
 /**
- * Transcreve (Whisper, na fila com cache por arquivo) e devolve só as palavras que caem dentro do bloco.
+ * Transcreve (Whisper, na fila com cache por arquivo) e devolve só as palavras que caem dentro do bloco,
+ * já com as correções do autor, e os prompts que ele prendeu nas falas do trecho.
  * `onWait` conta como vai a leitura; `signal` para de esperar (a leitura continua na fila e fica guardada).
  */
 export async function heardIn(
@@ -108,10 +140,11 @@ export async function heardIn(
   b: InstructionBlock,
   lang: string,
   opts: { signal?: AbortSignal; onWait?: (label: string, pct: number | null) => void } = {}
-): Promise<{ words: HeardWord[]; error?: string }> {
-  const clips = audioIn(data, b)
+): Promise<{ words: HeardWord[]; prompts: HeardPrompt[]; error?: string }> {
+  const clips = heardClips(data, b)
   const media = new Map(data.media.map((m) => [m.id, m]))
   const words: HeardWord[] = []
+  const prompts = new Map<string, HeardPrompt>()
   let error: string | undefined
   const paths = blockSpeech(data, b)
   for (const [i, path] of paths.entries()) {
@@ -137,15 +170,28 @@ export async function heardIn(
       error = r.error
       continue
     }
+    const edit = data.transcriptEdits?.[path]
+    const fixed = applyFixes(r.words, edit)
     for (const c of clips.filter((x) => media.get(x.media)!.path === path)) {
-      for (const w of r.words) {
-        if (w.s < c.in || w.s >= c.out) continue
+      const here = fixed.filter((w) => {
+        if (w.s < c.in || w.s >= c.out) return false
         const t = c.start + (w.s - c.in)
-        if (t >= b.start && t < b.end) words.push({ t: t - b.start, w: w.w })
+        return t >= b.start && t < b.end
+      })
+      const rel = (s: number) => c.start + (s - c.in) - b.start
+      for (const w of here) words.push({ t: rel(w.s), w: w.w })
+      for (const p of edit?.prompts ?? []) {
+        const ws = here.filter((w) => inPrompt(w, p))
+        if (!ws.length || !p.text.trim()) continue
+        const t0 = rel(ws[0].s)
+        const t1 = Math.min(blockDur(b), rel(ws[ws.length - 1].e))
+        const prev = prompts.get(p.id)
+        // o mesmo trecho em dois cortes do bloco: fica a primeira vez que ele toca
+        if (!prev || t0 < prev.t0) prompts.set(p.id, { t0, t1, words: ws.map((w) => w.w).join(' '), text: p.text.trim() })
       }
     }
   }
-  return { words: words.sort((a, z) => a.t - z.t), error }
+  return { words: words.sort((a, z) => a.t - z.t), prompts: [...prompts.values()].sort((a, z) => a.t0 - z.t0), error }
 }
 
 /** "[0.0s] frase… [3.2s] frase…": quebra nas pausas (ou a cada ~12 palavras) */
@@ -719,6 +765,10 @@ export function blockPrompt(o: {
   format?: Format
   heard: HeardWord[]
   heardError?: string
+  /** prompts do autor presos a falas do trecho (na transcrição) */
+  heardPrompts?: HeardPrompt[]
+  /** o áudio do trecho está só em faixas desarmadas pra escuta */
+  deaf?: boolean
   hasAudio: boolean
   scriptHere: string[]
   falas: string
@@ -786,7 +836,14 @@ export function blockPrompt(o: {
   L.push('## O que é falado neste trecho (tempos a partir do começo do bloco)')
   if (!o.hasAudio) L.push('(não há áudio neste trecho: o motion carrega o momento sozinho)')
   else if (o.heard.length) L.push(phrases(o.heard))
+  else if (o.deaf) L.push('(o autor desligou a escuta das faixas de áudio deste trecho: não use a fala; siga as instruções)')
   else L.push(o.heardError ? `(não deu pra transcrever: ${o.heardError})` : '(só silêncio ou música)')
+  if (o.heardPrompts?.length)
+    L.push(
+      '',
+      '## Prompts do autor em falas específicas (o principal do trecho onde cada um cai: siga à risca, no tempo dessas palavras)',
+      ...o.heardPrompts.map((p) => `- De ${p.t0.toFixed(1)}s a ${p.t1.toFixed(1)}s, quando é dito "${p.words}": ${p.text}`)
+    )
   if (o.scriptHere.length) L.push('', 'Falas do roteiro que caem aqui (use pra acertar nomes e termos; a fala gravada manda, inclusive improvisos):', ...o.scriptHere.map((s) => '> ' + s))
   L.push('')
   if (o.falas) L.push('## Roteiro do vídeo (só as falas, com os capítulos como "# título", pra entender o tema)', o.falas.slice(0, 12000), '')
@@ -976,8 +1033,9 @@ async function waitAi<T>(c: Pick<PreviewCtx, 'onStage'>, label: string, span: [n
 export async function generatePreview(c: PreviewCtx) {
   const b = c.block
   const hasAudio = audioIn(c.data, b).length > 0
-  let heard: { words: HeardWord[]; error?: string } = { words: [] }
-  if (hasAudio) {
+  const deaf = hasAudio && !heardClips(c.data, b).length
+  let heard: { words: HeardWord[]; prompts: HeardPrompt[]; error?: string } = { words: [], prompts: [] }
+  if (hasAudio && !deaf) {
     c.onStage('Ouvindo o trecho (Whisper)…', null, [0, 0.1])
     heard = await heardIn(c.data, b, c.lang, { signal: c.signal, onWait: (l, p) => c.onStage(l, p, [0, 0.1]) })
   }
@@ -1021,6 +1079,8 @@ export async function generatePreview(c: PreviewCtx) {
     format: c.format,
     heard: heard.words,
     heardError: heard.error,
+    heardPrompts: heard.prompts,
+    deaf,
     hasAudio,
     scriptHere: scriptIn(c.data, b, c.script),
     falas: scriptFalas(c.script),
@@ -1066,6 +1126,8 @@ export async function generatePreview(c: PreviewCtx) {
       format: c.format,
       heard: heard.words,
       heardError: heard.error,
+      heardPrompts: heard.prompts,
+      deaf,
       hasAudio,
       scriptHere: scriptIn(c.data, b, c.script),
       falas: scriptFalas(c.script),

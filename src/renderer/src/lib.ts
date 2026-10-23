@@ -724,6 +724,8 @@ export interface MontageTrack {
   kind: 'video' | 'audio'
   name: string
   muted?: boolean
+  /** desarmada pra escuta: o som toca, mas o Whisper não transcreve e os blocos de instrução não ouvem */
+  deaf?: boolean
   /** faixa onde o corte automático põe a narração editada (fica logo abaixo da original) */
   auto?: boolean
   /** altura da faixa na timeline (px); sem valor = padrão do tipo */
@@ -769,6 +771,21 @@ export interface MontageData {
   letteringDur?: number
   /** blocos de instrução de motion (como um sólido do Premiere, nas faixas de vídeo) */
   blocks?: InstructionBlock[]
+  /** correções e prompts do autor na transcrição de cada arquivo (chave: caminho do arquivo) */
+  transcriptEdits?: Record<string, TranscriptEdit>
+}
+/** prompt preso a um trecho da fala transcrita (tempos do arquivo, em s) */
+export interface TranscriptPrompt {
+  id: string
+  /** começo da primeira palavra e fim da última */
+  from: number
+  to: number
+  text: string
+}
+export interface TranscriptEdit {
+  /** palavra corrigida pelo começo dela no arquivo (s.toFixed(2)); '' = some (foi juntada na anterior) */
+  fix?: Record<string, string>
+  prompts?: TranscriptPrompt[]
 }
 export interface MontageMarker {
   id: string

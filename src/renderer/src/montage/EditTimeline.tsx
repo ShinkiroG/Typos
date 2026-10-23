@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Volume2, VolumeX, Plus } from 'lucide-react'
+import { Volume2, VolumeX, Plus, Ear, EarOff } from 'lucide-react'
 import { clipDur, clipEndT, formatTime, uid, type MontageClip, type MontageData, type MontageMarker, type MontageMedia, type MontageTrack } from '../lib'
 import { PEAKS_PER_SEC, butted, fadeInGain, fadeOutGain, xfadeHalf, type MontageEngine } from './engine'
 import { BlockLayer } from './BlockLayer'
@@ -644,6 +644,17 @@ export function EditTimeline(p: Props) {
                         onClick={() => p.onArm(tr.id)}
                       />
                     )}
+                    <button
+                      className={'icon-btn mt-listen' + (tr.deaf ? ' off' : '')}
+                      title={
+                        tr.deaf
+                          ? 'Escuta desarmada: o som toca, mas o Whisper não transcreve esta faixa e os blocos de instrução não ouvem (clique pra armar)'
+                          : 'Escuta armada: o Whisper transcreve esta faixa e os blocos de instrução ouvem (clique pra desarmar)'
+                      }
+                      onClick={() => setTrack(tr.id, { deaf: tr.deaf ? undefined : true })}
+                    >
+                      {tr.deaf ? <EarOff size={13} /> : <Ear size={13} />}
+                    </button>
                     <button className="icon-btn" title={tr.muted ? 'Ligar faixa' : 'Silenciar/esconder faixa'} onClick={() => setTrack(tr.id, { muted: !tr.muted })}>
                       {tr.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
                     </button>
@@ -778,6 +789,7 @@ export function EditTimeline(p: Props) {
             }}
             addLettering={() => p.onAddLetteringAt(menu.t)}
             arm={() => menu.track && p.onArm(menu.track.id)}
+            toggleListen={() => menu.track && setTrack(menu.track.id, { deaf: menu.track.deaf ? undefined : true })}
           />
         )}
         <div className="mt-snapline" ref={snapLineRef} style={{ display: 'none' }} />
@@ -810,6 +822,7 @@ function TrackMenu(p: {
   addBlock: () => void
   addLettering: () => void
   arm: () => void
+  toggleListen: () => void
 }) {
   const { menu } = p
   const act = (fn: () => void) => () => {
@@ -844,6 +857,9 @@ function TrackMenu(p: {
         </>
       ) : (
         menu.track && <button onClick={act(p.arm)}>{p.armed ? 'Desarmar a gravação' : 'Gravar nesta faixa (armar)'}</button>
+      )}
+      {menu.track && (
+        <button onClick={act(p.toggleListen)}>{menu.track.deaf ? 'Armar a escuta (transcrever esta faixa)' : 'Desarmar a escuta (não transcrever esta faixa)'}</button>
       )}
       <div className="ctx-sep" />
       <button onClick={act(p.addTrack)}>{video ? 'Nova faixa de vídeo' : 'Nova faixa de áudio'}</button>
