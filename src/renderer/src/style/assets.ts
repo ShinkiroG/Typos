@@ -65,7 +65,7 @@ export function studySection(folders: StyleFolder[], items: StudyItem[]) {
   return [
     '## Pastas de assets do estilo (estude pra escrever o guia de assets)',
     'O autor ligou estas pastas do PC a este estilo; elas valem pra todo vídeo dele. "Visual do estilo" o motion pode usar sempre (logo, pngtuber, molduras…). "Material bruto", "SFX" e "Música" entram quando um bloco de motion liga "Usar o Material bruto"; os sons viram cortes de áudio mixados com a narração.',
-    ...folders.map((x) => `- ${roleLabel(x.role)}/${folderName(x.path)}${x.star ? ' ⭐ favorita' : ''}${x.note?.trim() ? `: ${x.note.trim()}` : ''}`),
+    ...folders.map((x) => `- ${roleLabel(x.role)}/${folderName(x.path)}${x.star ? ' ⭐ favorita (prefira o que tem nela antes das outras pastas)' : ''}${x.note?.trim() ? `: ${x.note.trim()}` : ''}`),
     '',
     'Arquivos. Nos sons, a análise do Typos: começa (onde fica audível), impacto (o momento mais forte, contado do começo do arquivo), some (onde praticamente acaba), volume percebido em LUFS e a energia de 0 a 9 ao longo do arquivo.',
     ...items.map((x) => `- ${x.rel} (${kindText(x)})`),
@@ -101,4 +101,22 @@ export function studyStale(f: Format) {
     .map((x) => `${x.role}|${x.path}`)
     .sort()
   return now.join('\n') !== [...g.folders].sort().join('\n')
+}
+
+/**
+ * A memória dos assets em markdown, gravada com o Typos (não no projeto): o guia que o Claude escreveu
+ * e o catálogo do que foi estudado em cada pasta, com a análise de cada som.
+ */
+export function memoryMd(f: Format, folders: StyleFolder[], items: StudyItem[], guide: string, at = new Date()) {
+  const L = [`# Assets do estilo "${f.name}"`, '', `Estudado em ${at.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}. Vale pra todo vídeo com este estilo.`, '']
+  L.push('## Pastas', ...folders.map((x) => `- ${roleLabel(x.role)}${x.star ? ' ⭐' : ''}: ${x.path}${x.note?.trim() ? ` (${x.note.trim()})` : ''}`), '')
+  L.push('## Guia de uso', guide.trim(), '')
+  L.push('## Catálogo (o que foi estudado)')
+  for (const x of folders) {
+    const prefix = `${roleLabel(x.role)}/${folderName(x.path)}/`
+    const mine = items.filter((it) => it.rel.startsWith(prefix))
+    if (!mine.length) continue
+    L.push('', `### ${prefix.slice(0, -1)}${x.star ? ' ⭐' : ''}`, ...mine.map((it) => `- ${it.rel.slice(prefix.length)} (${kindText(it)})`))
+  }
+  return L.join('\n') + '\n'
 }

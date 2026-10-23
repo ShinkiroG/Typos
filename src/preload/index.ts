@@ -65,6 +65,9 @@ const api = {
     ipcRenderer.invoke('storage:info', keep),
   clearStorage: (what: 'drafts' | 'cache' | 'recent', keep?: string) => ipcRenderer.invoke('storage:clear', what, keep),
   openPath: (path: string) => ipcRenderer.invoke('shell:open', path),
+  /** grava a memória dos assets do estilo em <userData>/estilos/<id>/assets.md */
+  styleMemoryWrite: (id: string, md: string): Promise<string> => ipcRenderer.invoke('style:memoryWrite', id, md),
+  styleMemoryOpen: (id: string): Promise<string> => ipcRenderer.invoke('style:memoryOpen', id),
   editAction: (what: 'cut' | 'copy' | 'paste' | 'pasteAndMatchStyle') => ipcRenderer.invoke('edit:do', what),
   moveProject: (dir: string, title: string): Promise<{ dir: string } | { error: string } | null> => ipcRenderer.invoke('project:move', dir, title),
   scanAssets: (dir: string): Promise<{ copies: number; unused: number; bytes: number } | { error: string }> => ipcRenderer.invoke('assets:scan', dir),

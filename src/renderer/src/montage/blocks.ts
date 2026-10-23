@@ -509,6 +509,8 @@ export interface RawFile {
   style?: StyleFolderRole
   /** análise do som (impacto, volume, energia), quando deu pra ler */
   profile?: SoundProfile
+  /** veio de uma pasta ⭐: o Claude prefere antes dos outros */
+  star?: boolean
 }
 const MAX_RAW = 120
 /** das pastas do estilo (contam à parte, pra o bruto do projeto não tomar o lugar delas) */
@@ -554,7 +556,7 @@ export async function rawFiles(data: MontageData, format?: Format): Promise<RawF
     const list = await api.scanFolder(x.linked!).catch(() => ({ error: '' }))
     if ('error' in list) continue
     const where = chain(x.id).map((y) => y.name)
-    for (const f of list.filter((f) => wanted(x.id, f.kind)).slice(0, MAX_RAW_PER_LINK)) add({ path: f.path, rel: [...where, f.rel.replace(/\\/g, '/')].join('/'), kind: f.kind, bin: x.id })
+    for (const f of list.filter((f) => wanted(x.id, f.kind)).slice(0, MAX_RAW_PER_LINK)) add({ path: f.path, rel: [...where, f.rel.replace(/\\/g, '/')].join('/'), kind: f.kind, bin: x.id, star: !!chain(x.id).some((y) => y.star) || undefined })
   }
   const project = out.length
   const folders = styleFoldersOf(format)
@@ -569,7 +571,7 @@ export async function rawFiles(data: MontageData, format?: Format): Promise<RawF
     const folder = x.path.split(/[\\/]/).filter(Boolean).pop() ?? 'pasta'
     const room = MAX_STYLE_RAW - (out.length - project)
     for (const f of list.filter((f) => roleWants(x.role, f.kind)).slice(0, Math.min(MAX_RAW_PER_LINK, room)))
-      add({ path: f.path, rel: ['Estilo', roleLabel(x.role), folder, f.rel.replace(/\\/g, '/')].join('/'), kind: f.kind, bin, style: x.role }, true)
+      add({ path: f.path, rel: ['Estilo', roleLabel(x.role), folder, f.rel.replace(/\\/g, '/')].join('/'), kind: f.kind, bin, style: x.role, star: x.star || undefined }, true)
   }
   return out
 }
@@ -818,14 +820,15 @@ export function blockPrompt(o: {
       fromStyle ? '## Material bruto do projeto e pastas do estilo (o autor pediu pra você usar)' : '## Material bruto do projeto (o autor pediu pra você usar)',
       'São os arquivos deste vídeo: gravações, prints, imagens, vídeos e sons. Use o que combinar com a fala e as instruções deste trecho, de verdade (o arquivo, não um desenho inventado no lugar), sem forçar: se nada combinar, não use. Eles estão na mesma pasta do HTML com o nome abaixo. Imagem: <img src="nome">. Vídeo: <video src="nome" muted playsinline></video> (o Typos sincroniza o tempo; não use autoplay nem mexa em currentTime).',
       fromStyle ? 'Os que começam com "Estilo/" são a biblioteca fixa deste estilo (trilhas, efeitos, materiais que o autor usa em todo vídeo dele), não só deste roteiro.' : '',
-      ...(notes.length ? ['Pastas do estilo:', ...notes.map((x) => `- Estilo/${roleLabel(x.role)}/${x.path.split(/[\\/]/).filter(Boolean).pop()}${x.star ? ' ⭐ favorita (use com mais frequência)' : ''}${x.note?.trim() ? ': ' + x.note.trim() : ''}`)] : []),
+      ...(notes.length ? ['Pastas do estilo:', ...notes.map((x) => `- Estilo/${roleLabel(x.role)}/${x.path.split(/[\\/]/).filter(Boolean).pop()}${x.star ? ' ⭐ favorita (procure aqui primeiro: prefira o que tem nela antes das outras pastas)' : ''}${x.note?.trim() ? ': ' + x.note.trim() : ''}`)] : []),
       rawSounds
         ? 'Som (efeito, trilha, ou o som de um vídeo da lista): NÃO ponha <audio> no HTML (ele não é gravado). Liste na tag <sons> do fim da resposta, com o segundo em que entra; o Typos mixa com a narração e, quando o autor aprovar, vira um corte de áudio na timeline. Som é tempero: poucos, nos momentos certos (uma entrada, um impacto, um número), com volume que não cubra a fala.'
         : '',
       raw.list.some((f) => f.profile)
         ? 'Nos sons analisados, "impacto" é quanto tempo depois do começo do arquivo vem o momento mais forte, e a energia vai de 0 (silêncio) a 9 (o mais alto do arquivo). O "em" da tag <sons> é onde o ARQUIVO começa: pra o impacto cair no segundo X do bloco (o número aparecendo, o corte, a batida), use em = X − impacto. Trilha com começo calmo pode entrar antes e crescer junto com o motion.'
         : '',
-      ...raw.list.map((f) => `- ${f.name} ← ${f.rel} (${kind(f)})`),
+      raw.list.some((f) => f.star) ? 'Os marcados com ⭐ vêm de pastas favoritas do autor: procure neles primeiro e prefira-os antes dos outros quando combinarem.' : '',
+      ...raw.list.map((f) => `- ${f.star ? '⭐ ' : ''}${f.name} ← ${f.rel} (${kind(f)})`),
       raw.shown ? `As imagens ${raw.first} a ${raw.first + raw.shown - 1} são as ${raw.shown} primeiras imagens desta lista, na mesma ordem.` : '',
       raw.sounds?.length ? 'Sons que você já tinha posto na prévia atual (repita na tag <sons> os que continuam): ' + JSON.stringify(raw.sounds.map((x) => ({ arquivo: x.name, em: x.at, volume: x.vol }))) : '',
       ''
