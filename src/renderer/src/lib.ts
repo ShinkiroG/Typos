@@ -178,7 +178,7 @@ export interface StyleFolder {
   /** a pasta do PC (só a referência: nada é copiado) */
   path: string
   role: StyleFolderRole
-  /** favorita: o Claude usa com mais frequência (e vem primeiro na lista) */
+  /** favorita: o Claude procura aqui primeiro, antes das outras pastas (e ela vem primeiro na lista) */
   star?: boolean
   /** o que tem nela ou quando usar (vai pro Claude) */
   note?: string
@@ -694,7 +694,7 @@ export interface MontageBin {
   parent?: string
   /** cor da categoria */
   color?: string
-  /** favorita: o Claude usa com mais frequência */
+  /** favorita: o Claude procura aqui primeiro, antes das outras pastas */
   star?: boolean
   /** pasta do PC vinculada: mostra o que tem lá, ao vivo (sem copiar) */
   linked?: string

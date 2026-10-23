@@ -648,6 +648,19 @@ ipcMain.handle('storage:clear', async (_e, what: 'drafts' | 'cache' | 'recent', 
 
 ipcMain.handle('shell:open', (_e, path: string) => shell.openPath(path))
 
+// ---------- memória dos assets do estilo (fica com o Typos, vale pra todo vídeo) ----------
+const styleMemoryFile = (id: string) => join(userDir(), 'estilos', String(id).replace(/[^\w-]/g, '_').slice(0, 64) || 'estilo', 'assets.md')
+ipcMain.handle('style:memoryWrite', async (_e, id: string, md: string) => {
+  const file = styleMemoryFile(id)
+  await fs.mkdir(dirname(file), { recursive: true })
+  await fs.writeFile(file, String(md), 'utf8')
+  return file
+})
+ipcMain.handle('style:memoryOpen', (_e, id: string) => {
+  const file = styleMemoryFile(id)
+  return existsSync(file) ? shell.openPath(file) : 'a memória deste estilo ainda não foi gravada'
+})
+
 // ---------- anexos (copiados pra <projeto>/assets) ----------
 ipcMain.handle('asset:pick', async (_e, dir: string) => {
   const r = await dialog.showOpenDialog(win!, {

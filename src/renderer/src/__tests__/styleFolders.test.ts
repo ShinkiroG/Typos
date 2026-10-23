@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { api, profileText, styleFoldersOf, type Format, type MontageData } from '../lib'
 import { blockPrompt, newBlock, rawFiles, styleAssets } from '../montage/blocks'
-import { assetsOnlyPrompt, guessRole, parseAssets, studySection, studyStale } from '../style/assets'
+import { assetsOnlyPrompt, guessRole, memoryMd, parseAssets, studySection, studyStale } from '../style/assets'
 
 const data: MontageData = {
   bins: [
@@ -68,7 +68,7 @@ describe('pastas do estilo', () => {
     const fm = { ...format, motion: { refs: [], assetsGuide: { at: '', provider: 'x', guide: 'WHOOSH NAS TRANSIÇÕES', folders: [] } } }
     const p = blockPrompt({ block: newBlock('V1', 0, 4), heard: [], hasAudio: false, scriptHere: [], falas: '', files: [], size: { w: 480, h: 270 }, format: fm, raw: { list, first: 1, shown: 0 } })
     expect(p).toContain('pastas do estilo')
-    expect(p).toContain('Estilo/SFX/Whooshes ⭐ favorita (use com mais frequência): transições rápidas')
+    expect(p).toContain('Estilo/SFX/Whooshes ⭐ favorita (procure aqui primeiro: prefira o que tem nela antes das outras pastas): transições rápidas')
     expect(p).toContain('impacto em 0.31 s')
     expect(p).toContain('em = X − impacto')
     expect(p).toContain('WHOOSH NAS TRANSIÇÕES')
@@ -90,10 +90,17 @@ describe('estudo dos assets', () => {
   it('pede o guia com as pastas e lê a resposta', () => {
     const sec = studySection(format.styleFolders!, [{ path: '/trilhas/tema.mp3', rel: 'Música/trilhas/tema.mp3', kind: 'audio', role: 'music' }])
     const p = assetsOnlyPrompt(format, sec, [])
-    expect(p).toContain('- SFX/Whooshes ⭐ favorita: transições rápidas')
+    expect(p).toContain('- SFX/Whooshes ⭐ favorita (prefira o que tem nela antes das outras pastas): transições rápidas')
     expect(p).toContain('- Música/trilhas/tema.mp3 (música)')
     expect(p).toContain('<assets>')
     expect(parseAssets('x<assets>\n# Guia\n</assets>')).toBe('# Guia')
+  })
+  it('a memória em .md traz as pastas, o guia e o catálogo de cada pasta', () => {
+    const md = memoryMd(format, format.styleFolders!, [{ path: '/trilhas/tema.mp3', rel: 'Música/trilhas/tema.mp3', kind: 'audio', role: 'music' }], '# Guia\nuse o tema na abertura')
+    expect(md).toContain('use o tema na abertura')
+    expect(md).toContain('### Música/trilhas')
+    expect(md).toContain('- tema.mp3 (música)')
+    expect(md).toMatch(/SFX ⭐: \/sons\/Whooshes/)
   })
   it('avisa quando as pastas mudaram desde o estudo', () => {
     const folders = format.styleFolders!.map((x) => `${x.role}|${x.path}`).reverse()

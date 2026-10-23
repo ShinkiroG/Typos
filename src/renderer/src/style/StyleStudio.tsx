@@ -26,8 +26,9 @@ import {
   Star
 } from 'lucide-react'
 import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type MotionMemoryItem, type FontCase, DEFAULT_FONT_CASES, refWeights, styleFoldersOf, STYLE_FOLDER_ROLES, type StyleFolder, type StyleFolderRole } from '../lib'
-import { ASSETS_ANSWER, assetsOnlyPrompt, collectStudy, folderName, guessRole, MAX_STUDY_IMAGES, parseAssets, studyImages, studySection, studyStale } from './assets'
+import { ASSETS_ANSWER, assetsOnlyPrompt, collectStudy, folderName, guessRole, MAX_STUDY_IMAGES, memoryMd, parseAssets, studyImages, studySection, studyStale } from './assets'
 import { FontPicker } from './FontPicker'
+import { SfxFinder, type SfxLib } from '../components/SfxFinder'
 import { YoutubeDownload } from '../components/YoutubeDownload'
 import { askText } from '../components/AskDialog'
 
@@ -230,6 +231,14 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
     setFolders([...styleFoldersOf(fRef.current), { path: p, role: 'error' in list ? 'visual' : guessRole(list) }])
   }
 
+  const [sfxOpen, setSfxOpen] = useState(false)
+  /** as bibliotecas escolhidas viram pastas SFX favoritas do estilo */
+  const linkSfx = (libs: SfxLib[]) => {
+    const cur = styleFoldersOf(fRef.current)
+    setFolders([...cur, ...libs.filter((l) => !cur.some((x) => x.path === l.path)).map((l) => ({ path: l.path, role: 'sfx' as const, star: true, note: l.program || undefined }))])
+    setSfxOpen(false)
+  }
+
   const save = (next: Format = f) => {
     onChange(saved ? formats.map((x) => (x.id === editId ? clean(next) : x)) : [...formats, clean(next)])
     setDrafts((d) => {
@@ -360,8 +369,10 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
   const studyInput = async (room: number) => {
     const items = await collectStudy(f, setBusy)
     const imgs = studyImages(items).slice(0, Math.max(0, room))
-    return { section: studySection(folders, items), images: imgs.map((x) => ({ path: x.path, desc: `asset do estilo "${x.rel}"` })) }
+    return { items, section: studySection(folders, items), images: imgs.map((x) => ({ path: x.path, desc: `asset do estilo "${x.rel}"` })) }
   }
+  /** grava a memória dos assets com o Typos (AppData), pra valer em todo vídeo novo */
+  const writeMemory = (items: Awaited<ReturnType<typeof collectStudy>>, guide: string) => api.styleMemoryWrite(f.id, memoryMd(f, folders, items, guide)).catch(() => null)
   const assetsGuideOf = (guide: string, provider: string) => ({ at: new Date().toISOString(), provider, guide, folders: folders.map((x) => `${x.role}|${x.path}`) })
   const train = async () => {
     setError('')
@@ -389,6 +400,7 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
       }
       // treino custa tempo: já salva
       save(next)
+      if (study && assetsGuide) await writeMemory(study.items, assetsGuide)
       setReplay((n) => n + 1)
     } catch (err) {
       setError((err as Error).message)
@@ -412,6 +424,7 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
       if (!guide) throw new Error('A IA respondeu fora do formato. Tente de novo.')
       // estudo custa tempo: já salva
       save({ ...fRef.current, motion: { ...(fRef.current.motion ?? m), assetsGuide: assetsGuideOf(guide, r.provider) } })
+      await writeMemory(study.items, guide)
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -575,7 +588,7 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
             <div className="st-sfolders">
               {folders.map((x) => (
                 <div key={x.path} className="st-sfolder">
-                  <button className={'icon-btn' + (x.star ? ' on' : '')} title={x.star ? 'Favorita: o Claude usa com mais frequência' : 'Marcar como favorita'} onClick={() => patchFolder(x.path, { star: !x.star })}>
+                  <button className={'icon-btn' + (x.star ? ' on' : '')} title={x.star ? 'Favorita: o Claude procura aqui primeiro, antes das outras pastas' : 'Marcar como favorita (o Claude procura aqui primeiro)'} onClick={() => patchFolder(x.path, { star: !x.star })}>
                     <Star size={13} fill={x.star ? 'currentColor' : 'none'} />
                   </button>
                   <span className="st-sfolder-name" title={x.path}>
@@ -598,6 +611,9 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
                 <button className="btn small" onClick={addFolder}>
                   <FolderPlus size={12} /> Pasta
                 </button>
+                <button className="btn small" disabled={sfxOpen} onClick={() => setSfxOpen(true)} title="O Claude procura no PC as bibliotecas de som (Mister Horse, Motion Bro e outras) e liga aqui como SFX favoritas">
+                  <Sparkles size={12} /> Procurar bibliotecas de som
+                </button>
                 {folders.length > 0 && (
                   <button
                     className="btn small"
@@ -610,6 +626,7 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
                 )}
                 {m.assetsGuide && studyStale(f) && <span className="st-warn">as pastas mudaram desde o último estudo</span>}
               </div>
+              {sfxOpen && <SfxFinder linked={folders.map((x) => x.path)} onLink={linkSfx} onClose={() => setSfxOpen(false)} />}
             </div>
             <small className="muted">
               Visual do estilo (logo, pngtuber, molduras) o motion pode usar sempre. Material bruto, SFX e Música entram junto do Material bruto do projeto quando o bloco liga “Usar o Material bruto”.
@@ -971,6 +988,16 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
               <span>
                 Guia dos assets · {new Date(m.assetsGuide.at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
               </span>
+              <button
+                className="icon-btn"
+                title="Abrir a memória dos assets (.md guardado com o Typos, com o guia e o catálogo de cada pasta)"
+                onClick={async () => {
+                  const err = await api.styleMemoryOpen(f.id)
+                  if (err) setError(err === 'a memória deste estilo ainda não foi gravada' ? 'A memória em .md sai no próximo "Estudar os assets".' : err)
+                }}
+              >
+                <FolderOpen size={13} />
+              </button>
               <button className="icon-btn" title="Copiar guia dos assets (markdown)" onClick={() => navigator.clipboard.writeText(m.assetsGuide!.guide)}>
                 <Copy size={13} />
               </button>

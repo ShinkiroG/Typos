@@ -54,6 +54,7 @@ import { blocksMoved, fitBlocksToLetterings, silenceStart, timelineSilences } fr
 import { Recorder } from '../audio'
 import { askText } from '../components/AskDialog'
 import { YoutubeDownload } from '../components/YoutubeDownload'
+import { SfxFinder, type SfxLib } from '../components/SfxFinder'
 import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H, findGap, mediaLen, splitClip, trackHeight, type GapSel, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
 import { CLIP_ENC, blockDur, blockFromClip, blockLabel, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale, rangeTweak, soundsToTimeline } from './blocks'
@@ -1533,31 +1534,14 @@ export function Montage({
   const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   const [areaMenu, setAreaMenu] = useState<{ x: number; y: number } | null>(null)
   // ---------- o Claude procura bibliotecas de som no PC ----------
-  type SfxLib = { path: string; name: string; program: string; why: string; files: number }
-  const [sfxFind, setSfxFind] = useState<{ busy: boolean; libs?: SfxLib[]; pick?: Set<string>; error?: string; t0?: number } | null>(null)
-  const [sfxElapsed, setSfxElapsed] = useState(0)
-  useEffect(() => {
-    if (!sfxFind?.busy) return
-    const t = setInterval(() => setSfxElapsed(Math.round((Date.now() - (sfxFind.t0 ?? Date.now())) / 1000)), 1000)
-    return () => clearInterval(t)
-  }, [sfxFind?.busy])
-  const findSfx = async () => {
-    setSfxFind({ busy: true, t0: Date.now() })
-    const r = await api.findSfxLibraries()
-    if ('error' in r) return setSfxFind({ busy: false, error: r.error })
-    const linked = new Set(dataRef.current.bins.map((b) => b.linked).filter(Boolean))
-    const libs = r.libs.filter((l) => !linked.has(l.path))
-    setSfxFind({ busy: false, libs, pick: new Set(libs.map((l) => l.path)) })
-  }
+  const [sfxOpen, setSfxOpen] = useState(false)
   /** as escolhidas viram pastas do PC favoritas dentro da categoria SFX (referências essenciais de som) */
-  const linkSfx = () => {
+  const linkSfx = (libs: SfxLib[]) => {
     const sfxRoot = dataRef.current.bins.find((b) => b.role === 'sfx' && !b.parent)
-    if (!sfxRoot || !sfxFind?.libs) return
-    const add: MontageBin[] = sfxFind.libs
-      .filter((l) => sfxFind.pick?.has(l.path))
-      .map((l) => ({ id: uid(), name: l.program && !l.name.includes(l.program) ? `${l.name} · ${l.program}` : l.name, role: 'custom', parent: sfxRoot.id, linked: l.path, star: true }))
+    if (!sfxRoot) return
+    const add: MontageBin[] = libs.map((l) => ({ id: uid(), name: l.program && !l.name.includes(l.program) ? `${l.name} · ${l.program}` : l.name, role: 'custom', parent: sfxRoot.id, linked: l.path, star: true }))
     change({ ...dataRef.current, bins: [...dataRef.current.bins, ...add] })
-    setSfxFind(null)
+    setSfxOpen(false)
   }
   const [catsOpen, setCatsOpen] = useState(false)
   useEffect(() => {
@@ -1704,8 +1688,8 @@ export function Montage({
             <FolderPlus size={13} /> Nova pasta
           </button>
           {curRoot?.role === 'sfx' && (
-            <button className="btn small primary" disabled={!!sfxFind?.busy} onClick={findSfx} title="O Claude procura no PC as bibliotecas de som (Mister Horse, Motion Bro e outras) e vincula aqui como favoritas">
-              {sfxFind?.busy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />} Procurar bibliotecas de som
+            <button className="btn small primary" disabled={sfxOpen} onClick={() => setSfxOpen(true)} title="O Claude procura no PC as bibliotecas de som (Mister Horse, Motion Bro e outras) e vincula aqui como favoritas">
+              <Sparkles size={13} /> Procurar bibliotecas de som
             </button>
           )}
           {curRoot?.role !== 'narration' && (
@@ -1753,57 +1737,8 @@ export function Montage({
             </button>
           )}
         </div>
-        {sfxFind && curRoot?.role === 'sfx' && (
-          <div className="mt-sfxfind">
-            {sfxFind.busy ? (
-              <span className="small">
-                <Loader2 size={12} className="spin" /> O Claude está procurando bibliotecas de som no seu PC… {sfxElapsed}s (só lendo pastas, não muda nada)
-              </span>
-            ) : sfxFind.error ? (
-              <span className="small error">{sfxFind.error}</span>
-            ) : !sfxFind.libs?.length ? (
-              <span className="small muted">Nenhuma biblioteca nova achada (as que já estão vinculadas não aparecem).</span>
-            ) : (
-              <>
-                <span className="small">
-                  <b>{sfxFind.libs.length}</b> biblioteca(s) achada(s). Marque as que vão virar referência de som:
-                </span>
-                <div className="mt-sfxlist">
-                  {sfxFind.libs.map((l) => (
-                    <label key={l.path} className="mt-sfxlib" title={l.path}>
-                      <input
-                        type="checkbox"
-                        checked={!!sfxFind.pick?.has(l.path)}
-                        // inverte a partir do estado (não depende do evento)
-                        onChange={() =>
-                          setSfxFind((f) => {
-                            if (!f) return f
-                            const pick = new Set(f.pick)
-                            if (pick.has(l.path)) pick.delete(l.path)
-                            else pick.add(l.path)
-                            return { ...f, pick }
-                          })
-                        }
-                      />
-                      <span>
-                        <b>{l.name}</b> <i>{l.program}</i> · {l.files >= 5000 ? '5000+' : l.files} sons
-                        <small>{l.why}</small>
-                        <small className="mt-sfxpath">{l.path}</small>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-                <div className="mt-sfxbtns">
-                  <button className="btn small primary" disabled={!sfxFind.pick?.size} onClick={linkSfx}>
-                    <Star size={12} /> Vincular {sfxFind.pick?.size ?? 0} como favoritas
-                  </button>
-                  <button className="btn small" onClick={() => setSfxFind(null)}>
-                    Fechar
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+        {sfxOpen && curRoot?.role === 'sfx' && (
+          <SfxFinder linked={data.bins.map((b) => b.linked ?? '').filter(Boolean)} onLink={linkSfx} onClose={() => setSfxOpen(false)} />
         )}
         {ytOpen && curRoot?.role !== 'narration' && curBin && (
           <YoutubeDownload
@@ -1921,7 +1856,7 @@ export function Montage({
               <span className="mt-item-dur">{f.linked ? '' : countIn(f.id)}</span>
               <button
                 className={'mt-star' + (f.star ? ' on' : '')}
-                title={f.star ? 'Favorita: o Claude usa com mais frequência' : 'Marcar como favorita (o Claude usa com mais frequência)'}
+                title={f.star ? 'Favorita: o Claude procura aqui primeiro, antes das outras pastas' : 'Marcar como favorita (o Claude procura aqui primeiro)'}
                 onClick={(e) => {
                   e.stopPropagation()
                   toggleStar(f.id)
@@ -1936,7 +1871,7 @@ export function Montage({
               <div className="mt-pc-head">
                 <button
                   className={'mt-star' + (curBin.star ? ' on' : '')}
-                  title="Favorita: o Claude usa com mais frequência"
+                  title="Favorita: o Claude procura aqui primeiro, antes das outras pastas"
                   onClick={() => toggleStar(curBin.id)}
                 >
                   <Star size={13} />
