@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { execFileSync, spawnSync } from 'child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -51,13 +51,16 @@ describe('controle de picos', () => {
 
   describe.skipIf(!which)('com o ffmpeg de verdade', () => {
     const src = join(tmp, 'narracao.wav')
-    // fala normal (~-20 dBFS) com um grito 14 dB mais forte entre 3 e 3,5 s
-    execFileSync('ffmpeg', [
-      '-v', 'error', '-y',
-      '-f', 'lavfi', '-i', "aevalsrc='(0.14+0.56*between(t,3,3.5))*sin(2*PI*(180+120*mod(t,1))*t)*lt(mod(t,2),1.5)':d=8:s=44100",
-      '-c:a', 'pcm_s16le', src
-    ])
-    const a = s16(src)
+    let a: Int16Array
+    // fala normal (~-20 dBFS) com um grito 14 dB mais forte entre 3 e 3,5 s (no beforeAll: sem ffmpeg, nem roda)
+    beforeAll(() => {
+      execFileSync('ffmpeg', [
+        '-v', 'error', '-y',
+        '-f', 'lavfi', '-i', "aevalsrc='(0.14+0.56*between(t,3,3.5))*sin(2*PI*(180+120*mod(t,1))*t)*lt(mod(t,2),1.5)':d=8:s=44100",
+        '-c:a', 'pcm_s16le', src
+      ])
+      a = s16(src)
+    })
 
     for (const level of [1, 2, 3] as const)
       it(`intensidade ${level}: o pico desce, a fala normal fica e continua no tempo`, async () => {
