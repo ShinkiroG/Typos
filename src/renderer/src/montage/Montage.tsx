@@ -48,7 +48,7 @@ import {
   Check,
   AudioLines
 } from 'lucide-react'
-import { api, audioPath, clipDur, clipEndT, DENOISE_HINT, DENOISE_LABEL, fileUrl, RESOLUTIONS, uid, type DenoiseLevel, type Attachment, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
+import { api, audioPath, clipDur, clipEndT, DENOISE_HINT, DENOISE_LABEL, fileUrl, PEAKS_HINT, RESOLUTIONS, uid, type DenoiseLevel, type Attachment, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
 import { SILENCE_DEFAULT, silenceCut, silenceStats, suggestThreshold, type SilenceOpts } from './silence'
 import { blocksMoved, fitBlocksToLetterings, silenceStart, timelineSilences } from './letterings'
@@ -803,39 +803,45 @@ export function Montage({
     return [...new Set(clips.map((c) => c.media))].map((id) => mediaRef.current.get(id)).filter((m): m is MontageMedia => !!m?.hasAudio)
   }
   /**
-   * Liga (1 leve, 2 médio, 3 forte) ou desliga (0) a limpeza de ruído nos arquivos. Gera as cópias limpas
-   * antes de mudar o projeto, então o Ctrl+Z desfaz num passo só e o play já toca limpo.
+   * Liga (1 leve, 2 médio, 3 forte) ou desliga (0) a limpeza de ruído ou o controle de picos nos arquivos.
+   * Gera as cópias tratadas antes de mudar o projeto, então o Ctrl+Z desfaz num passo só e o play já toca tratado.
    */
-  const denoise = async (list: MontageMedia[], level: DenoiseLevel | 0) => {
+  const treat = async (list: MontageMedia[], what: 'denoise' | 'peaks', level: DenoiseLevel | 0) => {
     list = list.filter((m) => m.hasAudio)
-    if (!list.length) return setNormMsg('Nenhum corte com áudio pra limpar.')
+    if (!list.length) return setNormMsg(`Nenhum corte com áudio pra ${what === 'denoise' ? 'limpar' : 'tratar'}.`)
     const ok: MontageMedia[] = []
     const failed: string[] = []
-    if (level) {
-      engine.pause()
-      setPlaying(false)
-      try {
-        for (const [i, m] of list.entries()) {
-          setBusy({ label: `Limpando o ruído (${i + 1}/${list.length}): ${m.name}`, pct: i / list.length })
-          const r = await api.cleanAudio(m.path, level)
-          if (typeof r === 'string') ok.push(m)
-          else failed.push(`${m.name}: ${r.error}`)
+    const verb = what === 'denoise' ? 'Limpando o ruído' : 'Controlando os picos'
+    engine.pause()
+    setPlaying(false)
+    try {
+      for (const [i, m] of list.entries()) {
+        const next = { ...m, [what]: level || undefined }
+        // desligar o último tratamento volta pro original na hora; senão gera a cópia com o que fica ligado
+        if (!next.denoise && !next.peaks) {
+          ok.push(m)
+          continue
         }
-      } finally {
-        setBusy(null)
+        setBusy({ label: `${verb} (${i + 1}/${list.length}): ${m.name}`, pct: i / list.length })
+        const r = await api.cleanAudio(m.path, next.denoise ?? 0, next.peaks ?? 0)
+        if (typeof r === 'string') ok.push(m)
+        else failed.push(`${m.name}: ${r.error}`)
       }
-    } else ok.push(...list)
+    } finally {
+      setBusy(null)
+    }
     if (ok.length) {
       const ids = new Set(ok.map((m) => m.id))
-      change({ ...dataRef.current, media: dataRef.current.media.map((m) => (ids.has(m.id) ? { ...m, denoise: level || undefined } : m)) })
+      change({ ...dataRef.current, media: dataRef.current.media.map((m) => (ids.has(m.id) ? { ...m, [what]: level || undefined } : m)) })
     }
-    if (failed.length) alert('Não deu pra limpar o ruído de:\n\n' + failed.join('\n'))
+    if (failed.length) alert(`Não deu pra ${what === 'denoise' ? 'limpar o ruído' : 'controlar os picos'} de:\n\n` + failed.join('\n'))
+    const name = what === 'denoise' ? 'Ruído limpo' : 'Picos da voz controlados'
     setNormMsg(
       level
         ? ok.length
-          ? `Ruído limpo (${DENOISE_LABEL[level]}) em ${ok.length} arquivo(s) · o original fica intacto · Ctrl+Z desfaz`
+          ? `${name} (${DENOISE_LABEL[level]}) em ${ok.length} arquivo(s) · o original fica intacto · Ctrl+Z desfaz`
           : ''
-        : `Limpeza de ruído desligada em ${ok.length} arquivo(s) · volta o som original`
+        : `${what === 'denoise' ? 'Limpeza de ruído' : 'Controle de picos'} desligado em ${ok.length} arquivo(s)`
     )
   }
 
@@ -2467,7 +2473,7 @@ export function Montage({
           className="btn small"
           disabled={!!busy}
           title="Tira o ruído de fundo da narração (ventilador, ar-condicionado, chiado, zumbido) com a IA de voz, na intensidade média. Com cortes selecionados, só nos arquivos deles. Pra escolher leve/forte ou desligar: botão direito no corte → Controle de som. O arquivo original não é alterado."
-          onClick={() => denoise(narrationMedia(), 2)}
+          onClick={() => treat(narrationMedia(), 'denoise', 2)}
         >
           <AudioLines size={13} /> <span className="lbl">Limpar ruído</span>
         </button>
@@ -2709,7 +2715,7 @@ export function Montage({
           change={change}
           normLabel={normMode === 'peak' ? `pico ${normValue} dB` : `${normValue} LUFS`}
           onNormalize={(cs) => normalize(cs)}
-          onDenoise={denoise}
+          onTreat={treat}
           onClose={() => setSoundFor(null)}
         />
       )}
@@ -2897,7 +2903,7 @@ function SoundPanel({
   change,
   normLabel,
   onNormalize,
-  onDenoise,
+  onTreat,
   onClose
 }: {
   at: { x: number; y: number; ids: string[] }
@@ -2906,11 +2912,11 @@ function SoundPanel({
   change: (next: MontageData, gesture?: string) => void
   normLabel: string
   onNormalize: (clips: MontageClip[]) => void
-  onDenoise: (media: MontageMedia[], level: DenoiseLevel | 0) => Promise<void>
+  onTreat: (media: MontageMedia[], what: 'denoise' | 'peaks', level: DenoiseLevel | 0) => Promise<void>
   onClose: () => void
 }) {
   const [scope, setScope] = useState<'clips' | 'track'>('clips')
-  const [cleaning, setCleaning] = useState<DenoiseLevel | 0 | null>(null)
+  const [cleaning, setCleaning] = useState<{ what: 'denoise' | 'peaks'; level: DenoiseLevel | 0 } | null>(null)
   const gesture = useRef(uid())
   const picked = data.clips.filter((c) => at.ids.includes(c.id))
   const tracks = [...new Set(picked.map((c) => c.track))]
@@ -3005,37 +3011,45 @@ function SoundPanel({
           </button>
           {(() => {
             const files = [...new Set(targets.map((c) => c.media))].map((id) => media.get(id)).filter((x): x is MontageMedia => !!x)
-            const levels = new Set(files.map((x) => x.denoise ?? 0))
-            const cur = levels.size === 1 ? [...levels][0] : null
-            const pick = async (l: DenoiseLevel | 0) => {
-              setCleaning(l)
-              try {
-                await onDenoise(files, l)
-              } finally {
-                setCleaning(null)
+            const row = (what: 'denoise' | 'peaks', label: string, hint: Record<DenoiseLevel, string>, busyLabel: string) => {
+              const levels = new Set(files.map((x) => x[what] ?? 0))
+              const cur = levels.size === 1 ? [...levels][0] : null
+              const busyHere = cleaning?.what === what ? cleaning : null
+              const pick = async (l: DenoiseLevel | 0) => {
+                setCleaning({ what, level: l })
+                try {
+                  await onTreat(files, what, l)
+                } finally {
+                  setCleaning(null)
+                }
               }
+              return (
+                <div className="mt-sound-row">
+                  <span>
+                    {label} <b>{busyHere ? (busyHere.level ? busyLabel : '') : cur === null ? 'vários' : cur ? DENOISE_LABEL[cur] : 'desligado'}</b>
+                  </span>
+                  <div className="seg mt-sound-denoise" title={files.length > 1 ? `Vale pros ${files.length} arquivos destes cortes (o arquivo inteiro, não só o trecho)` : 'Vale pro arquivo inteiro (todos os cortes dele)'}>
+                    {([0, 1, 2, 3] as const).map((l) => (
+                      <button
+                        key={l}
+                        className={cur === l ? 'on' : ''}
+                        disabled={cleaning !== null}
+                        title={l ? hint[l] : 'Toca o som original'}
+                        onClick={() => cur !== l && pick(l)}
+                      >
+                        {busyHere?.level === l && l ? <Loader2 size={11} className="spin" /> : null}
+                        {l ? DENOISE_LABEL[l][0].toUpperCase() + DENOISE_LABEL[l].slice(1) : 'Sem'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
             }
             return (
-              <div className="mt-sound-row">
-                <span>
-                  Limpar ruído{' '}
-                  <b>{cleaning !== null ? (cleaning ? 'limpando…' : '') : cur === null ? 'vários' : cur ? DENOISE_LABEL[cur] : 'desligado'}</b>
-                </span>
-                <div className="seg mt-sound-denoise" title={files.length > 1 ? `Vale pros ${files.length} arquivos destes cortes (o arquivo inteiro, não só o trecho)` : 'Vale pro arquivo inteiro (todos os cortes dele)'}>
-                  {([0, 1, 2, 3] as const).map((l) => (
-                    <button
-                      key={l}
-                      className={cur === l ? 'on' : ''}
-                      disabled={cleaning !== null}
-                      title={l ? DENOISE_HINT[l] : 'Toca o som original'}
-                      onClick={() => cur !== l && pick(l)}
-                    >
-                      {cleaning === l && l ? <Loader2 size={11} className="spin" /> : null}
-                      {l ? DENOISE_LABEL[l][0].toUpperCase() + DENOISE_LABEL[l].slice(1) : 'Sem'}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <>
+                {row('denoise', 'Limpar ruído', DENOISE_HINT, 'limpando…')}
+                {row('peaks', 'Controlar picos', PEAKS_HINT, 'tratando…')}
+              </>
             )
           })()}
           <label className="toggle-row mt-sound-row">

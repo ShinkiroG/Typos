@@ -155,6 +155,7 @@ export function planRender(montage: MontageData, o: { from: number; to: number; 
       path: media.get(s.clip.media)!.path,
       // limpeza de ruído: o render troca pela cópia limpa (a mesma que a prévia toca)
       ...(media.get(s.clip.media)!.denoise ? { denoise: media.get(s.clip.media)!.denoise } : {}),
+      ...(media.get(s.clip.media)!.peaks ? { peaks: media.get(s.clip.media)!.peaks } : {}),
       t0: r3(s.t0),
       t1: r3(s.t1),
       src0: r3(s.src0),
