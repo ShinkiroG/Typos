@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { execFileSync, spawnSync } from 'child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -28,13 +28,17 @@ const rms = (x: Int16Array, t0: number, t1: number) => {
 
 describe.skipIf(!which)('limpeza de ruído (ffmpeg de verdade)', () => {
   const src = join(tmp, 'narracao.wav')
-  execFileSync('ffmpeg', [
-    '-v', 'error', '-y',
-    '-f', 'lavfi', '-i', "aevalsrc='0.5*sin(2*PI*(180+120*mod(t,1))*t)*lt(mod(t,2),1)':d=8:s=44100",
-    '-f', 'lavfi', '-i', 'anoisesrc=d=8:c=pink:a=0.03:r=44100',
-    '-filter_complex', '[0:a][1:a]amix=inputs=2:normalize=0', '-c:a', 'pcm_s16le', src
-  ])
-  const a = s16(src)
+  let a: Int16Array
+  // dentro do beforeAll: sem ffmpeg o describe é pulado e isto nem roda
+  beforeAll(() => {
+    execFileSync('ffmpeg', [
+      '-v', 'error', '-y',
+      '-f', 'lavfi', '-i', "aevalsrc='0.5*sin(2*PI*(180+120*mod(t,1))*t)*lt(mod(t,2),1)':d=8:s=44100",
+      '-f', 'lavfi', '-i', 'anoisesrc=d=8:c=pink:a=0.03:r=44100',
+      '-filter_complex', '[0:a][1:a]amix=inputs=2:normalize=0', '-c:a', 'pcm_s16le', src
+    ])
+    a = s16(src)
+  })
 
   for (const level of [1, 2, 3] as const)
     it(`intensidade ${level}: menos ruído, mesma duração e no tempo`, async () => {
