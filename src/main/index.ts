@@ -14,6 +14,7 @@ import { initRender } from './render'
 import { initMotionPreview } from './motionPreview'
 import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, framesAt, initDownloads, findFfmpeg, findYtDlp, type FrameWeights } from './media'
 import { initWhisper } from './whisper'
+import { initDenoise } from './denoise'
 import { initHistory, beforeSave, snapshotNow, projectId, adoptDir, onOpen } from './history'
 import { relocatePaths, validId } from './historyCore'
 import { initRelink } from './relink'
@@ -297,6 +298,7 @@ initSfxFinder()
 initRender()
 initMotionPreview()
 initMedia()
+initDenoise()
 initDownloads()
 initWhisper()
 initHistory({ newDraftDir })

@@ -1860,6 +1860,16 @@
 .mt-sound-wide {
   justify-content: center;
 }
+.mt-sound-denoise button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.mt-sound-denoise button:disabled {
+  cursor: default;
+}
 .mt-sound-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

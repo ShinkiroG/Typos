@@ -59,6 +59,10 @@ export function describeChange(prev: MontageData, next: MontageData): string {
     const b = next.blocks?.length ?? 0
     return b > a ? 'Novo bloco de motion' : b < a ? 'Apagou bloco de motion' : 'Bloco de motion'
   }
+  if (prev.media.some((m, i) => (m.denoise ?? 0) !== (next.media[i]?.denoise ?? 0))) {
+    const on = next.media.some((m, i) => m.denoise && m.denoise !== prev.media[i]?.denoise)
+    return on ? 'Limpou o ruído' : 'Desligou a limpeza de ruído'
+  }
   if (JSON.stringify(prev.bins) !== JSON.stringify(next.bins)) return 'Pastas de mídia'
   if (prev.norm !== next.norm) return 'Alvo do volume'
   if (prev.spliceDefault !== next.spliceDefault) return 'Duração do crossfade'

@@ -42,6 +42,8 @@ export interface VLayer {
 /** trecho de áudio: tempos na timeline e o envelope de volume (s desde t0, ganho linear) */
 export interface ALayer {
   path: string
+  /** limpeza de ruído: o render troca o path pela cópia limpa antes de montar o comando */
+  denoise?: 1 | 2 | 3
   t0: number
   t1: number
   src0: number

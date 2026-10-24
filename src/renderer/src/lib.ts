@@ -718,6 +718,19 @@ export interface MontageMedia {
   motionBlock?: InstructionBlock
   /** qualidade com que o clipe de motion foi gravado (ver CLIP_ENC); sem isso, gravado antes da v3 */
   motionEnc?: number
+  /** limpeza de ruído do áudio (1 leve, 2 médio, 3 forte): a prévia e o render tocam uma cópia limpa */
+  denoise?: DenoiseLevel
+}
+export type DenoiseLevel = 1 | 2 | 3
+export const DENOISE_LABEL: Record<DenoiseLevel, string> = { 1: 'leve', 2: 'médio', 3: 'forte' }
+export const DENOISE_HINT: Record<DenoiseLevel, string> = {
+  1: 'Leve: tira chiado e zumbido sem mexer na voz',
+  2: 'Médio: IA de voz (RNNoise), tira ventilador, ar-condicionado, rua e chiado',
+  3: 'Forte: IA de voz + redução extra, pra gravação bem ruidosa (a voz pode ficar mais seca)'
+}
+/** o áudio que toca de uma mídia: a cópia limpa (se a limpeza estiver ligada) ou o original */
+export async function audioPath(m: Pick<MontageMedia, 'path' | 'denoise'>): Promise<string | { error: string }> {
+  return m.denoise ? api.cleanAudio(m.path, m.denoise) : m.path
 }
 export interface MontageTrack {
   id: string

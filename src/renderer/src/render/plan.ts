@@ -153,6 +153,8 @@ export function planRender(montage: MontageData, o: { from: number; to: number; 
     .filter((s) => media.get(s.clip.media)?.hasAudio && !s.clip.audioOff)
     .map((s) => ({
       path: media.get(s.clip.media)!.path,
+      // limpeza de ruído: o render troca pela cópia limpa (a mesma que a prévia toca)
+      ...(media.get(s.clip.media)!.denoise ? { denoise: media.get(s.clip.media)!.denoise } : {}),
       t0: r3(s.t0),
       t1: r3(s.t1),
       src0: r3(s.src0),
