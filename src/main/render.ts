@@ -6,6 +6,7 @@ import { createHash } from 'crypto'
 import { findFfmpeg, probe } from './media'
 import { concatList, finalArgs, partArgs, partFrames, ENCODE_V, type ALayer, type VLayer } from './compose'
 import { htmlToVideo } from './motionPreview'
+import { cleanAudio } from './denoise'
 
 /**
  * Workspace Render: o Typos compila a timeline de montagem aqui no PC com o ffmpeg (sem IA):
@@ -263,6 +264,19 @@ async function start(sender: WebContents, job: RenderJob) {
     }
   }
 
+  // ---------- limpeza de ruído (as cópias limpas, que ficam no cache, são feitas uma vez) ----------
+  const cleaned = new Map<string, string>()
+  const toClean = [...new Map(pending.flatMap((p) => p.audio).filter((a) => a.denoise).map((a) => [`${a.denoise}|${a.path}`, a])).values()]
+  for (const [i, a] of toClean.entries()) {
+    if (cancelled) throw await stop('Cancelado.')
+    send({ kind: 'info', text: `Limpando o ruído de ${basename(a.path)} (${i + 1} de ${toClean.length})…` })
+    progress('partes')
+    const r = await cleanAudio(a.path, a.denoise!)
+    if (typeof r !== 'string') throw await stop(`Não deu pra limpar o ruído de ${basename(a.path)}: ${r.error}.`)
+    cleaned.set(`${a.denoise}|${a.path}`, r)
+  }
+  const audioOf = (list: ALayer[]) => list.map((a) => (a.denoise ? { ...a, path: cleaned.get(`${a.denoise}|${a.path}`) ?? a.path } : a))
+
   // ---------- partes ----------
   for (const p of pending) {
     if (cancelled) throw await stop('Cancelado.')
@@ -283,7 +297,7 @@ async function start(sender: WebContents, job: RenderJob) {
       height: job.height,
       fps: job.fps,
       video: [...p.video, ...lets],
-      audio: p.audio,
+      audio: audioOf(p.audio),
       fit: job.fit,
       outVideo: join(out, st.file),
       outWav: join(out, st.file.replace(/\.mp4$/i, '.wav'))

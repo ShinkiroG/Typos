@@ -38,9 +38,9 @@ export async function findFfmpeg(force = false) {
   return (found = { ffmpeg, ffprobe: existsSync(probe) ? probe : null })
 }
 
-export function run(file: string, args: string[], opts: { onErr?: (line: string) => void; timeoutMs?: number; signal?: AbortSignal } = {}) {
+export function run(file: string, args: string[], opts: { onErr?: (line: string) => void; timeoutMs?: number; signal?: AbortSignal; cwd?: string } = {}) {
   return new Promise<{ code: number; out: string; err: string }>((resolve) => {
-    const p = spawn(file, args, { windowsHide: true })
+    const p = spawn(file, args, { windowsHide: true, cwd: opts.cwd })
     opts.signal?.addEventListener('abort', () => p.kill(), { once: true })
     let out = ''
     let err = ''

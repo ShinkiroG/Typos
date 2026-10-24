@@ -1,5 +1,5 @@
 import { LiveAudio } from '../audio'
-import { api, clipEndT, fileUrl, type FadeCurve, type MontageClip, type MontageData, type MontageMedia } from '../lib'
+import { api, audioPath, clipEndT, fileUrl, type FadeCurve, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 
 export const PEAKS_PER_SEC = 100
 
@@ -131,6 +131,8 @@ export class MontageEngine {
   })
   private loading = new Map<string, Promise<LoadedAudio | null>>()
   private ready = new Map<string, LoadedAudio>()
+  /** a versão da prévia que cada mídia quer agora (arquivo + limpeza) */
+  private want = new Map<string, string>()
   private nodes: { src: AudioBufferSourceNode; gain: GainNode }[] = []
   private startedAt = 0
   private startPos = 0
@@ -144,23 +146,34 @@ export class MontageEngine {
     return this.ready.get(mediaId)
   }
 
+  /** carrega a prévia; com a limpeza de ruído ligada, a da cópia limpa (trocar a limpeza recarrega) */
   load(m: MontageMedia): Promise<LoadedAudio | null> {
     if (!m.hasAudio) return Promise.resolve(null)
-    let p = this.loading.get(m.id)
+    const key = `${m.id}|${m.path}|${m.denoise ?? 0}`
+    let p = this.loading.get(key)
     if (!p) {
       p = (async () => {
-        const proxy = await api.proxyAudio(m.path)
+        const src = await audioPath(m)
+        if (typeof src !== 'string') throw new Error(src.error)
+        const proxy = await api.proxyAudio(src)
         if (typeof proxy !== 'string') throw new Error(proxy.error)
         const res = await fetch(fileUrl(proxy))
         const buffer = await this.audio.get().decodeAudioData(await res.arrayBuffer())
-        const loaded = { buffer, peaks: computePeaks(buffer) }
-        this.ready.set(m.id, loaded)
-        this.onLoaded?.()
-        return loaded
+        return { buffer, peaks: computePeaks(buffer) }
       })()
-      this.loading.set(m.id, p)
-      p.catch(() => this.loading.delete(m.id))
+      this.loading.set(key, p)
+      p.catch(() => this.loading.delete(key))
     }
+    this.want.set(m.id, key)
+    // só vale se ninguém trocou a limpeza enquanto carregava
+    p.then(
+      (l) => {
+        if (!l || this.want.get(m.id) !== key || this.ready.get(m.id) === l) return
+        this.ready.set(m.id, l)
+        this.onLoaded?.()
+      },
+      () => null
+    )
     return p
   }
 
