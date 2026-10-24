@@ -63,6 +63,10 @@ export function describeChange(prev: MontageData, next: MontageData): string {
     const on = next.media.some((m, i) => m.denoise && m.denoise !== prev.media[i]?.denoise)
     return on ? 'Limpou o ruído' : 'Desligou a limpeza de ruído'
   }
+  if (prev.media.some((m, i) => (m.peaks ?? 0) !== (next.media[i]?.peaks ?? 0))) {
+    const on = next.media.some((m, i) => m.peaks && m.peaks !== prev.media[i]?.peaks)
+    return on ? 'Controlou os picos da voz' : 'Desligou o controle de picos'
+  }
   if (JSON.stringify(prev.bins) !== JSON.stringify(next.bins)) return 'Pastas de mídia'
   if (prev.norm !== next.norm) return 'Alvo do volume'
   if (prev.spliceDefault !== next.spliceDefault) return 'Duração do crossfade'

@@ -146,10 +146,10 @@ export class MontageEngine {
     return this.ready.get(mediaId)
   }
 
-  /** carrega a prévia; com a limpeza de ruído ligada, a da cópia limpa (trocar a limpeza recarrega) */
+  /** carrega a prévia; com a limpeza de ruído ou os picos ligados, a da cópia tratada (trocar recarrega) */
   load(m: MontageMedia): Promise<LoadedAudio | null> {
     if (!m.hasAudio) return Promise.resolve(null)
-    const key = `${m.id}|${m.path}|${m.denoise ?? 0}`
+    const key = `${m.id}|${m.path}|${m.denoise ?? 0}|${m.peaks ?? 0}`
     let p = this.loading.get(key)
     if (!p) {
       p = (async () => {

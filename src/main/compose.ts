@@ -44,6 +44,8 @@ export interface ALayer {
   path: string
   /** limpeza de ruído: o render troca o path pela cópia limpa antes de montar o comando */
   denoise?: 1 | 2 | 3
+  /** controle dos picos da voz: entra na mesma cópia tratada */
+  peaks?: 1 | 2 | 3
   t0: number
   t1: number
   src0: number

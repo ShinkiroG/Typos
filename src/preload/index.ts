@@ -163,8 +163,9 @@ const api = {
   ): Promise<{ duration: number; hasVideo: boolean; hasAudio: boolean; width?: number; height?: number; fps?: number } | { error: string }> =>
     ipcRenderer.invoke('media:probe', path),
   proxyAudio: (path: string): Promise<string | { error: string }> => ipcRenderer.invoke('media:proxy', path),
-  /** cópia do áudio com o ruído limpo (1 leve, 2 médio, 3 forte); gera na primeira vez */
-  cleanAudio: (path: string, level: 1 | 2 | 3): Promise<string | { error: string }> => ipcRenderer.invoke('media:clean', path, level),
+  /** cópia do áudio tratada: ruído limpo e/ou picos controlados (0 desligado, 1 leve, 2 médio, 3 forte); gera na primeira vez */
+  cleanAudio: (path: string, level: 0 | 1 | 2 | 3, peaks: 0 | 1 | 2 | 3 = 0): Promise<string | { error: string }> =>
+    ipcRenderer.invoke('media:clean', path, level, peaks),
   /** cópia 720p só pra prévia de vídeo pesado (4K, HEVC, ProRes…); null = o original já toca leve */
   proxyVideo: (path: string): Promise<string | null> => ipcRenderer.invoke('media:proxyVideo', path),
   /** perfil de cada som (null se não deu pra ler): impacto, começo, fim, volume e curva de energia */

@@ -720,6 +720,8 @@ export interface MontageMedia {
   motionEnc?: number
   /** limpeza de ruído do áudio (1 leve, 2 médio, 3 forte): a prévia e o render tocam uma cópia limpa */
   denoise?: DenoiseLevel
+  /** controle dos picos da voz (1 leve, 2 médio, 3 forte): compressor + limitador (+ de-esser), na mesma cópia */
+  peaks?: DenoiseLevel
 }
 export type DenoiseLevel = 1 | 2 | 3
 export const DENOISE_LABEL: Record<DenoiseLevel, string> = { 1: 'leve', 2: 'médio', 3: 'forte' }
@@ -728,9 +730,14 @@ export const DENOISE_HINT: Record<DenoiseLevel, string> = {
   2: 'Médio: IA de voz (RNNoise), tira ventilador, ar-condicionado, rua e chiado',
   3: 'Forte: IA de voz + redução extra, pra gravação bem ruidosa (a voz pode ficar mais seca)'
 }
-/** o áudio que toca de uma mídia: a cópia limpa (se a limpeza estiver ligada) ou o original */
-export async function audioPath(m: Pick<MontageMedia, 'path' | 'denoise'>): Promise<string | { error: string }> {
-  return m.denoise ? api.cleanAudio(m.path, m.denoise) : m.path
+export const PEAKS_HINT: Record<DenoiseLevel, string> = {
+  1: 'Leve: compressor suave + limitador, só abaixa os picos mais fortes',
+  2: 'Médio: compressor + limitador + de-esser (segura também o "s" e o "ch" chiados)',
+  3: 'Forte: segura bem os picos, a voz fica mais por igual (pode perder um pouco da dinâmica)'
+}
+/** o áudio que toca de uma mídia: a cópia tratada (limpeza de ruído e/ou picos ligados) ou o original */
+export async function audioPath(m: Pick<MontageMedia, 'path' | 'denoise' | 'peaks'>): Promise<string | { error: string }> {
+  return m.denoise || m.peaks ? api.cleanAudio(m.path, m.denoise ?? 0, m.peaks ?? 0) : m.path
 }
 export interface MontageTrack {
   id: string

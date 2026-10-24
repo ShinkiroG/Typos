@@ -264,18 +264,19 @@ async function start(sender: WebContents, job: RenderJob) {
     }
   }
 
-  // ---------- limpeza de ruído (as cópias limpas, que ficam no cache, são feitas uma vez) ----------
+  // ---------- limpeza de ruído e picos (as cópias tratadas, que ficam no cache, são feitas uma vez) ----------
   const cleaned = new Map<string, string>()
-  const toClean = [...new Map(pending.flatMap((p) => p.audio).filter((a) => a.denoise).map((a) => [`${a.denoise}|${a.path}`, a])).values()]
+  const keyOf = (a: ALayer) => `${a.denoise ?? 0}|${a.peaks ?? 0}|${a.path}`
+  const toClean = [...new Map(pending.flatMap((p) => p.audio).filter((a) => a.denoise || a.peaks).map((a) => [keyOf(a), a])).values()]
   for (const [i, a] of toClean.entries()) {
     if (cancelled) throw await stop('Cancelado.')
-    send({ kind: 'info', text: `Limpando o ruído de ${basename(a.path)} (${i + 1} de ${toClean.length})…` })
+    send({ kind: 'info', text: `Tratando o som de ${basename(a.path)} (${i + 1} de ${toClean.length})…` })
     progress('partes')
-    const r = await cleanAudio(a.path, a.denoise!)
-    if (typeof r !== 'string') throw await stop(`Não deu pra limpar o ruído de ${basename(a.path)}: ${r.error}.`)
-    cleaned.set(`${a.denoise}|${a.path}`, r)
+    const r = await cleanAudio(a.path, a.denoise ?? 0, a.peaks ?? 0)
+    if (typeof r !== 'string') throw await stop(`Não deu pra tratar o som de ${basename(a.path)}: ${r.error}.`)
+    cleaned.set(keyOf(a), r)
   }
-  const audioOf = (list: ALayer[]) => list.map((a) => (a.denoise ? { ...a, path: cleaned.get(`${a.denoise}|${a.path}`) ?? a.path } : a))
+  const audioOf = (list: ALayer[]) => list.map((a) => (a.denoise || a.peaks ? { ...a, path: cleaned.get(keyOf(a)) ?? a.path } : a))
 
   // ---------- partes ----------
   for (const p of pending) {

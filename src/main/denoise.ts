@@ -5,12 +5,14 @@ import { createHash } from 'crypto'
 import { findFfmpeg, mediaCacheDir, proxyAudio, run } from './media'
 import { wavPcm } from './soundProfile'
 import { bestLag, denoiseArgs, denoiseFilter, DENOISE_V, loudestStart, noiseFloorDb, typicalLag, type DenoiseLevel } from './denoiseCore'
+import { peaksFilter, PEAKS_LAG, PEAKS_V, speechLevelDb, type PeaksLevel } from './peaksCore'
 import model from './rnnoise/voz.rnnn?raw'
 
 /**
- * Limpeza de ruído da Montagem: gera uma cópia limpa do áudio (WAV, no cache de mídia) e a prévia,
- * o render e a normalização usam ela no lugar do original. O arquivo do usuário não é tocado,
- * e desligar a limpeza volta pro original na hora.
+ * Tratamento do som da Montagem (limpar ruído e controlar picos): gera uma cópia tratada do áudio
+ * (WAV, no cache de mídia) e a prévia, o render e a normalização usam ela no lugar do original.
+ * O arquivo do usuário não é tocado, e desligar o tratamento volta pro original na hora.
+ * Com os dois ligados, sai uma cópia só: primeiro limpa o ruído, depois segura os picos.
  */
 
 /** pasta do modelo da IA de voz (o ffmpeg roda dentro dela e lê o modelo pelo nome, sem caminho pra escapar) */
@@ -30,10 +32,12 @@ async function rnnSupported(ffmpeg: string) {
   return hasRnn
 }
 
-/** onde fica a cópia limpa de um arquivo numa intensidade (muda se o arquivo mudar) */
-async function cleanPathOf(path: string, level: DenoiseLevel) {
+/** onde fica a cópia tratada de um arquivo (muda se o arquivo ou o tratamento mudar) */
+async function cleanPathOf(path: string, level: DenoiseLevel | 0, peaks: PeaksLevel | 0) {
   const st = await fs.stat(path)
-  const key = createHash('sha1').update(`clean${DENOISE_V}-${level}|${path}|${st.size}|${st.mtimeMs}`).digest('hex').slice(0, 20)
+  // só limpeza: a mesma chave de antes (as cópias que já existem continuam valendo)
+  const recipe = `clean${DENOISE_V}-${level}` + (peaks ? `|peaks${PEAKS_V}-${peaks}` : '')
+  const key = createHash('sha1').update(`${recipe}|${path}|${st.size}|${st.mtimeMs}`).digest('hex').slice(0, 20)
   return join(mediaCacheDir(), key + '.wav')
 }
 
@@ -59,34 +63,40 @@ async function measureLag(ffmpeg: string, path: string, filter: string, start: n
 
 const pending = new Map<string, Promise<string | { error: string }>>()
 
-/** caminho do áudio limpo (gera se ainda não tiver) */
-export function cleanAudio(path: string, level: DenoiseLevel): Promise<string | { error: string }> {
-  const id = `${level}|${path}`
+/** caminho do áudio tratado (gera se ainda não tiver); sem limpeza nem picos, o próprio original */
+export function cleanAudio(path: string, level: DenoiseLevel | 0, peaks: PeaksLevel | 0 = 0): Promise<string | { error: string }> {
+  if (!level && !peaks) return Promise.resolve(path)
+  const id = `${level}|${peaks}|${path}`
   let p = pending.get(id)
   if (p) return p
   p = (async () => {
     const ff = await findFfmpeg()
     if (!ff) return { error: 'ffmpeg não encontrado' }
     if (!existsSync(path)) return { error: 'arquivo não encontrado: ' + path }
-    const out = await cleanPathOf(path, level)
+    const out = await cleanPathOf(path, level, peaks)
     if (existsSync(out)) return out
     await fs.mkdir(mediaCacheDir(), { recursive: true })
-    // o ruído e onde está a fala saem da prévia (mono 32 kHz), que a Montagem já tem
+    // o ruído, o volume da fala e onde ela está saem da prévia (mono 32 kHz), que a Montagem já tem
     const proxy = await proxyAudio(path)
     if (typeof proxy !== 'string') return proxy
     const pcm = wavPcm(await fs.readFile(proxy))
     const noise = pcm ? noiseFloorDb(pcm.pcm, pcm.rate) : null
-    const rnn = await rnnSupported(ff.ffmpeg)
+    const rnn = level ? await rnnSupported(ff.ffmpeg) : false
     if (rnn) await ensureModel()
-    const filter = denoiseFilter(level, noise, rnn ? MODEL : null)
+    const filter = [
+      level ? denoiseFilter(level, noise, rnn ? MODEL : null) : '',
+      peaks ? peaksFilter(peaks, pcm ? speechLevelDb(pcm.pcm, pcm.rate) : null) : ''
+    ]
+      .filter(Boolean)
+      .join(',')
     const cwd = modelDir()
     await fs.mkdir(cwd, { recursive: true })
-    const lag = (pcm && (await measureLag(ff.ffmpeg, path, filter, loudestStart(pcm.pcm, pcm.rate, 4), cwd))) ?? typicalLag(level, rnn)
+    const lag = (pcm && (await measureLag(ff.ffmpeg, path, filter, loudestStart(pcm.pcm, pcm.rate, 4), cwd))) ?? (level ? typicalLag(level, rnn) : 0) + (peaks ? PEAKS_LAG : 0)
     const tmp = out + '.part.wav'
     const r = await run(ff.ffmpeg, denoiseArgs(path, tmp, filter, lag), { cwd })
     if (r.code !== 0 || !existsSync(tmp)) {
       await fs.rm(tmp, { force: true }).catch(() => null)
-      return { error: 'o ffmpeg não conseguiu limpar o áudio: ' + r.err.split('\n').slice(-3).join(' ').slice(0, 200) }
+      return { error: 'o ffmpeg não conseguiu tratar o áudio: ' + r.err.split('\n').slice(-3).join(' ').slice(0, 200) }
     }
     await fs.rename(tmp, out)
     return out
@@ -97,5 +107,5 @@ export function cleanAudio(path: string, level: DenoiseLevel): Promise<string | 
 }
 
 export function initDenoise() {
-  ipcMain.handle('media:clean', (_e, path: string, level: DenoiseLevel) => cleanAudio(path, level))
+  ipcMain.handle('media:clean', (_e, path: string, level: DenoiseLevel | 0, peaks?: PeaksLevel | 0) => cleanAudio(path, level, peaks ?? 0))
 }
