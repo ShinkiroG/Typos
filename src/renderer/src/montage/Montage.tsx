@@ -78,6 +78,9 @@ export const fmtTc = (t: number) => {
 
 /** pasta onde entram os clipes de motion aprovados */
 const MOTION_BIN = 'motion'
+/** volume do corte: a barra vai até +30 dB; digitando, até +60 (só pra não virar infinito) */
+const GAIN_SLIDER_MAX = 30
+const clampDb = (v: number) => (Number.isFinite(v) ? Math.round(Math.max(-60, Math.min(60, v)) * 10) / 10 : 0)
 
 const kindOfPath = (p: string): MontageMedia['kind'] =>
   /\.(mp3|wav|m4a|aac|flac|ogg|opus)$/i.test(p) ? 'audio' : /\.(png|jpe?g|webp)$/i.test(p) ? 'image' : 'video'
@@ -2937,12 +2940,10 @@ function SoundPanel({
   const gains = targets.map((c) => c.gainDb ?? 0)
   const mixed = gains.some((g) => Math.abs(g - gains[0]) > 0.05)
   const gain = gains[0] ?? 0
-  const clampDb = (v: number) => Math.round(Math.max(-30, Math.min(24, v)) * 10) / 10
   const patchAll = (fn: (c: MontageClip) => Partial<MontageClip>, g?: string) =>
     change({ ...data, clips: data.clips.map((c) => (ids.has(c.id) ? { ...c, ...fn(c) } : c)) }, g)
   const one = targets.length === 1 ? targets[0] : null
   const m = one ? media.get(one.media) : picked.length === 1 ? media.get(picked[0].media) : undefined
-  const fmtDb = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`
   const fadeIn = one?.fadeIn ?? 0
   const fadeOut = one?.fadeOut ?? 0
   return (
@@ -2982,12 +2983,22 @@ function SoundPanel({
         <>
           <label className="mt-sound-row">
             <span>
-              Volume <b>{mixed ? 'vários' : fmtDb(gain)}</b>
+              Volume{' '}
+              <input
+                type="number"
+                className="mt-db-input"
+                step={0.5}
+                value={mixed ? '' : gain}
+                placeholder="vários"
+                title="Digite qualquer valor em dB (sem limite; o limitador final segura os picos)"
+                onChange={(e) => e.target.value !== '' && patchAll(() => ({ gainDb: clampDb(Number(e.target.value)) }), gesture.current + 'g')}
+              />{' '}
+              dB
             </span>
             <input
               type="range"
               min={-30}
-              max={12}
+              max={Math.max(GAIN_SLIDER_MAX, gain)}
               step={0.5}
               value={gain}
               title="Duplo clique volta a 0 dB"
@@ -3134,8 +3145,19 @@ function ClipInspector({
       )}
       {m?.hasAudio && !c.audioOff && (
         <label className="mt-insp-row">
-          Volume <b>{(c.gainDb ?? 0) > 0 ? '+' : ''}{(c.gainDb ?? 0).toFixed(1)} dB</b>
-          <input type="range" min={-30} max={12} step={0.5} value={c.gainDb ?? 0} onChange={(e) => patch({ gainDb: Number(e.target.value) }, g + 'g')} onDoubleClick={() => patch({ gainDb: 0 })} />
+          <span>
+            Volume{' '}
+            <input
+              type="number"
+              className="mt-db-input"
+              step={0.5}
+              value={c.gainDb ?? 0}
+              title="Digite qualquer valor em dB (sem limite; o limitador final segura os picos)"
+              onChange={(e) => e.target.value !== '' && patch({ gainDb: clampDb(Number(e.target.value)) }, g + 'g')}
+            />{' '}
+            dB
+          </span>
+          <input type="range" min={-30} max={Math.max(GAIN_SLIDER_MAX, c.gainDb ?? 0)} step={0.5} value={c.gainDb ?? 0} onChange={(e) => patch({ gainDb: Number(e.target.value) }, g + 'g')} onDoubleClick={() => patch({ gainDb: 0 })} />
         </label>
       )}
       <div className="mt-insp-grid">
