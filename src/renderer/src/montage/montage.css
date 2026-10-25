@@ -277,6 +277,10 @@
   font: 12px var(--font-console);
   color: var(--text);
 }
+.mt-db-input {
+  width: 64px;
+  font-weight: 600;
+}
 .mt-insp-row b {
   color: var(--text);
   font-weight: 600;
