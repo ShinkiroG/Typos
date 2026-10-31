@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { richParts, channelHandle } from '../youtube/rich'
-import { ytHashtags } from '../lib'
+import { splitTags, tagsLength, ytHashtags } from '../lib'
 
 describe('página do YouTube', () => {
   it('pinta link, hashtag e tempo', () => {
@@ -22,5 +22,15 @@ describe('página do YouTube', () => {
   it('arroba do canal', () => {
     expect(channelHandle('Magnates Média')).toBe('@magnatesmedia')
     expect(channelHandle('')).toBe('@seucanal')
+  })
+})
+
+describe('tags do YouTube', () => {
+  it('separa por vírgula/linha, sem vazias e sem repetir', () => {
+    expect(splitTags(' carros, Tesla ,\n,tesla, carro  elétrico', ['Carros'])).toEqual(['Tesla', 'carro elétrico'])
+  })
+  it('conta como o YouTube (vírgulas + aspas nas com espaço)', () => {
+    expect(tagsLength(['abc', 'de f'])).toBe(3 + 1 + 6)
+    expect(tagsLength([])).toBe(0)
   })
 })

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Download, ImagePlus, ListFilter, MoreHorizontal, Pin, Play, Share2, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react'
-import { api, attachmentUrl, ytHashtags, YT_LIMITS, type Attachment, type YoutubePage } from '../lib'
+import { Copy, Download, ImagePlus, ListFilter, MoreHorizontal, Pin, Play, Share2, ThumbsDown, ThumbsUp, Trash2, X } from 'lucide-react'
+import { api, attachmentUrl, splitTags, tagsLength, ytHashtags, YT_LIMITS, type Attachment, type YoutubePage } from '../lib'
 import { channelHandle, richParts } from './rich'
 import './youtube.css'
 
@@ -61,6 +61,61 @@ function Rich({ text }: { text: string }) {
 
 function Counter({ n, max }: { n: number; max: number }) {
   return <span className={'yt-count' + (n > max ? ' over' : n > max * 0.9 ? ' near' : '')}>{n}/{max}</span>
+}
+
+function Tags({ tags, onChange }: { tags: string[]; onChange: (t: string[]) => void }) {
+  const [text, setText] = useState('')
+  const [copied, setCopied] = useState(false)
+  const add = (raw: string) => {
+    const more = splitTags(raw, tags)
+    if (more.length) onChange([...tags, ...more])
+    setText('')
+  }
+  return (
+    <div className="yt-tagbox">
+      <div className="yt-tagbox-head">
+        <b>Tags</b>
+        <span className="yt-dim">Não aparecem na página: vão no YouTube Studio. Enter ou vírgula separa.</span>
+        <span className="yt-grow" />
+        <Counter n={tagsLength(tags)} max={YT_LIMITS.tags} />
+        <button
+          className="btn small"
+          disabled={!tags.length}
+          title="Copiar as tags separadas por vírgula, pra colar no YouTube Studio"
+          onClick={() => {
+            navigator.clipboard.writeText(tags.join(', '))
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1500)
+          }}
+        >
+          <Copy size={13} /> {copied ? 'Copiado' : 'Copiar'}
+        </button>
+      </div>
+      <div className="yt-tags-input">
+        {tags.map((t, i) => (
+          <span key={t} className="yt-tag">
+            {t}
+            <button title="Tirar" onClick={() => onChange(tags.filter((_, j) => j !== i))}>
+              <X size={12} />
+            </button>
+          </span>
+        ))}
+        <input
+          value={text}
+          placeholder={tags.length ? '' : 'Adicionar tag'}
+          spellCheck={false}
+          onChange={(e) => (/[,\n]/.test(e.target.value) ? add(e.target.value) : setText(e.target.value))}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              add(text)
+            } else if (e.key === 'Backspace' && !text && tags.length) onChange(tags.slice(0, -1))
+          }}
+          onBlur={() => text.trim() && add(text)}
+        />
+      </div>
+    </div>
+  )
 }
 
 export function YoutubeStudio({ active, dir, projectTitle, page, onChange }: Props) {
@@ -260,6 +315,9 @@ export function YoutubeStudio({ active, dir, projectTitle, page, onChange }: Pro
               <div className="yt-desc-text placeholder">Clique pra escrever a descrição.</div>
             )}
           </div>
+
+          {/* ---------- tags (ficam no YouTube Studio, não na página) ---------- */}
+          <Tags tags={page.tags ?? []} onChange={(tags) => set({ tags })} />
 
           {/* ---------- comentários ---------- */}
           <div className="yt-comments">
