@@ -23,6 +23,18 @@ export function x264Args(kind: 'grain' | 'master'): string[] {
   return ['-c:v', 'libx264', ...q, '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709']
 }
 
+/**
+ * Encoder da placa NVIDIA (NVENC) pro clipe de motion: bem mais rápido que o x264 'slow', com qualidade
+ * constante alta (cq 14, preset p7, AQ ligado). Guarda um pouco menos do grão do fundo que o x264.
+ */
+export function nvencArgs(): string[] {
+  return [
+    '-c:v', 'h264_nvenc', '-preset', 'p7', '-tune', 'hq', '-rc', 'vbr', '-cq', '14', '-b:v', '0',
+    '-spatial-aq', '1', '-temporal-aq', '1', '-profile:v', 'high',
+    '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709'
+  ]
+}
+
 /** RGB (quadros PNG do navegador) → YUV 4:2:0 em BT.709, com arredondamento preciso (sem degrau extra) */
 export const RGB_TO_YUV = 'flags=bicubic+accurate_rnd+full_chroma_int:out_color_matrix=bt709:out_range=tv'
 

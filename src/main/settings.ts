@@ -35,6 +35,8 @@ export interface AppSettings {
   whisperParallel?: number
   /** atalhos trocados pelo usuário (id da ação → tecla); o resto usa o padrão */
   keys?: Record<string, string>
+  /** gravação do clipe de motion: 'cpu' (x264, qualidade máxima, padrão) ou 'gpu' (NVENC da NVIDIA, bem mais rápido) */
+  motionEncoder?: 'cpu' | 'gpu'
   /** workspace YouTube (simula a página do vídeo); vazio = ligado */
   youtubePage?: boolean
 }

@@ -3,7 +3,8 @@ import { dirname, join } from 'path'
 import { promises as fs, existsSync } from 'fs'
 import { createHash } from 'crypto'
 import { findFfmpeg, run } from './media'
-import { partArgs, x264Args, RGB_TO_YUV, type VLayer } from './compose'
+import { partArgs, x264Args, nvencArgs, RGB_TO_YUV, type VLayer } from './compose'
+import { loadSettings, saveSettings } from './settings'
 
 /**
  * Prévia de um bloco de instrução: o HTML de motion que a IA escreveu é tocado numa janela
@@ -75,7 +76,38 @@ function withClock(html: string) {
 
 const safeName = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 60) || 'arquivo'
 
-let busy: { cancel: boolean } | null = null
+/** prévias/clipes em andamento, por bloco (até 2 blocos ao mesmo tempo; o Cancelar vale só pro bloco dele) */
+const jobs = new Map<string, { cancel: boolean }>()
+
+/**
+ * Gravações de quadros em fila de 1: dois blocos podem esperar o Claude juntos, mas a gravação
+ * (janela invisível + PNG + ffmpeg) usa muito a CPU e sai mais rápida uma depois da outra.
+ */
+let recChain: Promise<unknown> = Promise.resolve()
+export function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
+  const p = recChain.then(fn, fn)
+  recChain = p.catch(() => null)
+  return p
+}
+let recRunning = 0
+
+/** a placa tem NVENC e o ffmpeg sabe usar? (testa uma vez gravando um vídeo minúsculo) */
+let nvencOk: Promise<boolean> | null = null
+export function hasNvenc(): Promise<boolean> {
+  nvencOk ??= findFfmpeg().then(async (ff) => {
+    if (!ff) return false
+    const r = await run(ff.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2', ...nvencArgs(), '-f', 'null', '-'], { timeoutMs: 20000 }).catch(() => null)
+    return r?.code === 0
+  })
+  return nvencOk
+}
+
+/** encoder do clipe final: o escolhido nas Configurações; GPU sem NVENC disponível cai pra CPU */
+async function finalEncoder(): Promise<string[]> {
+  const s = await loadSettings()
+  if (s.motionEncoder === 'gpu' && (await hasNvenc())) return nvencArgs()
+  return x264Args('grain')
+}
 
 export interface HtmlVideoJob {
   /** pasta de trabalho (quadros, HTML tocável e anexos ficam aqui) */
@@ -94,6 +126,8 @@ export interface HtmlVideoJob {
   video: string
   /** prévia leve (12 fps, baixa resolução) ou vídeo de entrega (clipe, lettering) */
   quality: 'preview' | 'final'
+  /** encoder do vídeo de entrega (args do ffmpeg); vazio = x264 'grain' */
+  encoder?: string[]
   onPct?: (pct: number) => void
   cancelled?: () => boolean
 }
@@ -191,7 +225,7 @@ export async function htmlToVideo(job: HtmlVideoJob) {
   args.push('-vf', `scale=${W}:${H}:${RGB_TO_YUV},format=yuv420p`)
   // prévia: leve e rápida; clipe e lettering: qualidade de entrega (o grão do fundo tem que sobreviver)
   if (job.quality === 'preview') args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p')
-  else args.push(...x264Args('grain'))
+  else args.push(...(job.encoder ?? x264Args('grain')))
   args.push('-r', String(job.fps))
   if (wav) args.push('-c:a', 'aac', '-b:a', job.quality === 'preview' ? '96k' : '192k', '-shortest')
   args.push('-movflags', '+faststart', job.video)
@@ -206,7 +240,7 @@ export async function htmlToVideo(job: HtmlVideoJob) {
  * Prévia (12 fps, baixa resolução) ou clipe final (resolução do projeto) de um bloco.
  * O clipe final toca o mesmo HTML da prévia aprovada, ampliado com zoom (a composição fica igual).
  */
-export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed' | 'send'>, job: PreviewJob) {
+export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed' | 'send'>, job: PreviewJob, cancelled: () => boolean = () => false) {
   const send = (stage: string, pct: number) => !sender.isDestroyed() && sender.send('motion:previewProgress', { block: job.block, stage, pct })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const out = join(job.dir, 'previas', safeName(job.block))
@@ -217,7 +251,14 @@ export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed
     await fs.writeFile(htmlPath, job.html, 'utf8')
   }
   const html = job.htmlPath ? await fs.readFile(job.htmlPath, 'utf8') : job.html
-  const video = await htmlToVideo({
+  const encoder = job.final ? await finalEncoder() : undefined
+  // outra gravação em andamento: espera a vez (a barra mostra "na fila")
+  if (recRunning) send('fila', 0)
+  const video = await oneAtATime(async () => {
+    if (cancelled()) throw new Error('Cancelado.')
+    recRunning++
+    try {
+      return await htmlToVideo({
     out,
     html,
     seconds: job.seconds,
@@ -229,8 +270,13 @@ export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed
     files: job.files,
     video: join(out, `${job.final ? 'clipe' : 'previa'}-${stamp}.mp4`),
     quality: job.final ? 'final' : 'preview',
+    encoder,
     onPct: (p) => send(p >= 1 ? 'vídeo' : 'quadros', p),
-    cancelled: () => !!busy?.cancel
+    cancelled
+      })
+    } finally {
+      recRunning--
+    }
   })
   send('vídeo', 1)
   return { video, html: htmlPath }
@@ -263,7 +309,7 @@ export interface LayoutHit {
  * instantes. Um elemento só conta se ficar fora do lugar por duas medições seguidas ou no quadro final
  * (o que só atravessa a tela numa transição não conta).
  */
-export async function checkLayout(job: LayoutJob): Promise<LayoutHit[]> {
+export async function checkLayout(job: LayoutJob, cancelled: () => boolean = () => false): Promise<LayoutHit[]> {
   const out = join(job.dir, 'previas', safeName(job.block))
   await fs.mkdir(out, { recursive: true })
   for (const f of job.files) await fs.copyFile(f.src, join(out, safeName(f.name))).catch(() => null)
@@ -294,7 +340,7 @@ export async function checkLayout(job: LayoutJob): Promise<LayoutHit[]> {
     times.push(Math.max(0, job.seconds - 0.05))
     let prev = new Map<string, LayoutHit>()
     for (const [i, t] of times.entries()) {
-      if (busy?.cancel) throw new Error('Cancelado.')
+      if (cancelled()) throw new Error('Cancelado.')
       await win.webContents.executeJavaScript(`window.__typosStep && window.__typosStep(${(t * 1000).toFixed(3)})`).catch(() => null)
       const hits: Omit<LayoutHit, 't'>[] = (await win.webContents.executeJavaScript(job.probe).catch(() => [])) ?? []
       const now = new Map<string, LayoutHit>()
@@ -377,24 +423,37 @@ export function initMotionPreview() {
     }
   })
   ipcMain.handle('motion:preview', async (e, job: PreviewJob) => {
-    if (busy) return { error: 'Já tem uma prévia sendo feita. Espere ela terminar.' }
-    busy = { cancel: false }
+    if (jobs.has(job.block)) return { error: 'Esse bloco já está sendo gravado. Espere terminar.' }
+    const me = { cancel: false }
+    jobs.set(job.block, me)
     try {
-      return await renderMotionPreview(e.sender, job)
+      return await renderMotionPreview(e.sender, job, () => me.cancel)
     } catch (err: any) {
       return { error: String(err?.message ?? err) }
     } finally {
-      busy = null
+      if (jobs.get(job.block) === me) jobs.delete(job.block)
     }
   })
   ipcMain.handle('motion:checkLayout', async (_e, job: LayoutJob) => {
+    const me = jobs.get(job.block) ?? { cancel: false }
+    const own = !jobs.has(job.block)
+    if (own) jobs.set(job.block, me)
     try {
-      return { issues: await checkLayout(job) }
+      return { issues: await checkLayout(job, () => me.cancel) }
     } catch (err: any) {
       return { error: String(err?.message ?? err) }
+    } finally {
+      if (own && jobs.get(job.block) === me) jobs.delete(job.block)
     }
   })
-  ipcMain.handle('motion:previewCancel', () => {
-    if (busy) busy.cancel = true
+  /** Cancelar: para a gravação/checagem desse bloco (sem id, todas) */
+  ipcMain.handle('motion:previewCancel', (_e, block?: string) => {
+    for (const [k, j] of jobs) if (!block || k === block) j.cancel = true
+  })
+  /** encoder do clipe de motion: lê/troca e diz se a GPU (NVENC) está disponível neste PC */
+  ipcMain.handle('motion:encoder', async (_e, mode?: 'cpu' | 'gpu') => {
+    if (mode === 'cpu' || mode === 'gpu') await saveSettings({ motionEncoder: mode })
+    const s = await loadSettings()
+    return { mode: s.motionEncoder ?? 'cpu', gpu: await hasNvenc() }
   })
 }
