@@ -25,11 +25,9 @@ export function BlockLayer(p: {
   showSnap: (t: number | null) => void
   /** faixa embaixo do mouse */
   trackAt: (clientY: number) => { id: string; kind: 'video' | 'audio' } | null
-  /** gerando prévia agora */
-  busy: string | null
-  /** quanto já foi (0–1) */
-  busyPct?: number | null
-  onCancel?: () => void
+  /** blocos gerando prévia agora → quanto já foi (0–1) */
+  busy: Record<string, number>
+  onCancel?: (id: string) => void
   /** o som do bloco já foi lido (Whisper)? */
   heard?: (b: InstructionBlock) => BlockHeard
 }) {
@@ -99,7 +97,7 @@ export function BlockLayer(p: {
         return (
           <div
             key={b.id}
-            className={'mt-iblock' + (p.selected === b.id ? ' sel' : '') + (b.dynamic ? ' dyn' : '') + (p.busy === b.id ? ' busy' : '')}
+            className={'mt-iblock' + (p.selected === b.id ? ' sel' : '') + (b.dynamic ? ' dyn' : '') + (b.id in p.busy ? ' busy' : '')}
             style={{ left: b.start * p.pps, width: Math.max(4, blockDur(b) * p.pps) }}
             data-iblock={b.id}
             onPointerDown={(e) => down(e, b)}
@@ -155,10 +153,10 @@ export function BlockLayer(p: {
                 </span>
               )}
             </span>
-            {p.busy === b.id && (
+            {b.id in p.busy && (
               <>
                 <div className="mt-iblock-prog">
-                  <i style={{ width: `${Math.round((p.busyPct ?? 0) * 100)}%` }} />
+                  <i style={{ width: `${Math.round((p.busy[b.id] ?? 0) * 100)}%` }} />
                 </div>
                 {p.onCancel && (
                   <button
@@ -167,10 +165,10 @@ export function BlockLayer(p: {
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
-                      p.onCancel!()
+                      p.onCancel!(b.id)
                     }}
                   >
-                    {Math.round((p.busyPct ?? 0) * 100)}% <X size={9} />
+                    {Math.round((p.busy[b.id] ?? 0) * 100)}% <X size={9} />
                   </button>
                 )}
               </>

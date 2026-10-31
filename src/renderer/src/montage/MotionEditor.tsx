@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { X, Check, Undo2, Film, Scissors, ArrowRightToLine } from 'lucide-react'
 import { api, fileUrl, formatTime, type Attachment, type InstructionBlock } from '../lib'
 import { blockDur, blockLabel } from './blocks'
-import { AdjustBox, BusyBar, type BlockBusy } from './BlockPanel'
+import { AdjustBox, BusyBar, EncoderPick, type BlockBusy } from './BlockPanel'
+import { FULL_HINT } from './busy'
 
 const f2 = (t: number) => t.toFixed(2).replace('.', ',')
 const THUMBS = 14
@@ -134,6 +135,7 @@ export function MotionEditor(p: {
                 <button className="btn small" disabled={!!p.busy} onClick={p.onDiscard} title="Volta pro motion que está na timeline">
                   <Undo2 size={13} /> Descartar
                 </button>
+                <EncoderPick />
               </div>
             )}
             {!p.pending && p.outdated && (
@@ -212,7 +214,7 @@ export function MotionEditor(p: {
             </div>
             )}
             {mine && <BusyBar busy={p.busy!} onCancel={p.onCancel} />}
-            {!mine && p.busy && <div className="blk-hint">Outra prévia está sendo feita. Espere ela terminar.</div>}
+            {!mine && p.busy && <div className="blk-hint">{FULL_HINT}</div>}
           </div>
           <AdjustBox b={b} dir={p.dir} busy={!!p.busy} onAdjust={(tw) => {
               p.onAdjust(tw, extend === null ? range : null, extend)

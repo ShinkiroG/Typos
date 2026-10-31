@@ -2364,3 +2364,16 @@
 .mt-inspector[hidden] {
   display: none;
 }
+
+/* escolha do encoder do clipe de motion (CPU / GPU) */
+.blk-encoder {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.blk-encoder select {
+  font-size: 11px;
+}

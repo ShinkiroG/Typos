@@ -4,6 +4,7 @@ import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type Block
 import { PromptMenu } from './PromptMenu'
 import { rememberPrompt } from './prompts'
 import { hasDraft, loadDraft, saveDraft } from './drafts'
+import { FULL_HINT } from './busy'
 import { blockDur, blockLabel, blockSync, isImage, neighborOf, neighborText, previewStale } from './blocks'
 
 const fmtTc = (t: number) => {
@@ -22,6 +23,8 @@ export interface BlockBusy {
   t0?: number
   /** quadros da gravação em andamento (pra mostrar quantos faltam) */
   frames?: number
+  /** pronto pra gravar, esperando a gravação de outro bloco terminar */
+  queued?: boolean
 }
 
 /** quanto do trabalho todo já foi (0–1); sem etapa conhecida, o da etapa */
@@ -45,7 +48,7 @@ export function BusyBar({ busy, onCancel, big }: { busy: BlockBusy; onCancel: ()
     <div className="blk-prev-busy">
       <div className="blk-busy-row">
         <Loader2 size={13} className="spin" />
-        <span className="blk-busy-label">{busy.label}</span>
+        <span className="blk-busy-label">{busy.queued ? 'Na fila: esperando a gravação do outro bloco…' : busy.label}</span>
         <span className="blk-busy-num">
           {Math.round(all * 100)}%{busy.t0 ? ` · ${fmtElapsed(Date.now() - busy.t0)}` : ''}
         </span>
@@ -398,6 +401,25 @@ export function AdjustBox({
   )
 }
 
+/** como o clipe aprovado é gravado: x264 na CPU (qualidade máxima) ou NVENC na placa NVIDIA (bem mais rápido) */
+export function EncoderPick() {
+  const [st, setSt] = useState<{ mode: 'cpu' | 'gpu'; gpu: boolean } | null>(null)
+  useEffect(() => {
+    api.motionEncoder().then(setSt).catch(() => null)
+  }, [])
+  if (!st) return null
+  return (
+    <label className="blk-encoder" title="Vale pro clipe do motion aprovado. A prévia não muda.">
+      Gravar o clipe:{' '}
+      <select value={st.gpu ? st.mode : 'cpu'} disabled={!st.gpu} onChange={async (e) => setSt(await api.motionEncoder(e.target.value as 'cpu' | 'gpu'))}>
+        <option value="cpu">Qualidade máxima (CPU)</option>
+        <option value="gpu">Rápido (GPU NVIDIA)</option>
+      </select>
+      {!st.gpu && <small> (GPU NVIDIA não encontrada pelo ffmpeg)</small>}
+    </label>
+  )
+}
+
 /** prévia: vídeo, gerar de novo, pedir ajustes, aprovar (vira clipe na timeline) */
 export function BlockPreviewBox({
   b,
@@ -465,7 +487,7 @@ export function BlockPreviewBox({
           <button
             className={'btn small' + (b.preview ? '' : ' primary')}
             disabled={!!busy}
-            title={busy ? 'Outra prévia está sendo feita' : b.preview ? 'Cria o motion de novo, do zero (esquece os ajustes pedidos)' : ''}
+            title={busy ? FULL_HINT : b.preview ? 'Cria o motion de novo, do zero (esquece os ajustes pedidos)' : ''}
             onClick={onGenerate}
           >
             <Sparkles size={13} /> {b.preview ? 'Refazer do zero' : 'Gerar prévia'}
@@ -492,6 +514,7 @@ export function BlockPreviewBox({
           )}
         </div>
       )}
+      {b.preview && !mine && <EncoderPick />}
       {heard}
       {b.preview && asking && <AdjustBox b={b} dir={dir} busy={!!busy} onAdjust={onAdjust} onClose={() => setAsking(false)} />}
       {!!b.preview?.sounds?.length && (

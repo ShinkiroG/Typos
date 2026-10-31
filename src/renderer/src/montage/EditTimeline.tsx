@@ -52,12 +52,9 @@ interface Props {
   onBlockSel: (id: string | null) => void
   onBlockOpen: (id: string) => void
   onBlockMenu: (e: React.MouseEvent, id: string) => void
-  /** bloco gerando prévia agora */
-  blockBusy: string | null
-  /** quanto já foi da prévia em andamento (0–1) */
-  blockPct?: number | null
-  /** cancelar a prévia em andamento */
-  onBlockCancel?: () => void
+  /** blocos gerando motion agora → quanto já foi (0–1) */
+  blockBusy: Record<string, number>
+  onBlockCancel?: (id: string) => void
   /** o som de cada bloco já foi lido (Whisper)? */
   blockHeard?: (b: InstructionBlock) => BlockHeard
   /** vão vazio selecionado (clique no vazio entre cortes; Delete fecha) */
@@ -748,7 +745,6 @@ export function EditTimeline(p: Props) {
                         showSnap={showSnap}
                         trackAt={trackAt}
                         busy={p.blockBusy}
-                        busyPct={p.blockPct ?? null}
                         onCancel={p.onBlockCancel}
                         heard={p.blockHeard}
                       />
