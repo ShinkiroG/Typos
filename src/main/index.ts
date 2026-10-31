@@ -322,9 +322,9 @@ initLog(async () => {
 // ---------- configurações e atualizações ----------
 ipcMain.handle('settings:get', async () => {
   const s = await loadSettings()
-  return { autoUpdate: s.autoUpdate, hasElevenLabsKey: !!s.elevenLabsKey, version: app.getVersion(), mode: installMode(), keys: s.keys ?? {} }
+  return { autoUpdate: s.autoUpdate, hasElevenLabsKey: !!s.elevenLabsKey, version: app.getVersion(), mode: installMode(), keys: s.keys ?? {}, youtubePage: s.youtubePage !== false }
 })
-ipcMain.handle('settings:set', async (_e, patch: { autoUpdate?: boolean; elevenLabsKey?: string; keys?: Record<string, string> }) => {
+ipcMain.handle('settings:set', async (_e, patch: { autoUpdate?: boolean; elevenLabsKey?: string; keys?: Record<string, string>; youtubePage?: boolean }) => {
   const clean: Record<string, unknown> = {}
   if (patch.keys && typeof patch.keys === 'object')
     clean.keys = Object.fromEntries(
@@ -333,6 +333,7 @@ ipcMain.handle('settings:set', async (_e, patch: { autoUpdate?: boolean; elevenL
         .slice(0, 100)
     )
   if (typeof patch.autoUpdate === 'boolean') clean.autoUpdate = patch.autoUpdate
+  if (typeof patch.youtubePage === 'boolean') clean.youtubePage = patch.youtubePage
   if (typeof patch.elevenLabsKey === 'string') clean.elevenLabsKey = patch.elevenLabsKey.trim() || undefined
   await saveSettings(clean)
 })

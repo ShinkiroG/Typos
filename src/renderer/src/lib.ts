@@ -323,9 +323,27 @@ export interface ProjectData {
   shorts?: ShortsData
   /** workspace Render: a fila e a pasta de export */
   render?: RenderSettings
+  /** workspace YouTube: como a página do vídeo vai ficar (título, thumbnail, descrição, comentário fixado) */
+  youtube?: YoutubePage
   createdAt: string
   updatedAt: string
 }
+
+export interface YoutubePage {
+  title: string
+  description: string
+  /** 1º comentário, fixado pelo canal */
+  pinned: string
+  thumb?: Attachment | null
+}
+
+export const emptyYoutubePage = (): YoutubePage => ({ title: '', description: '', pinned: '', thumb: null })
+
+/** limites do YouTube */
+export const YT_LIMITS = { title: 100, description: 5000, comment: 10000 }
+
+/** as 3 primeiras #hashtags da descrição (o YouTube mostra em cima do título) */
+export const ytHashtags = (desc: string) => [...new Set(desc.match(/(?<![\w#])#[\p{L}\p{N}_]+/gu) ?? [])].slice(0, 3)
 
 export type BlockType = 'paragraph' | 'prompt' | 'transition' | 'soundUp' | 'sonora' | 'chapter'
 

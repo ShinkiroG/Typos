@@ -147,6 +147,29 @@ export function SettingsModal({ onClose, currentDir, onCleanAssets }: { onClose:
         </section>
 
         <section className="set-section">
+          <h4>Workspaces</h4>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={info.youtubePage}
+              onChange={async (e) => {
+                await api.setSettings({ youtubePage: e.target.checked })
+                window.dispatchEvent(new Event('typos:settings'))
+                refresh()
+              }}
+            />
+            <span>
+              <b>Página do YouTube</b>
+              <br />
+              <span className="muted small">
+                Mostra o workspace YouTube: imita a página do vídeo pra deixar pronto o título, a thumbnail, a descrição e o 1º comentário fixado. Desligar
+                só esconde; o que você escreveu continua salvo no projeto.
+              </span>
+            </span>
+          </label>
+        </section>
+
+        <section className="set-section">
           <h4>ElevenLabs (efeitos sonoros)</h4>
           <p className="muted small">
             A chave fica salva só neste PC, fora da pasta do código. Pegue em elevenlabs.io → Profile → API Keys.
