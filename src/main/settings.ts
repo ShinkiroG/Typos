@@ -35,6 +35,8 @@ export interface AppSettings {
   whisperParallel?: number
   /** atalhos trocados pelo usuário (id da ação → tecla); o resto usa o padrão */
   keys?: Record<string, string>
+  /** workspace YouTube (simula a página do vídeo); vazio = ligado */
+  youtubePage?: boolean
 }
 
 const DEFAULTS: AppSettings = { autoUpdate: true }

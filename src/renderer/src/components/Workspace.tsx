@@ -6,7 +6,7 @@ import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { JSONContent } from '@tiptap/core'
-import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput, Palette, Clapperboard, Scissors, Copy, ClipboardPaste } from 'lucide-react'
+import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput, Palette, Clapperboard, Scissors, Copy, ClipboardPaste, MonitorPlay } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming, convertBracketLines } from '../editor/nodes'
 import { Timestamps, setTimestamps } from '../editor/timestamps'
 import { TimeGutter } from './TimeGutter'
@@ -18,6 +18,7 @@ import { FormatBubble } from './FormatBubble'
 import { RenderStudio } from '../render/RenderStudio'
 import { ClipsStudio } from '../shorts/ClipsStudio'
 import { ShortsSetup } from '../shorts/ShortsSetup'
+import { YoutubeStudio } from '../youtube/YoutubeStudio'
 import { separateAutoCut } from '../montage/autocut'
 import logoUrl from '../assets/logo.png'
 import { FilterBar } from './FilterBar'
@@ -58,6 +59,8 @@ import {
   type MontageData,
   type ShortClip,
   type ShortsData,
+  type YoutubePage,
+  emptyYoutubePage,
   defaultMontage,
   setLetteringDefault,
   letteringOn,
@@ -285,9 +288,22 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
   }, [dir, draft])
   const [spell, setSpell] = useState<{ word: string; from: number; to: number; suggestions: string[] | null } | null>(null)
 
-  const [mode, setMode] = useState<'script' | 'montage' | 'style' | 'render' | 'clips'>('script')
+  const [mode, setMode] = useState<'script' | 'montage' | 'style' | 'render' | 'clips' | 'youtube'>('script')
   const [styleVisited, setStyleVisited] = useState(false)
   const [renderVisited, setRenderVisited] = useState(false)
+  // YouTube: liga/desliga nas Configurações (vale pro app todo); o que foi escrito fica no projeto mesmo desligado
+  const [youtube, setYoutube] = useState<YoutubePage>(() => ({ ...emptyYoutubePage(), ...data.youtube }))
+  const [youtubeOn, setYoutubeOn] = useState(false)
+  const [youtubeVisited, setYoutubeVisited] = useState(false)
+  useEffect(() => {
+    const load = () => api.getSettings().then((s) => setYoutubeOn(s.youtubePage))
+    load()
+    window.addEventListener('typos:settings', load)
+    return () => window.removeEventListener('typos:settings', load)
+  }, [])
+  useEffect(() => {
+    if (!youtubeOn) setMode((m) => (m === 'youtube' ? 'script' : m))
+  }, [youtubeOn])
   const format = formats.find((f) => f.id === formatId) ?? formats[0]
   /** formato dos Clipes: o próprio (ex.: Shorts/Vertical) ou, sem escolha, o mesmo da Montagem */
   const clipsFormat = formats.find((f) => f.id === shorts?.formatId) ?? format
@@ -297,8 +313,8 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
   const editorRef = useRef<Editor | null>(null)
   const libraryRef = useRef(library)
   libraryRef.current = library
-  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts, renderSettings })
-  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts, renderSettings }
+  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts, renderSettings, youtube })
+  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts, renderSettings, youtube }
 
   // ---------- desfazer/refazer da tela inteira (texto + timeline) ----------
   // O texto usa o histórico do editor; os clipes de áudio guardam cópias. A pilha "ordem"
@@ -767,12 +783,13 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
     const used = new Set(d.clips.map((c) => c.media))
     return d.media.filter((m) => used.has(m.id)).map((m) => m.path)
   }
-  const goMode = (m: 'script' | 'montage' | 'style' | 'render' | 'clips') => {
+  const goMode = (m: 'script' | 'montage' | 'style' | 'render' | 'clips' | 'youtube') => {
     setMode(m)
     if (m === 'clips') setClipsVisited(true)
     if (m === 'montage') setMontageVisited(true)
     if (m === 'style') setStyleVisited(true)
     if (m === 'render') setRenderVisited(true)
+    if (m === 'youtube') setYoutubeVisited(true)
   }
 
   // ---------- menus do topo ----------
@@ -840,6 +857,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
         ...(shorts ? [{ label: 'Criar Clipes (recortes curtos)', checked: mode === 'clips', onClick: () => goMode('clips') }] : []),
         { label: 'Estilo (treinar motion e formato)', checked: mode === 'style', onClick: () => goMode('style') },
         { label: 'Render (criar o vídeo com o Claude)', checked: mode === 'render', onClick: () => goMode('render') },
+        ...(youtubeOn ? [{ label: 'YouTube (título, thumbnail, descrição)', checked: mode === 'youtube', onClick: () => goMode('youtube') }] : []),
         { sep: true },
         { label: 'Painel Inserir', checked: leftOpen, onClick: () => setLeftOpen((o) => !o) },
         { label: 'Painel lateral', checked: panelOpen, onClick: () => setPanelOpen((o) => !o) },
@@ -903,6 +921,8 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
       chapterLettering: metaRef.current.chapterLettering,
       shorts: metaRef.current.shorts,
       render: metaRef.current.renderSettings,
+      // projeto que nunca usou a página do YouTube não ganha o campo vazio
+      youtube: data.youtube || Object.values(metaRef.current.youtube).some(Boolean) ? metaRef.current.youtube : undefined,
       doc: ed.getJSON(),
       updatedAt: new Date().toISOString()
     }
@@ -953,7 +973,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
     setSaveState('dirty')
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => save(), 800)
-  }, [title, formatId, clips, customWpm, tracks, assets, notes, montage, chapterLettering, shorts, renderSettings, save])
+  }, [title, formatId, clips, customWpm, tracks, assets, notes, montage, chapterLettering, shorts, renderSettings, youtube, save])
 
   useEffect(() => {
     try {
@@ -1202,6 +1222,12 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
               <Clapperboard size={15} />
               <span>Render</span>
             </button>
+            {youtubeOn && (
+              <button className={mode === 'youtube' ? 'on' : ''} title="YouTube: como a página do vídeo vai ficar (título, thumbnail, descrição e comentário fixado)" onClick={() => goMode('youtube')}>
+                <MonitorPlay size={15} />
+                <span>YouTube</span>
+              </button>
+            )}
           </nav>
 
           <div className="tb-doc">
@@ -1308,6 +1334,11 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
         )}
       </header>
 
+      {youtubeVisited && youtubeOn && (
+        <div className="montage-layer" style={mode === 'youtube' ? undefined : { display: 'none' }}>
+          <YoutubeStudio active={mode === 'youtube'} dir={dir} projectTitle={title} page={youtube} onChange={setYoutube} />
+        </div>
+      )}
       {renderVisited && (
         <div className="montage-layer" style={mode === 'render' ? undefined : { display: 'none' }}>
           <RenderStudio
