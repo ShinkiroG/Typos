@@ -458,3 +458,50 @@
 .yt-card.ghost .yt-card-thumb {
   background: #1d1d1d;
 }
+
+/* tags */
+.yt-tagbox {
+  margin-top: 12px;
+  border: 1px solid #303030;
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 14px;
+}
+.yt-tagbox-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.yt-tags-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.yt-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #3f3f3f;
+  border-radius: 14px;
+  padding: 3px 6px 3px 10px;
+  font-size: 13px;
+}
+.yt-tag button {
+  background: none;
+  border: 0;
+  color: #aaa;
+  padding: 0;
+  display: grid;
+  cursor: pointer;
+}
+.yt-tag button:hover {
+  color: #f1f1f1;
+}
+.yt-studio .yt-tags-input input {
+  flex: 1;
+  min-width: 140px;
+  width: auto;
+  padding: 3px 4px;
+}

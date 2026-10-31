@@ -335,12 +335,30 @@ export interface YoutubePage {
   /** 1º comentário, fixado pelo canal */
   pinned: string
   thumb?: Attachment | null
+  /** tags do YouTube Studio (não aparecem na página) */
+  tags?: string[]
 }
 
 export const emptyYoutubePage = (): YoutubePage => ({ title: '', description: '', pinned: '', thumb: null })
 
 /** limites do YouTube */
-export const YT_LIMITS = { title: 100, description: 5000, comment: 10000 }
+export const YT_LIMITS = { title: 100, description: 5000, comment: 10000, tags: 500 }
+
+/** "a, b\nc" → ["a", "b", "c"]: sem vazias e sem repetir (maiúscula/minúscula tanto faz) */
+export function splitTags(text: string, have: string[] = []) {
+  const seen = new Set(have.map((t) => t.toLowerCase()))
+  const out: string[] = []
+  for (const raw of text.split(/[,\n]/)) {
+    const t = raw.trim().replace(/\s+/g, ' ')
+    if (!t || seen.has(t.toLowerCase())) continue
+    seen.add(t.toLowerCase())
+    out.push(t)
+  }
+  return out
+}
+
+/** como o YouTube conta os 500: as vírgulas entram e tag com espaço ganha aspas (+2) */
+export const tagsLength = (tags: string[]) => tags.reduce((n, t) => n + t.length + (t.includes(' ') ? 2 : 0), 0) + Math.max(0, tags.length - 1)
 
 /** as 3 primeiras #hashtags da descrição (o YouTube mostra em cima do título) */
 export const ytHashtags = (desc: string) => [...new Set(desc.match(/(?<![\w#])#[\p{L}\p{N}_]+/gu) ?? [])].slice(0, 3)
