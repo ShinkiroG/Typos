@@ -2377,3 +2377,166 @@
 .blk-encoder select {
   font-size: 11px;
 }
+/* par vinculado (vídeo ↔ som dele): o ícone de corrente no nome */
+.mt-clip-name .mt-link {
+  vertical-align: -1px;
+  margin-right: 3px;
+  opacity: 0.85;
+}
+
+/* ---------- frequências e equalizador ---------- */
+.mt-eq {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  width: 586px;
+  background: var(--panel, #161a22);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+.mt-eq-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mt-eq-head b {
+  font-size: 12.5px;
+}
+.mt-eq-graph {
+  position: relative;
+  width: 560px;
+  background: #0b0d12;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding-bottom: 16px;
+  cursor: crosshair;
+}
+.mt-eq-graph canvas {
+  display: block;
+}
+.mt-eq-axis {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 2px;
+  height: 12px;
+  font-size: 9.5px;
+  opacity: 0.55;
+}
+.mt-eq-axis span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+.mt-eq-axis span:first-child {
+  transform: none;
+}
+.mt-eq-axis span:last-child {
+  transform: translateX(-100%);
+}
+.mt-eq-hover {
+  position: absolute;
+  top: 18px;
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 4px;
+  padding: 2px 6px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.mt-eq-idle {
+  position: absolute;
+  inset: 0 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.mt-eq-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.mt-eq-legend .sw {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+.mt-eq-legend .sw.live {
+  background: rgba(124, 140, 255, 0.8);
+  height: 8px;
+}
+.mt-eq-legend .sw.avg {
+  background: rgb(255, 214, 102);
+}
+.mt-eq-legend .sw.curve {
+  background: #4ade80;
+}
+.mt-eq-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.mt-eq-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mt-eq-hint {
+  font-size: 11px;
+  opacity: 0.65;
+  flex-basis: 100%;
+}
+.mt-eq-bands {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 4px;
+  padding: 6px 4px 0;
+}
+.mt-eq-bands.off {
+  opacity: 0.4;
+}
+.mt-eq-band {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  padding: 4px 0;
+}
+.mt-eq-band.sub {
+  background: rgba(255, 92, 92, 0.08);
+}
+.mt-eq-band input[type='range'] {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 20px;
+  height: 110px;
+  margin: 0;
+  accent-color: #4ade80;
+}
+.mt-eq-band .v {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  min-height: 13px;
+}
+.mt-eq-band .f {
+  font-size: 10.5px;
+  opacity: 0.7;
+}
+.mt-eq-foot {
+  font-size: 11px;
+  opacity: 0.55;
+}

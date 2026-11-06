@@ -1,10 +1,11 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Volume2, VolumeX, Plus, Ear, EarOff } from 'lucide-react'
+import { Volume2, VolumeX, Plus, Ear, EarOff, Link2 } from 'lucide-react'
 import { clipDur, clipEndT, formatTime, uid, type MontageClip, type MontageData, type MontageMarker, type MontageMedia, type MontageTrack } from '../lib'
 import { PEAKS_PER_SEC, butted, fadeInGain, fadeOutGain, xfadeHalf, type MontageEngine } from './engine'
 import { BlockLayer } from './BlockLayer'
 import { snapMove } from './snap'
 import { shiftTracks } from './trackShift'
+import { withLinked } from './links'
 import type { BlockHeard } from './AudioRead'
 import type { InstructionBlock } from '../lib'
 
@@ -228,6 +229,8 @@ export function EditTimeline(p: Props) {
     last?: MontageData
     /** Shift+clique num corte já selecionado: tira da seleção se soltar sem arrastar */
     toggleOff?: string
+    /** pares vinculados que vieram junto (não estavam selecionados): andam no tempo, mas não trocam de faixa */
+    partners?: string[]
   } | null>(null)
 
   /** arrastar a agulha: nunca passa pra trás dos nomes das faixas (encosta e rola a timeline) */
@@ -309,7 +312,10 @@ export function EditTimeline(p: Props) {
     p.onSelect(ids)
     const kind = (role || 'move') as 'move' | 'trim-l' | 'trim-r' | 'fade-in' | 'fade-out' | 'curve-in' | 'curve-out'
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    drag.current = { kind, x0: e.clientX, orig: data, ids: kind === 'move' ? ids : [c.id], gesture: uid(), main: c.id, rect, toggleOff }
+    // o par vinculado (vídeo e o som dele) anda e é aparado junto; trocar de faixa, só o lado pego
+    const base = kind === 'move' ? ids : [c.id]
+    const all = kind === 'move' || kind === 'trim-l' || kind === 'trim-r' ? withLinked(data, base) : base
+    drag.current = { kind, x0: e.clientX, orig: data, ids: all, gesture: uid(), main: c.id, rect, toggleOff, partners: all.filter((id) => !base.includes(id)) }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
 
@@ -365,7 +371,7 @@ export function EditTimeline(p: Props) {
       const ns = sm.start
       const shift = Math.max(-Math.min(...d.ids.map((id) => d.orig.clips.find((c) => c.id === id)!.start)), ns - o.start)
       // trocar de faixa: o grupo inteiro pula junto, quantas faixas o corte pego pular
-      const moved = shiftTracks(d.orig.tracks, d.orig.clips, d.ids, o.id, trackAt(e.clientY))
+      const moved = shiftTracks(d.orig.tracks, d.orig.clips, d.ids.filter((id) => !d.partners?.includes(id)), o.id, trackAt(e.clientY))
       clips = clips.map((c) => (d.ids.includes(c.id) ? { ...c, start: c.start + shift, track: moved.get(c.id) ?? c.track } : c))
     } else if (d.kind === 'trim-l') {
       let nin = Math.min(o.out - MIN_DUR, Math.max(0, o.in + dt))
@@ -373,14 +379,14 @@ export function EditTimeline(p: Props) {
       const st = snap(raw, [o.id], sh)
       if (off(st, raw)) hit = st
       nin = Math.min(o.out - MIN_DUR, Math.max(0, o.in + (st - o.start)))
-      clips = clips.map((c) => (c.id === o.id ? { ...c, in: nin, start: o.start + (nin - o.in) } : c))
+      clips = clips.map((c) => (d.ids.includes(c.id) ? { ...c, in: nin, start: o.start + (nin - o.in) } : c))
     } else if (d.kind === 'trim-r') {
       let nout = Math.max(o.in + MIN_DUR, Math.min(mediaLen(m), o.out + dt))
       const raw = o.start + (nout - o.in)
       const en = snap(raw, [o.id], sh)
       if (off(en, raw)) hit = en
       nout = Math.max(o.in + MIN_DUR, Math.min(mediaLen(m), en - o.start + o.in))
-      clips = clips.map((c) => (c.id === o.id ? { ...c, out: nout } : c))
+      clips = clips.map((c) => (d.ids.includes(c.id) ? { ...c, out: nout } : c))
     } else if (d.kind === 'curve-in' || d.kind === 'curve-out') {
       // ponto de controle da curva, livre dentro da área do fade (tipo pen tool)
       const r = d.rect!
@@ -686,6 +692,8 @@ export function EditTimeline(p: Props) {
                         <ClipView
                           key={c.id}
                           c={c}
+                          trackKind={tr.kind}
+                          linked={!!c.link && data.clips.some((x) => x.link === c.link && x.id !== c.id)}
                           m={p.media.get(c.media)}
                           pps={pps}
                           height={trackHeight(tr) - 8}
@@ -882,6 +890,8 @@ function fadePath(fin: boolean, curve: MontageClip['fadeInCurve']) {
 
 const ClipView = memo(function ClipView({
   c,
+  trackKind,
+  linked,
   m,
   pps,
   height,
@@ -894,6 +904,9 @@ const ClipView = memo(function ClipView({
   onMenu
 }: {
   c: MontageClip
+  trackKind: 'video' | 'audio'
+  /** tem par vinculado (vídeo ↔ som) */
+  linked: boolean
   m?: MontageMedia
   pps: number
   height: number
@@ -906,19 +919,26 @@ const ClipView = memo(function ClipView({
   onMenu: (e: React.MouseEvent, c: MontageClip) => void
 }) {
   const w = Math.max(2, clipDur(c) * pps)
-  const kind = m?.kind ?? 'audio'
+  // o som de um vídeo, na faixa de áudio, tem cara de áudio
+  const kind = trackKind === 'audio' ? 'audio' : (m?.kind ?? 'audio')
   return (
     <div
-      className={'mt-clip k-' + kind + (sel ? ' sel' : '') + (blade ? ' blade' : '') + (!m ? ' missing' : '')}
+      className={'mt-clip k-' + kind + (sel ? ' sel' : '') + (blade ? ' blade' : '') + (!m ? ' missing' : '') + (linked ? ' linked' : '')}
       style={{ left: c.start * pps, width: w }}
       data-clip={c.id}
       onPointerDown={(e) => onDown(e, c)}
       onDoubleClick={(e) => onDouble(e, c)}
       onContextMenu={(e) => onMenu(e, c)}
-      title={`${m?.name ?? 'mídia sumiu'}\n${formatTime(c.start)} → ${formatTime(clipEndT(c))} (${clipDur(c).toFixed(2)}s)`}
+      title={
+        `${m?.name ?? 'mídia sumiu'}\n${formatTime(c.start)} → ${formatTime(clipEndT(c))} (${clipDur(c).toFixed(2)}s)` +
+        (linked ? (trackKind === 'video' ? '\nO som está vinculado numa faixa de áudio (anda junto)' : '\nSom vinculado ao vídeo (anda junto; arraste pra cima/baixo pra trocar de faixa)') : '')
+      }
     >
-      {m?.hasAudio && <Wave c={c} engine={engine} width={w} height={height} version={wavesVersion} />}
-      <span className="mt-clip-name">{m?.name ?? '?'}</span>
+      {m?.hasAudio && !(trackKind === 'video' && c.audioOff) && <Wave c={c} engine={engine} width={w} height={height} version={wavesVersion} />}
+      <span className="mt-clip-name">
+        {linked && <Link2 size={10} className="mt-link" />}
+        {m?.name ?? '?'}
+      </span>
       {!!c.fadeIn && (
         <svg className="mt-fade in" style={{ width: c.fadeIn * pps }} viewBox="0 0 100 100" preserveAspectRatio="none">
           <polygon points={['0,0', ...fadePath(true, c.fadeInCurve)].join(' ')} />

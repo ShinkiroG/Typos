@@ -51,9 +51,10 @@ type Check = { path: string; ok: boolean; files?: number; error?: string }
 
 const QUALITY_KEY = 'typos.renderQuality'
 /** short: só 30 s de vídeo (a partir de `from`, "m:ss") pra conferir rápido */
-type Quality = { pct: number; fps: number; short: boolean; from: string }
+/** audio: compila só o som da timeline (WAV), sem vídeo */
+type Quality = { pct: number; fps: number; short: boolean; from: string; audio?: boolean }
 const loadQuality = (): Quality => {
-  const def: Quality = { pct: 50, fps: 30, short: false, from: '0:00' }
+  const def: Quality = { pct: 50, fps: 30, short: false, from: '0:00', audio: false }
   try {
     return { ...def, ...JSON.parse(localStorage.getItem(QUALITY_KEY) || '{}') }
   } catch {
@@ -119,7 +120,8 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
     () => planRender(montage, { from: quality.short ? fromSec : 0, to: quality.short ? fromSec + 30 : Infinity, width: outW, height: outH, fps: quality.fps, format }),
     [montage, quality.short, fromSec, outW, outH, quality.fps, format]
   )
-  const finalFile = `video-${outW}x${outH}${quality.short ? `-30s-${fmtT(fromSec).replace(':', 'm')}` : ''}.mp4`
+  const shortTag = quality.short ? `-30s-${fmtT(fromSec).replace(':', 'm')}` : ''
+  const finalFile = quality.audio ? `audio${shortTag}.wav` : `video-${outW}x${outH}${shortTag}.mp4`
 
   // ---------- checklist: o que entra no vídeo, num olhar ----------
   type CheckState = 'ok' | 'bad' | 'checking' | 'none'
@@ -142,13 +144,16 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
     const video = used((c, m) => kind.get(c.track) === 'video' && m.kind !== 'audio' && m.bin !== 'motion')
     const narr = used((c, m) => m.hasAudio && !c.audioOff && roleOf(m.bin) === 'narration')
     const narrDur = narr.reduce((s, c) => s + c.out - c.in, 0)
-    const music = used((c, m) => m.hasAudio && !c.audioOff && kind.get(c.track) === 'audio' && roleOf(m.bin) !== 'narration' && roleOf(m.bin) !== 'sfx')
+    const music = used((c, m) => m.hasAudio && !c.audioOff && kind.get(c.track) === 'audio' && m.kind === 'audio' && roleOf(m.bin) !== 'narration' && roleOf(m.bin) !== 'sfx')
     const sfx = used((c, m) => m.hasAudio && !c.audioOff && roleOf(m.bin) === 'sfx')
+    // o som dos vídeos (o áudio vinculado, na metade de baixo)
+    const vsound = used((c, m) => m.hasAudio && !c.audioOff && kind.get(c.track) === 'audio' && m.kind === 'video' && roleOf(m.bin) !== 'narration' && roleOf(m.bin) !== 'sfx')
     return [
       { id: 'video', label: 'Vídeos e imagens', icon: <Film size={18} />, count: video.length, detail: `${video.length} cortes · ${uniq(video).length} arquivos`, paths: uniq(video), required: false },
       { id: 'motion', label: 'Clipes de motion', icon: <Boxes size={18} />, count: motion.length, detail: plan.pendingBlocks ? `${motion.length} aprovados · ${plan.pendingBlocks} blocos sem aprovar` : `${motion.length} aprovados`, paths: uniq(motion), required: false },
       { id: 'narration', label: 'Narração', icon: <Mic size={18} />, count: narr.length, detail: narr.length ? `${narr.length} cortes · ${fmtT(narrDur)}` : 'grave ou importe na Montagem', paths: uniq(narr), required: true },
       { id: 'music', label: 'Músicas', icon: <Music size={18} />, count: music.length, detail: `${music.length} cortes na timeline`, paths: uniq(music), required: false },
+      ...(vsound.length ? [{ id: 'vsound', label: 'Som dos vídeos', icon: <Film size={18} />, count: vsound.length, detail: `${vsound.length} cortes de áudio vinculados`, paths: uniq(vsound), required: false }] : []),
       { id: 'sfx', label: 'Efeitos sonoros', icon: <AudioLines size={18} />, count: sfx.length, detail: `${sfx.length} na timeline`, paths: uniq(sfx), required: false },
       { id: 'lettering', label: 'Letterings', icon: <Type size={18} />, count: plan.letterings.length, detail: `${plan.letterings.length} capítulos marcados`, paths: [] as string[], required: false }
     ]
@@ -249,8 +254,8 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
   /** o que falta rodar nesta rodada, na ordem */
   const runList = useRef<{ id: RenderItemId; fresh?: boolean }[]>([])
   const runningId = useRef<RenderItemId | null>(null)
-  const qualityRef = useRef({ outW, outH, fps: quality.fps, pct: quality.pct, short: quality.short, plan, finalFile })
-  qualityRef.current = { outW, outH, fps: quality.fps, pct: quality.pct, short: quality.short, plan, finalFile }
+  const qualityRef = useRef({ outW, outH, fps: quality.fps, pct: quality.pct, short: quality.short, audio: !!quality.audio, plan, finalFile, eq: montage.eq })
+  qualityRef.current = { outW, outH, fps: quality.fps, pct: quality.pct, short: quality.short, audio: !!quality.audio, plan, finalFile, eq: montage.eq }
 
   /** resolução do recorte: a mesma qualidade escolhida, na proporção dele */
   const shortSize = (aspect: string, pct: number) => {
@@ -262,12 +267,14 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
     const q = qualityRef.current
     // os 30 s de conferência não vão pra pasta de export
     const exportDir = q.short ? undefined : renderRef.current.exportDir || undefined
+    // só o som: fica numa subpasta própria (render/audio), sem mexer nas partes do vídeo
+    const audio = q.audio ? { audioOnly: true } : {}
     if (id === 'main') {
-      const name = `${slug(title || 'video')}-${q.outW}x${q.outH}.mp4`
+      const name = q.audio ? `${slug(title || 'video')}-audio.wav` : `${slug(title || 'video')}-${q.outW}x${q.outH}.mp4`
       return {
-        label: 'Vídeo principal',
+        label: q.audio ? 'Áudio do vídeo principal' : 'Vídeo principal',
         aspect: format?.aspect ?? '16:9',
-        job: { dir, width: q.outW, height: q.outH, fps: q.fps, finalFile: q.finalFile, parts: q.plan.parts, letterings: q.plan.letterings, fresh, exportDir, exportName: name }
+        job: { dir, width: q.outW, height: q.outH, fps: q.fps, finalFile: q.finalFile, parts: q.plan.parts, letterings: q.plan.letterings, fresh, exportDir, exportName: name, eq: q.eq, ...(q.audio ? { sub: 'audio' } : {}), ...audio }
       }
     }
     const sd = shortsRef.current
@@ -278,11 +285,13 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
     if (!p.parts.length) return { error: 'A timeline do recorte está vazia.' }
     const name = slug(sh.title)
     return {
-      label: sh.title,
+      label: q.audio ? `Áudio de "${sh.title}"` : sh.title,
       aspect: sd.aspect,
       shortId: sh.id,
       key: shortKey(sh),
-      job: { dir, width: w, height: h, fps: q.fps, finalFile: `${name}-${w}x${h}.mp4`, parts: p.parts, letterings: p.letterings, sub: `clipes/${name}-${sh.id}`, fit: 'cover' as const, exportDir, exportName: `${name}-${w}x${h}.mp4` }
+      job: q.audio
+        ? { dir, width: w, height: h, fps: q.fps, finalFile: `${name}-audio.wav`, parts: p.parts, letterings: [], sub: `clipes/${name}-${sh.id}/audio`, exportDir, exportName: `${name}-audio.wav`, eq: sh.montage.eq ?? q.eq, ...audio }
+        : { dir, width: w, height: h, fps: q.fps, finalFile: `${name}-${w}x${h}.mp4`, parts: p.parts, letterings: p.letterings, sub: `clipes/${name}-${sh.id}`, fit: 'cover' as const, exportDir, exportName: `${name}-${w}x${h}.mp4`, eq: sh.montage.eq ?? q.eq }
     }
   }
 
@@ -313,6 +322,8 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
       } else {
         setRunOf(it.id, { status: 'pronto', path: r.path })
         const short = qualityRef.current.short
+        // só o som não conta como o vídeo exportado: não mexe na fila nem no último export
+        if (qualityRef.current.audio) continue
         // a conferência de 30 s não tira o vídeo da fila
         if (!short) onRender((x) => ({ ...queueRenderItems(x, [it.id], false), ...(it.id === 'main' && r.path ? { mainExport: { path: r.path, at: new Date().toISOString() } } : {}) }))
         else if (it.id === 'main' && r.path) onRender((x) => ({ ...x, mainExport: { path: r.path!, at: new Date().toISOString() } }))
@@ -432,6 +443,12 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
                   )}
                   <small>{lastLine}</small>
                 </div>
+              ) : curFile && /\.wav$/i.test(curFile) ? (
+                <div className="rn-screen-empty">
+                  <AudioLines size={34} />
+                  <span>{cur?.label}: só o áudio</span>
+                  <audio key={curFile + (job?.seconds ?? '')} src={fileUrl(curFile)} controls />
+                </div>
               ) : curFile ? (
                 <video key={curFile + (job?.seconds ?? '')} src={fileUrl(curFile)} controls />
               ) : (
@@ -439,7 +456,9 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
                   <Clapperboard size={34} />
                   <span>{cur ? `${cur.label}: ainda não renderizado` : 'O vídeo aparece aqui'}</span>
                   <small>
-                    {cur?.kind === 'short'
+                    {quality.audio
+                      ? `só o áudio · WAV 48 kHz${quality.short ? ` · 30 s a partir de ${fmtT(fromSec)}` : ` · ${fmtT(plan.total)}`}`
+                      : cur?.kind === 'short'
                       ? `${curSize[0]}×${curSize[1]} · ${quality.fps} fps · ${cur.detail}`
                       : `${outW}×${outH} · ${quality.fps} fps${quality.short ? ` · 30 s a partir de ${fmtT(fromSec)}` : ` · ${fmtT(plan.total)}`}`}
                   </small>
@@ -548,6 +567,21 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
 
         <aside className="rn-side">
           <section className="rn-card">
+            <div className="rn-fps">
+              Sai
+              <div className="rn-chips">
+                <button className={'rn-chip' + (!quality.audio ? ' on' : '')} onClick={() => setQuality((q) => ({ ...q, audio: false }))}>
+                  <Film size={12} /> Vídeo com som
+                </button>
+                <button
+                  className={'rn-chip' + (quality.audio ? ' on' : '')}
+                  onClick={() => setQuality((q) => ({ ...q, audio: true }))}
+                  title="Compila só o som da timeline (narração, músicas, efeitos e o áudio dos vídeos, com o mesmo mix e limitador) num WAV: bem mais rápido, sem gravar quadro nenhum"
+                >
+                  <AudioLines size={12} /> Só o áudio (WAV)
+                </button>
+              </div>
+            </div>
             <h3>Qualidade</h3>
             <div className="rn-res">
               {outW}×{outH}
@@ -628,10 +662,10 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
               </button>
             )}
             <button className="rn-create" onClick={renderAll} disabled={!queuedRows.length} title="Renderiza tudo o que está na fila, um depois do outro">
-              <ListOrdered size={18} /> Renderizar todos ({queuedRows.length})
+              <ListOrdered size={18} /> {quality.audio ? 'Compilar o áudio de todos' : 'Renderizar todos'} ({queuedRows.length})
             </button>
             {cur &&
-              (cur.id === 'main' && !job?.busy && resume && resume.status !== 'pronto' && resume.done > 0 ? (
+              (cur.id === 'main' && !quality.audio && !job?.busy && resume && resume.status !== 'pronto' && resume.done > 0 ? (
                 <div className="rn-chips">
                   <button className="btn small" onClick={() => renderOne('main')} disabled={!plan.parts.length} title="Reaproveita as partes prontas que não mudaram na timeline">
                     <Play size={12} /> Continuar o principal ({Math.round(resume.pct * 100)}% pronto)

@@ -256,6 +256,8 @@ const api = {
     fit?: 'contain' | 'cover'
     exportDir?: string
     exportName?: string
+    audioOnly?: boolean
+    eq?: { on: boolean; highpass: number; gains: number[] }
   }): Promise<{ path?: string; summary: string; seconds: number } | { error: string }> => ipcRenderer.invoke('render:start', job),
   renderStatus: (dir: string): Promise<{ status: 'rodando' | 'interrompido' | 'pronto'; reason?: string; done: number; total: number; pct: number; updated: number } | null> =>
     ipcRenderer.invoke('render:status', dir),

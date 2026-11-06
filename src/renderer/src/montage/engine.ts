@@ -1,4 +1,5 @@
 import { LiveAudio } from '../audio'
+import { EQ_BANDS, EQ_Q, flatEq, normEq, type MontageEq } from '../../../shared/eq'
 import { api, audioPath, clipEndT, fileUrl, type FadeCurve, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 
 export const PEAKS_PER_SEC = 100
@@ -117,8 +118,27 @@ export function envPoints(s: Span) {
  * O vídeo só acompanha o relógio daqui.
  */
 export class MontageEngine {
-  private master: DynamicsCompressorNode | null = null
+  /** entrada do mix: equalizador → limitador → medidor de frequências → saída */
+  private master: AudioNode | null = null
+  private hp: BiquadFilterNode[] = []
+  private bands: BiquadFilterNode[] = []
+  private an: AnalyserNode | null = null
+  private eq: MontageEq = flatEq()
   private audio = new LiveAudio((ctx) => {
+    this.hp = [0, 1].map(() => {
+      const f = ctx.createBiquadFilter()
+      f.type = 'highpass'
+      // no Web Audio o Q do passa-alta é em dB: −3,01 dB = 0,7071 (Butterworth, igual ao do ffmpeg)
+      f.Q.value = -3.0103
+      return f
+    })
+    this.bands = EQ_BANDS.map((hz) => {
+      const f = ctx.createBiquadFilter()
+      f.type = 'peaking'
+      f.frequency.value = hz
+      f.Q.value = EQ_Q
+      return f
+    })
     // limitador (estilo broadcast): segura os picos depois da normalização, sem mexer no resto
     const lim = ctx.createDynamicsCompressor()
     lim.threshold.value = -1.5
@@ -126,8 +146,17 @@ export class MontageEngine {
     lim.ratio.value = 20
     lim.attack.value = 0.002
     lim.release.value = 0.12
-    lim.connect(ctx.destination)
-    this.master = lim
+    const an = ctx.createAnalyser()
+    an.fftSize = 16384
+    an.smoothingTimeConstant = 0.75
+    an.minDecibels = -100
+    an.maxDecibels = -10
+    const chain: AudioNode[] = [...this.hp, ...this.bands, lim, an]
+    chain.reduce((a, b) => a.connect(b))
+    an.connect(ctx.destination)
+    this.an = an
+    this.master = chain[0]
+    this.applyEq()
   })
   private loading = new Map<string, Promise<LoadedAudio | null>>()
   private ready = new Map<string, LoadedAudio>()
@@ -144,6 +173,28 @@ export class MontageEngine {
 
   get(mediaId: string) {
     return this.ready.get(mediaId)
+  }
+
+  /** medidor de frequências do que está tocando (depois do EQ e do limitador) */
+  get analyser() {
+    return this.an
+  }
+
+  /** troca o equalizador (vale na hora, tocando ou não) */
+  setEq(eq?: Partial<MontageEq> | null) {
+    this.eq = normEq(eq)
+    this.applyEq()
+  }
+
+  private applyEq() {
+    const ctx = this.audio.current
+    const t = ctx?.currentTime ?? 0
+    const on = this.eq.on
+    for (const f of this.hp) {
+      // passa-alta "desligado" = em 1 Hz (não muda nada audível)
+      f.frequency.setTargetAtTime(on && this.eq.highpass > 0 ? this.eq.highpass : 1, t, 0.02)
+    }
+    this.bands.forEach((f, i) => f.gain.setTargetAtTime(on ? this.eq.gains[i] : 0, t, 0.02))
   }
 
   /** carrega a prévia; com a limpeza de ruído ou os picos ligados, a da cópia tratada (trocar recarrega) */

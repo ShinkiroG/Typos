@@ -2,6 +2,7 @@ import type { JSONContent } from '@tiptap/core'
 import { blockPrompts } from './editor/promptMark'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Api } from '../../preload'
+import type { MontageEq } from '../../shared/eq'
 
 declare global {
   interface Window {
@@ -786,6 +787,8 @@ export interface MontageTrack {
   auto?: boolean
   /** altura da faixa na timeline (px); sem valor = padrão do tipo */
   height?: number
+  /** faixa criada pro som vinculado dos vídeos (é onde o som de um clipe de vídeo novo cai) */
+  videoSound?: boolean
 }
 /** curva do fade: ponto de controle (bezier quadrática) no quadrado 0..1; [0.5, 0.5] = linear */
 export type FadeCurve = [number, number]
@@ -811,6 +814,8 @@ export interface MontageClip {
   block?: number
   /** o som do próprio clipe não toca nem entra no render (ex.: clipe de motion que já traz a narração do trecho) */
   audioOff?: boolean
+  /** par vinculado: o vídeo e o som dele (mesmo arquivo) têm o mesmo link e andam juntos no tempo */
+  link?: string
 }
 export interface MontageData {
   bins: MontageBin[]
@@ -829,6 +834,8 @@ export interface MontageData {
   blocks?: InstructionBlock[]
   /** correções e prompts do autor na transcrição de cada arquivo (chave: caminho do arquivo) */
   transcriptEdits?: Record<string, TranscriptEdit>
+  /** equalizador do som do vídeo (prévia e render) */
+  eq?: MontageEq
 }
 /** prompt preso a um trecho da fala transcrita (tempos do arquivo, em s) */
 export interface TranscriptPrompt {

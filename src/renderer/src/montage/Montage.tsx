@@ -46,10 +46,13 @@ import {
   ListPlus,
   SlidersHorizontal,
   Check,
-  AudioLines
+  AudioLines,
+  SlidersVertical
 } from 'lucide-react'
 import { api, audioPath, clipDur, clipEndT, DENOISE_HINT, DENOISE_LABEL, fileUrl, PEAKS_HINT, RESOLUTIONS, uid, type DenoiseLevel, type Attachment, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
+import { EqPanel } from './EqPanel'
+import { eqActive } from '../../../shared/eq'
 import { SILENCE_DEFAULT, silenceCut, silenceStats, suggestThreshold, type SilenceOpts } from './silence'
 import { blocksMoved, fitBlocksToLetterings, silenceStart, timelineSilences } from './letterings'
 import { Recorder } from '../audio'
@@ -66,6 +69,7 @@ import { AudioReadButton, BlockHeardRow, useBlockHeard } from './AudioRead'
 import { TranscriptModal } from './TranscriptModal'
 import { jobPct, recheckRead, runningLabel, speechFiles, watchJobs } from './transcripts'
 import { describeChange } from './history'
+import { linkPair, partnerOf, syncLinks, unlink, withLinked } from './links'
 import { isKey, keyOf } from '../keys'
 
 const keyHint = (id: string) => keyOf(id) || '—'
@@ -507,10 +511,13 @@ export function Montage({
   /** quando cada passo aconteceu (chave: o estado de antes dele) */
   const stamps = useRef(new WeakMap<MontageData, number>())
   const [histOpen, setHistOpen] = useState(false)
+  const [eqOpen, setEqOpen] = useState(false)
   const change = useCallback(
     (next: MontageData, gesture?: string) => {
       // lettering de capítulo é transição: os blocos que passam por ele são cortados em volta
       const prev = dataRef.current
+      // vídeo e som vinculados andam juntos (dividir, apagar, mover); vídeo com som novo ganha o som numa faixa de áudio
+      next = syncLinks(prev, next)
       if (next.markers !== prev.markers || blocksMoved(prev, next)) next = fitBlocksToLetterings(next)
       if (!gesture || gesture !== lastGesture.current) {
         stamps.current.set(dataRef.current, Date.now())
@@ -552,6 +559,21 @@ export function Montage({
     window.addEventListener('typos:montage-history', on)
     return () => window.removeEventListener('typos:montage-history', on)
   })
+
+  // timeline de antes do áudio vinculado: o som de cada vídeo desce pra uma faixa de áudio (sem passo no desfazer)
+  useEffect(() => {
+    const fixed = syncLinks(null, data)
+    if (fixed !== data) {
+      dataRef.current = fixed
+      onChange(fixed)
+    }
+  }, [data.clips, data.tracks, data.media])
+
+  // equalizador do vídeo: vale na hora na prévia
+  useEffect(() => {
+    engine.setEq(data.eq)
+  }, [data.eq, engine])
+  const analyser = useCallback(() => engine.analyser, [engine])
 
   // mexeu na timeline tocando: reagenda o áudio
   useEffect(() => {
@@ -725,8 +747,10 @@ export function Montage({
     return dataRef.current.clips.filter((c) => ids.includes(c.id))
   }
 
-  const removeClips = (targets: MontageClip[], ripple: boolean) => {
-    const ids = new Set(targets.map((c) => c.id))
+  const removeClips = (picked: MontageClip[], ripple: boolean) => {
+    // o par vinculado sai junto (e, com "juntar o resto", fecha o buraco na faixa dele também)
+    const ids = new Set(withLinked(dataRef.current, picked.map((c) => c.id)))
+    const targets = dataRef.current.clips.filter((c) => ids.has(c.id))
     let clips = dataRef.current.clips.filter((c) => !ids.has(c.id))
     if (ripple)
       for (const r of [...targets].sort((a, b) => b.start - a.start))
@@ -931,10 +955,12 @@ export function Montage({
 
   const remove = (ripple: boolean) => {
     if (!sel.length) return
-    let clips = data.clips.filter((c) => !selected.includes(c.id))
+    // o par vinculado sai junto
+    const ids = new Set(withLinked(data, selected))
+    let clips = data.clips.filter((c) => !ids.has(c.id))
     if (ripple) {
       // fecha o buraco na mesma faixa (do fim pro começo pra não somar errado)
-      for (const r of [...sel].sort((a, b) => b.start - a.start)) {
+      for (const r of data.clips.filter((c) => ids.has(c.id)).sort((a, b) => b.start - a.start)) {
         clips = clips.map((c) => (c.track === r.track && c.start >= clipEndT(r) - 0.001 ? { ...c, start: c.start - clipDur(r) } : c))
       }
     }
@@ -2366,6 +2392,10 @@ export function Montage({
             hasPrev={!!prevOf(one)}
             spliceLen={spliceLen}
             patch={(p, g) => patchClip(one.id, p, g)}
+            linkedTo={(() => {
+              const p = partnerOf(data, one)
+              return p ? data.tracks.find((t) => t.id === p.track)?.name ?? '?' : undefined
+            })()}
           />
         )}
       </section>
@@ -2547,6 +2577,16 @@ export function Montage({
             <option value="lufs:-19">−19 LUFS · podcast</option>
           </optgroup>
         </select>
+        <div className="mt-hist-wrap">
+          <button
+            className={'btn small' + (eqOpen || eqActive(data.eq) ? ' on' : '')}
+            title="Frequências e equalizador: vê em Hz o que está tocando (subgrave, grave, médio, agudo) e equaliza o som do vídeo inteiro (ex.: cortar o subgrave que treme no subwoofer). Sai igual no render."
+            onClick={() => setEqOpen((o) => !o)}
+          >
+            <SlidersVertical size={13} /> <span className="lbl">EQ</span>
+          </button>
+          {eqOpen && <EqPanel eq={data.eq} onChange={(eq, g) => change({ ...dataRef.current, eq }, g)} analyser={analyser} playing={playing} onClose={() => setEqOpen(false)} />}
+        </div>
         {normMsg && <span className="mt-norm-msg">{normMsg}</span>}
         {busy && !normMsg && (
           <span className="mt-norm-msg">
@@ -2723,10 +2763,42 @@ export function Montage({
                   {one.splice ? 'Tirar o crossfade com o anterior' : 'Crossfade com o corte anterior'} <kbd>E</kbd>
                 </button>
               )}
+              {(() => {
+                const d = dataRef.current
+                const linked = targets.filter((c) => partnerOf(d, c))
+                const kindOf = (c: MontageClip) => d.tracks.find((t) => t.id === c.track)?.kind
+                const vs = targets.filter((c) => kindOf(c) === 'video' && !partnerOf(d, c))
+                const aus = targets.filter((c) => kindOf(c) === 'audio' && !partnerOf(d, c))
+                const canLink = vs.length === 1 && aus.length === 1 && vs[0].media === aus[0].media
+                if (!linked.length && !canLink) return null
+                return (
+                  <>
+                    <div className="ctx-sep" />
+                    {linked.length > 0 && (
+                      <button
+                        title="O vídeo continua mudo e o som fica solto: dá pra apagar ou mover só um dos dois"
+                        onClick={act(() => change(unlink(d, linked.map((c) => c.id))))}
+                      >
+                        Desvincular áudio e vídeo
+                      </button>
+                    )}
+                    {canLink && (
+                      <button title="O som passa a ter o mesmo tempo do vídeo e os dois andam juntos" onClick={act(() => change(linkPair(d, vs[0].id, aus[0].id)))}>
+                        Vincular áudio e vídeo
+                      </button>
+                    )}
+                  </>
+                )
+              })()}
               {targets.some((c) => media.get(c.media)?.hasAudio) && (
                 <>
                   <div className="ctx-sep" />
-                  <button onClick={act(() => setSoundFor({ x: clipMenu.x, y: clipMenu.y, ids: targets.map((c) => c.id) }))}>
+                  <button
+                    onClick={act(() =>
+                      // num vídeo vinculado, o controle de som mexe no som dele (na faixa de áudio)
+                      setSoundFor({ x: clipMenu.x, y: clipMenu.y, ids: targets.map((c) => (c.audioOff && partnerOf(dataRef.current, c)?.id) || c.id) })
+                    )}
+                  >
                     Controle de som…
                     {one && one.gainDb ? <kbd>{(one.gainDb > 0 ? '+' : '') + one.gainDb.toFixed(1)} dB</kbd> : null}
                   </button>
@@ -3151,13 +3223,16 @@ function ClipInspector({
   m,
   hasPrev,
   spliceLen,
-  patch
+  patch,
+  linkedTo
 }: {
   c: MontageClip
   m?: MontageMedia
   hasPrev: boolean
   spliceLen: number
   patch: (p: Partial<MontageClip>, gesture?: string) => void
+  /** nome da faixa do par vinculado (vídeo ↔ som) */
+  linkedTo?: string
 }) {
   const num = (v: number) => +v.toFixed(3)
   const g = 'insp-' + c.id
@@ -3184,7 +3259,12 @@ function ClipInspector({
           <input type="number" step={0.01} value={num(c.out)} onChange={(e) => patch({ out: Math.max(c.in + 0.04, Math.min(mediaLen(m), Number(e.target.value))) }, g + 'o')} />
         </label>
       </div>
-      {m?.hasAudio && (
+      {linkedTo && (
+        <div className="mt-insp-row muted small" title="Os dois andam juntos no tempo. Botão direito → Desvincular pra mexer só num deles.">
+          <Link2 size={11} /> {c.audioOff ? `Som vinculado em ${linkedTo}` : `Vinculado ao vídeo em ${linkedTo}`}
+        </div>
+      )}
+      {m?.hasAudio && !(linkedTo && c.audioOff) && (
         <label className="toggle-row mt-insp-row" title="Desligado, o som do arquivo não toca nem entra no render (clipes de motion aprovados já trazem a narração, que continua nas faixas de áudio)">
           <input type="checkbox" checked={!c.audioOff} onChange={(e) => patch({ audioOff: e.target.checked ? undefined : true })} />
           Tocar o som deste clipe
