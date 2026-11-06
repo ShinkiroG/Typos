@@ -128,6 +128,33 @@ export function volumeFilter(env: [number, number][]) {
 }
 
 /**
+ * Mix dos trechos de áudio da parte (entrada 1 = silêncio do tamanho da parte): soma no filtro e sai em [aout].
+ * k = índice da próxima entrada do ffmpeg.
+ */
+function mixAudio(p: Pick<PartSpec, 'from' | 'to' | 'audio'>, args: string[], fil: string[], k: number) {
+  const samples = partSamples(p)
+  const mix: string[] = ['[1:a]']
+  p.audio.forEach((a, i) => {
+    const a0 = Math.max(a.t0, p.from)
+    const a1 = Math.min(a.t1, p.to)
+    if (a1 - a0 < 0.002) return
+    args.push('-ss', n(Math.max(0, a.src0 + a0 - a.t0), 6), '-t', n(a1 - a0, 6), '-i', a.path)
+    const env = sliceEnv(a.env, a0 - a.t0, a1 - a0)
+    const delay = Math.max(0, Math.round(a0 * RATE) - Math.round(p.from * RATE))
+    fil.push(
+      `[${k}:a]aresample=${RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS,${volumeFilter(env)},adelay=delays=${delay}S:all=1[s${i}]`
+    )
+    mix.push(`[s${i}]`)
+    k++
+  })
+  fil.push(
+    mix.length > 1
+      ? `${mix.join('')}amix=inputs=${mix.length}:duration=first:dropout_transition=0:normalize=0,atrim=end_sample=${samples}[aout]`
+      : `[1:a]atrim=end_sample=${samples}[aout]`
+  )
+}
+
+/**
  * Um trecho da timeline → parte-NN.mp4 (só vídeo, H.264) + parte-NN.wav (mix em float, sem limitar:
  * o limitador roda uma vez só, no vídeo final, pra não ter emenda entre as partes).
  */
@@ -172,30 +199,37 @@ export function partArgs(p: PartSpec): string[] {
   })
   fil.push(`[${last}]format=yuv420p[vout]`)
 
-  const mix: string[] = ['[1:a]']
-  p.audio.forEach((a, i) => {
-    const a0 = Math.max(a.t0, p.from)
-    const a1 = Math.min(a.t1, p.to)
-    if (a1 - a0 < 0.002) return
-    args.push('-ss', n(Math.max(0, a.src0 + a0 - a.t0), 6), '-t', n(a1 - a0, 6), '-i', a.path)
-    const env = sliceEnv(a.env, a0 - a.t0, a1 - a0)
-    const delay = Math.max(0, Math.round(a0 * RATE) - Math.round(p.from * RATE))
-    fil.push(
-      `[${k}:a]aresample=${RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS,${volumeFilter(env)},adelay=delays=${delay}S:all=1[s${i}]`
-    )
-    mix.push(`[s${i}]`)
-    k++
-  })
-  fil.push(
-    mix.length > 1
-      ? `${mix.join('')}amix=inputs=${mix.length}:duration=first:dropout_transition=0:normalize=0,atrim=end_sample=${samples}[aout]`
-      : `[1:a]atrim=end_sample=${samples}[aout]`
-  )
+  mixAudio(p, args, fil, k)
 
   args.push('-filter_complex', fil.join(';'))
   args.push('-map', '[vout]', '-frames:v', String(frames), ...x264Args('master'), '-r', String(fps), '-an', p.outVideo)
   args.push('-map', '[aout]', '-c:a', 'pcm_f32le', '-ar', String(RATE), '-ac', '2', p.outWav)
   return args
+}
+
+/** só o som de um trecho da timeline → parte-NN.wav (mesmo mix do vídeo, sem quadro nenhum) */
+export function partAudioArgs(p: { from: number; to: number; audio: ALayer[]; outWav: string }): string[] {
+  const samples = partSamples(p)
+  const args = ['-hide_banner', '-y', '-nostdin', '-nostats']
+  args.push('-f', 'lavfi', '-i', 'color=c=black:s=16x16:r=1:d=1')
+  args.push('-f', 'lavfi', '-t', n(samples / RATE + 0.5, 3), '-i', `anullsrc=r=${RATE}:cl=stereo`)
+  const fil: string[] = []
+  mixAudio(p, args, fil, 2)
+  args.push('-filter_complex', fil.join(';'))
+  args.push('-map', '[aout]', '-c:a', 'pcm_f32le', '-ar', String(RATE), '-ac', '2', p.outWav)
+  return args
+}
+
+/** junta só o som das partes num WAV (24 bits, 48 kHz), com o mesmo equalizador e limitador do vídeo final */
+export function finalAudioArgs(audioList: string, out: string, limiter = true, eq: string[] = []): string[] {
+  const af = [...eq, ...(limiter ? ['alimiter=limit=0.84:attack=5:release=120:level=0'] : [])]
+  return [
+    '-hide_banner', '-y', '-nostdin',
+    '-f', 'concat', '-safe', '0', '-i', audioList,
+    ...(af.length ? ['-af', af.join(',')] : []),
+    '-c:a', 'pcm_s24le', '-ar', String(RATE), '-ac', '2',
+    out
+  ]
 }
 
 /** lista do concat demuxer (nomes relativos à pasta da lista) */
