@@ -2377,3 +2377,9 @@
 .blk-encoder select {
   font-size: 11px;
 }
+/* par vinculado (vídeo ↔ som dele): o ícone de corrente no nome */
+.mt-clip-name .mt-link {
+  vertical-align: -1px;
+  margin-right: 3px;
+  opacity: 0.85;
+}

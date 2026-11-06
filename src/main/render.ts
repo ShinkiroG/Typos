@@ -4,7 +4,7 @@ import { promises as fs, existsSync } from 'fs'
 import { spawn, type ChildProcess } from 'child_process'
 import { createHash } from 'crypto'
 import { findFfmpeg, probe } from './media'
-import { concatList, finalArgs, partArgs, partFrames, ENCODE_V, type ALayer, type VLayer } from './compose'
+import { concatList, finalArgs, finalAudioArgs, partArgs, partAudioArgs, partFrames, ENCODE_V, type ALayer, type VLayer } from './compose'
 import { htmlToVideo } from './motionPreview'
 import { cleanAudio } from './denoise'
 
@@ -80,6 +80,8 @@ export interface RenderJob {
   /** pasta de export: o vídeo pronto é copiado pra lá (com exportName) e é essa cópia que volta */
   exportDir?: string
   exportName?: string
+  /** só o som: cada parte vira um WAV e o final é um WAV (sem vídeo nem letterings) */
+  audioOnly?: boolean
 }
 
 interface StepState {
@@ -198,6 +200,8 @@ async function start(sender: WebContents, job: RenderJob) {
   await fs.mkdir(letDir, { recursive: true })
   const t0 = Date.now()
   const total = job.parts[job.parts.length - 1].to - job.parts[0].from
+  const audioOnly = !!job.audioOnly
+  const partFile = (id: string) => `partes/${id}.${audioOnly ? 'wav' : 'mp4'}`
 
   // ---------- o que já está pronto de uma rodada anterior ----------
   const letById = new Map(job.letterings.map((l) => [l.id, l]))
@@ -207,13 +211,13 @@ async function start(sender: WebContents, job: RenderJob) {
     ...job.parts.map((p) => ({
       id: p.id,
       label: p.label,
-      file: `partes/${p.id}.mp4`,
+      file: partFile(p.id),
       weight: p.to - p.from,
       expect: p.to - p.from,
-      sig: sha(p.key + '|' + ENCODE_V + '|' + p.letterings.map((id) => letById.get(id)?.html ?? '').join('|')),
+      sig: audioOnly ? sha('audio|' + JSON.stringify([p.from, p.to, p.audio])) : sha(p.key + '|' + ENCODE_V + '|' + p.letterings.map((id) => letById.get(id)?.html ?? '').join('|')),
       done: false
     })),
-    { id: 'final', label: 'Vídeo final', file: job.finalFile, weight: Math.max(2, total * 0.04), expect: total, sig: '', done: false }
+    { id: 'final', label: audioOnly ? 'Áudio final' : 'Vídeo final', file: job.finalFile, weight: Math.max(2, total * 0.04), expect: total, sig: '', done: false }
   ]
   plan[plan.length - 1].sig = sha(plan.map((x) => x.sig).join('|') + job.finalFile)
   for (const st of plan) {
@@ -250,7 +254,7 @@ async function start(sender: WebContents, job: RenderJob) {
 
   // ---------- letterings (gravados uma vez, reaproveitados enquanto não mudarem) ----------
   const pending = job.parts.filter((p) => !plan.find((x) => x.id === p.id)!.done)
-  const needed = [...new Set(pending.flatMap((p) => p.letterings))].map((id) => letById.get(id)!).filter((l) => l && !existsSync(letFile(l)))
+  const needed = audioOnly ? [] : [...new Set(pending.flatMap((p) => p.letterings))].map((id) => letById.get(id)!).filter((l) => l && !existsSync(letFile(l)))
   for (const [i, l] of needed.entries()) {
     send({ kind: 'info', text: `Gravando o lettering "${l.label}" (${i + 1} de ${needed.length})…` })
     progress('letterings')
@@ -290,6 +294,15 @@ async function start(sender: WebContents, job: RenderJob) {
         return { path: letFile(l), image: false, t0: l.t, t1: l.t + l.dur, src0: 0, fadeIn: f, fadeOut: f }
       })
     send({ kind: 'info', text: `${p.label}…` })
+    if (audioOnly) {
+      const r = await ffmpeg(ff.ffmpeg, partAudioArgs({ from: p.from, to: p.to, audio: audioOf(p.audio), outWav: join(out, st.file) }))
+      if (cancelled) throw await stop('Cancelado.')
+      if (r.code !== 0) throw await stop(`O ffmpeg falhou no som da ${p.label}: ${tail(r.err)}.`)
+      st.done = true
+      await writeState(out, state)
+      progress('partes')
+      continue
+    }
     const frames = partFrames({ from: p.from, to: p.to, fps: job.fps })
     const args = partArgs({
       from: p.from,
@@ -319,12 +332,14 @@ async function start(sender: WebContents, job: RenderJob) {
   if (!fin.done) {
     send({ kind: 'info', text: 'Juntando as partes…' })
     progress('final')
-    await fs.writeFile(join(partsDir, 'video.txt'), concatList(job.parts.map((p) => p.id + '.mp4')), 'utf8')
     await fs.writeFile(join(partsDir, 'audio.txt'), concatList(job.parts.map((p) => p.id + '.wav')), 'utf8')
     const dest = join(out, fin.file)
-    let r = await ffmpeg(ff.ffmpeg, finalArgs(join(partsDir, 'video.txt'), join(partsDir, 'audio.txt'), dest))
+    const args = (limiter: boolean) =>
+      audioOnly ? finalAudioArgs(join(partsDir, 'audio.txt'), dest, limiter) : finalArgs(join(partsDir, 'video.txt'), join(partsDir, 'audio.txt'), dest, limiter)
+    if (!audioOnly) await fs.writeFile(join(partsDir, 'video.txt'), concatList(job.parts.map((p) => p.id + '.mp4')), 'utf8')
+    let r = await ffmpeg(ff.ffmpeg, args(true))
     // ffmpeg antigo sem as opções do limitador: junta sem ele
-    if (r.code !== 0 && !cancelled && /alimiter|level/i.test(r.err)) r = await ffmpeg(ff.ffmpeg, finalArgs(join(partsDir, 'video.txt'), join(partsDir, 'audio.txt'), dest, false))
+    if (r.code !== 0 && !cancelled && /alimiter|level/i.test(r.err)) r = await ffmpeg(ff.ffmpeg, args(false))
     if (cancelled) throw await stop('Cancelado.')
     if (r.code !== 0) throw await stop('O ffmpeg falhou ao juntar as partes: ' + tail(r.err) + '.')
     fin.done = true
@@ -338,7 +353,8 @@ async function start(sender: WebContents, job: RenderJob) {
   let where = ''
   if (job.exportDir) {
     const name = basename(job.exportName || fin.file).replace(/[<>:"/\\|?*\x00-\x1f]/g, '-') || fin.file
-    const dest = join(job.exportDir, /\.mp4$/i.test(name) ? name : name + '.mp4')
+    const ext = audioOnly ? '.wav' : '.mp4'
+    const dest = join(job.exportDir, name.toLowerCase().endsWith(ext) ? name : name + ext)
     try {
       await fs.mkdir(job.exportDir, { recursive: true })
       await fs.copyFile(path, dest)
@@ -348,7 +364,9 @@ async function start(sender: WebContents, job: RenderJob) {
       where = ` Não deu pra copiar pra pasta de export (${String(e?.message ?? e)}): ficou em render/.`
     }
   }
-  return { path, summary: `Vídeo compilado: ${job.parts.length} partes, ${job.width}×${job.height} a ${job.fps} fps.${where}`, seconds }
+  return { path, summary: audioOnly
+      ? `Áudio compilado: ${job.parts.length} partes, WAV 48 kHz 24 bits.${where}`
+      : `Vídeo compilado: ${job.parts.length} partes, ${job.width}×${job.height} a ${job.fps} fps.${where}`, seconds }
 }
 
 /** pra mostrar "Continuar" ao abrir o projeto: o que a última rodada deixou pronto */
