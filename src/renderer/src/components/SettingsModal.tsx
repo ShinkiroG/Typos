@@ -241,7 +241,7 @@ function AeSection() {
   useEffect(() => {
     api.aeInfo().then(setSt)
   }, [])
-  const pick = async (clear?: boolean) => {
+  const pick = async (clear?: boolean | string) => {
     const r = await api.aePick(clear)
     if ('error' in r) return setErr(r.error)
     setErr('')
@@ -254,10 +254,24 @@ function AeSection() {
         Blocos de motion marcados como After Effects viram um projeto .aep (o Claude escreve o script, o AE monta e o aerender grava). Dá pra abrir o projeto, mexer e
         renderizar de novo.
       </p>
-      <p className="small">
-        {st === null ? 'Procurando…' : st.found ? `Encontrado${st.found.year ? ` (${st.found.year})` : ''}: ${st.found.afterfx}` : 'Não encontrado neste PC.'}
-        {st?.manual ? ' · escolhido à mão' : ''}
-      </p>
+      {st && st.all.length > 1 ? (
+        <label className="small">
+          Versão usada:{' '}
+          <select value={st.found?.afterfx ?? ''} onChange={(e) => pick(e.target.value)}>
+            {st.found && !st.all.some((x) => x.afterfx === st.found!.afterfx) && <option value={st.found.afterfx}>{st.found.afterfx}</option>}
+            {st.all.map((x) => (
+              <option key={x.afterfx} value={x.afterfx}>
+                After Effects {x.year ?? x.afterfx}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <p className="small">
+          {st === null ? 'Procurando…' : st.found ? `Encontrado${st.found.year ? ` (${st.found.year})` : ''}: ${st.found.afterfx}` : 'Não encontrado neste PC.'}
+          {st?.manual ? ' · escolhido à mão' : ''}
+        </p>
+      )}
       {err && <p className="small error">{err}</p>}
       <div className="set-row">
         <button className="btn" onClick={() => pick()}>

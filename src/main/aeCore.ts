@@ -13,12 +13,22 @@ export function aeYear(folder: string): number | null {
   return m ? Number(m[1]) : null
 }
 
-/** as pastas do AE achadas, da versão mais nova pra mais velha */
+/** versões que o Typos usa por padrão, na ordem (o autor trabalha no 2025 e no 2024) */
+export const AE_PREFERRED = [2025, 2024]
+
+/**
+ * As pastas do AE achadas, na ordem em que o Typos tenta: primeiro as preferidas (2025, 2024),
+ * depois as outras da mais nova pra mais velha (uma 2026 instalada junto não passa na frente).
+ */
 export function pickAeFolders(names: string[]): string[] {
+  const rank = (y: number) => {
+    const i = AE_PREFERRED.indexOf(y)
+    return i >= 0 ? i : AE_PREFERRED.length
+  }
   return names
     .map((n) => ({ n, y: aeYear(n) }))
     .filter((x): x is { n: string; y: number } => x.y !== null)
-    .sort((a, z) => z.y - a.y)
+    .sort((a, z) => rank(a.y) - rank(z.y) || z.y - a.y)
     .map((x) => x.n)
 }
 

@@ -22,28 +22,36 @@ export interface AeInfo {
 }
 
 /** acha o AE: o caminho das Configurações, senão a versão mais nova em Arquivos de Programas\Adobe */
-export async function findAe(): Promise<AeInfo | null> {
-  const s = await loadSettings()
-  const fromExe = (exe: string): AeInfo | null => {
-    const dir = dirname(exe)
-    const aerender = join(dir, 'aerender.exe')
-    if (!existsSync(exe) || !existsSync(aerender)) return null
-    return { afterfx: exe, aerender, year: aeYear(dirname(dir).split(/[\\/]/).pop() ?? '') }
-  }
-  if (s.aePath) {
-    const got = fromExe(s.aePath)
-    if (got) return got
-  }
+function fromExe(exe: string): AeInfo | null {
+  const dir = dirname(exe)
+  const aerender = join(dir, 'aerender.exe')
+  if (!existsSync(exe) || !existsSync(aerender)) return null
+  return { afterfx: exe, aerender, year: aeYear(dirname(dir).split(/[\\/]/).pop() ?? '') }
+}
+
+/** todos os AE instalados em Arquivos de Programas\\Adobe, na ordem de preferência (2025, 2024, depois os outros) */
+export async function listAe(): Promise<AeInfo[]> {
   const roots = [process.env.ProgramFiles, process.env.ProgramW6432, 'C:\\Program Files'].filter(Boolean) as string[]
-  for (const root of [...new Set(roots)]) {
+  const out: AeInfo[] = []
+  for (const root of roots.filter((r, i) => roots.findIndex((x) => x.toLowerCase() === r.toLowerCase()) === i)) {
     const adobe = join(root, 'Adobe')
     const names = await fs.readdir(adobe).catch(() => [] as string[])
     for (const n of pickAeFolders(names)) {
       const got = fromExe(join(adobe, n, 'Support Files', 'AfterFX.exe'))
-      if (got) return got
+      if (got && !out.some((x) => x.afterfx.toLowerCase() === got.afterfx.toLowerCase())) out.push(got)
     }
   }
-  return null
+  return out
+}
+
+/** o AE que o Typos usa: o escolhido nas Configurações, senão o 2025, o 2024 ou o mais novo que tiver */
+export async function findAe(): Promise<AeInfo | null> {
+  const s = await loadSettings()
+  if (s.aePath) {
+    const got = fromExe(s.aePath)
+    if (got) return got
+  }
+  return (await listAe())[0] ?? null
 }
 
 export interface AeJob {
@@ -214,22 +222,29 @@ export function initAfterEffects() {
   ipcMain.handle('ae:info', async () => {
     const ae = await findAe()
     const s = await loadSettings()
-    return { found: ae, manual: s.aePath ?? null }
+    return { found: ae, manual: s.aePath ?? null, all: await listAe() }
   })
   /** escolhe o AfterFX.exe na mão (vazio = volta a procurar sozinho) */
-  ipcMain.handle('ae:pick', async (e, clear?: boolean) => {
-    if (clear) {
+  ipcMain.handle('ae:pick', async (e, clear?: boolean | string) => {
+    if (clear === true) {
       await saveSettings({ aePath: undefined })
-      return { found: await findAe(), manual: null }
+      return { found: await findAe(), manual: null, all: await listAe() }
+    }
+    // uma das versões achadas (a lista das Configurações)
+    if (typeof clear === 'string') {
+      const got = (await listAe()).find((x) => x.afterfx === clear)
+      if (!got) return { error: 'Essa versão do After Effects não foi encontrada.' }
+      await saveSettings({ aePath: got.afterfx })
+      return { found: got, manual: got.afterfx, all: await listAe() }
     }
     const win = BrowserWindow.fromWebContents(e.sender)
     const opts = { title: 'Onde está o AfterFX.exe?', defaultPath: 'C:\\Program Files\\Adobe', filters: [{ name: 'After Effects', extensions: ['exe'] }], properties: ['openFile' as const] }
     const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     const exe = r.filePaths[0]
-    if (r.canceled || !exe) return { found: await findAe(), manual: (await loadSettings()).aePath ?? null }
+    if (r.canceled || !exe) return { found: await findAe(), manual: (await loadSettings()).aePath ?? null, all: await listAe() }
     if (!existsSync(join(dirname(exe), 'aerender.exe'))) return { error: 'Não achei o aerender.exe na mesma pasta. Escolha o AfterFX.exe dentro de "Support Files".' }
     await saveSettings({ aePath: exe })
-    return { found: await findAe(), manual: exe }
+    return { found: await findAe(), manual: exe, all: await listAe() }
   })
   ipcMain.handle('ae:build', (e, job: AeJob) => owned(job.block, (c) => aeBuild(e.sender, job, c)))
   ipcMain.handle('ae:rerender', (e, job: { block: string; aep: string; seconds: number; width: number; height: number; fps: number }) =>
