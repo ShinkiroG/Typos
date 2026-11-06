@@ -217,6 +217,8 @@ export function SettingsModal({ onClose, currentDir, onCleanAssets }: { onClose:
 
         <AiSection currentDir={currentDir} />
 
+        <AeSection />
+
         <PrefsSection />
 
         <StorageSection currentDir={currentDir} onCleanAssets={onCleanAssets} />
@@ -232,6 +234,45 @@ export function SettingsModal({ onClose, currentDir, onCleanAssets }: { onClose:
 }
 
 /** Leva ajustes, formatos, biblioteca, pastas e dicionário pra outra instalação. */
+/** After Effects pro motion: onde está o AfterFX.exe (acha sozinho em Arquivos de Programas\Adobe) */
+function AeSection() {
+  const [st, setSt] = useState<Awaited<ReturnType<typeof api.aeInfo>> | null>(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    api.aeInfo().then(setSt)
+  }, [])
+  const pick = async (clear?: boolean) => {
+    const r = await api.aePick(clear)
+    if ('error' in r) return setErr(r.error)
+    setErr('')
+    setSt(r)
+  }
+  return (
+    <section className="set-section">
+      <h4>After Effects (motion)</h4>
+      <p className="muted small">
+        Blocos de motion marcados como After Effects viram um projeto .aep (o Claude escreve o script, o AE monta e o aerender grava). Dá pra abrir o projeto, mexer e
+        renderizar de novo.
+      </p>
+      <p className="small">
+        {st === null ? 'Procurando…' : st.found ? `Encontrado${st.found.year ? ` (${st.found.year})` : ''}: ${st.found.afterfx}` : 'Não encontrado neste PC.'}
+        {st?.manual ? ' · escolhido à mão' : ''}
+      </p>
+      {err && <p className="small error">{err}</p>}
+      <div className="set-row">
+        <button className="btn" onClick={() => pick()}>
+          Escolher AfterFX.exe…
+        </button>
+        {st?.manual && (
+          <button className="btn" onClick={() => pick(true)}>
+            Procurar sozinho
+          </button>
+        )}
+      </div>
+    </section>
+  )
+}
+
 function PrefsSection() {
   const [withKeys, setWithKeys] = useState(false)
   const [msg, setMsg] = useState('')

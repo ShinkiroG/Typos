@@ -293,6 +293,26 @@ const api = {
     htmlPath?: string
   }): Promise<{ video: string; html: string } | { error: string }> => ipcRenderer.invoke('motion:preview', job),
   motionPreviewCancel: (block?: string) => ipcRenderer.invoke('motion:previewCancel', block),
+  // motion no After Effects (script do Claude → projeto .aep → aerender → clipe)
+  aeInfo: (): Promise<{ found: { afterfx: string; aerender: string; year: number | null } | null; manual: string | null }> => ipcRenderer.invoke('ae:info'),
+  /** escolhe o AfterFX.exe na mão; `clear` volta a procurar sozinho */
+  aePick: (clear?: boolean): Promise<{ found: { afterfx: string; aerender: string; year: number | null } | null; manual: string | null } | { error: string }> =>
+    ipcRenderer.invoke('ae:pick', clear),
+  aeBuild: (job: {
+    dir: string
+    block: string
+    body: string
+    seconds: number
+    width: number
+    height: number
+    fps: number
+    wav?: Uint8Array
+    files: { src: string; name: string }[]
+  }): Promise<{ video: string; aep: string; jsx: string } | { scriptError: string; jsx: string } | { error: string }> => ipcRenderer.invoke('ae:build', job),
+  aeRerender: (job: { block: string; aep: string; seconds: number; width: number; height: number; fps: number }): Promise<{ video: string } | { error: string }> =>
+    ipcRenderer.invoke('ae:rerender', job),
+  aeCancel: (block?: string) => ipcRenderer.invoke('ae:cancel', block),
+  aeOpen: (aep: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('ae:open', aep),
   /** encoder do clipe de motion ('cpu' = x264 qualidade máxima, 'gpu' = NVENC); sem argumento só lê */
   motionEncoder: (mode?: 'cpu' | 'gpu'): Promise<{ mode: 'cpu' | 'gpu'; gpu: boolean }> => ipcRenderer.invoke('motion:encoder', mode),
   /** mede o HTML do motion em vários instantes e devolve o que está fora da safe zone / em cima da faixa persistente */

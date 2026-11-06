@@ -132,6 +132,7 @@ export function BlockForm({ b, data, dir, patch, big, formats, videoFormat }: Fo
           <Sparkles size={12} /> Dinâmico
         </button>
       </div>
+      <EnginePick b={b} patch={patch} />
       {!!formats?.length && (
         <label className="blk-label blk-style" title="Estilo de motion só deste bloco (guia, cores, fontes, regras, pastas de assets e memória). Vale na próxima prévia.">
           Estilo deste bloco
@@ -401,6 +402,55 @@ export function AdjustBox({
   )
 }
 
+type AeState = Awaited<ReturnType<typeof api.aeInfo>>
+let aeCache: Promise<AeState> | null = null
+/** o After Effects deste PC (procura uma vez; `again` procura de novo) */
+export function useAe(): [AeState | null, () => void] {
+  const [st, setSt] = useState<AeState | null>(null)
+  const load = (again?: boolean) => {
+    if (again || !aeCache) aeCache = api.aeInfo()
+    aeCache.then(setSt).catch(() => null)
+  }
+  useEffect(() => load(), [])
+  return [st, () => load(true)]
+}
+
+/** onde o motion é feito: HTML (prévia rápida) ou After Effects (projeto .aep que dá pra abrir e mexer) */
+function EnginePick({ b, patch }: { b: InstructionBlock; patch: FormProps['patch'] }) {
+  const [ae, reload] = useAe()
+  const on = b.engine === 'ae'
+  return (
+    <div className="blk-engine">
+      <div className="seg blk-mode">
+        <button className={!on ? 'on' : ''} onClick={() => patch({ engine: undefined })} title="O Claude escreve a animação em HTML: a prévia sai em segundos (12 fps) e o clipe é gravado ao aprovar">
+          HTML
+        </button>
+        <button
+          className={on ? 'on' : ''}
+          disabled={!on && !ae?.found}
+          onClick={() => patch({ engine: 'ae' })}
+          title={
+            ae?.found
+              ? 'O Claude escreve um script que monta o projeto no After Effects; o aerender grava na resolução do projeto. Dá pra abrir o projeto, mexer e renderizar de novo. Demora mais que o HTML.'
+              : 'After Effects não encontrado neste PC (Configurações → After Effects)'
+          }
+        >
+          <Film size={12} /> After Effects
+        </button>
+      </div>
+      {on && !ae?.found && ae && (
+        <small className="blk-hint">
+          After Effects não encontrado. Aponte o AfterFX.exe em Configurações → After Effects.{' '}
+          <button className="btn small" onClick={reload}>
+            Procurar de novo
+          </button>
+        </small>
+      )}
+      {on && ae?.found && <small className="blk-hint">After Effects {ae.found.year ?? ''}: a prévia já sai na qualidade final e demora mais. Não deixe projeto por salvar no AE, e ligue nele Preferências → Scripts e expressões → “Permitir que scripts gravem arquivos e acessem a rede”.</small>}
+    </div>
+  )
+}
+
 /** como o clipe aprovado é gravado: x264 na CPU (qualidade máxima) ou NVENC na placa NVIDIA (bem mais rápido) */
 export function EncoderPick() {
   const [st, setSt] = useState<{ mode: 'cpu' | 'gpu'; gpu: boolean } | null>(null)
@@ -429,6 +479,7 @@ export function BlockPreviewBox({
   onAdjust,
   onCancel,
   onApprove,
+  onRerender,
   heard,
   big
 }: {
@@ -439,6 +490,8 @@ export function BlockPreviewBox({
   onAdjust: AdjustFn
   onCancel: () => void
   onApprove: () => void
+  /** After Effects: grava de novo o .aep que o autor mexeu */
+  onRerender?: () => void
   /** linha "Som do trecho: lido / não lido" */
   heard?: React.ReactNode
   big?: boolean
@@ -460,7 +513,11 @@ export function BlockPreviewBox({
       ) : (
         <div className="blk-prev-empty">
           <Film size={big ? 28 : 18} />
-          <span>Sem prévia ainda. A prévia sai em 12 fps e baixa resolução, com o áudio do trecho. Aprovada, ela é gravada na resolução do projeto e entra na timeline como clipe.</span>
+          <span>
+            {b.engine === 'ae'
+              ? 'Sem prévia ainda. O Claude escreve o script, o After Effects monta o projeto e o aerender grava na resolução do projeto, com o áudio do trecho. Aprovada, ela entra na timeline como clipe.'
+              : 'Sem prévia ainda. A prévia sai em 12 fps e baixa resolução, com o áudio do trecho. Aprovada, ela é gravada na resolução do projeto e entra na timeline como clipe.'}
+          </span>
         </div>
       )}
       {stale && (
@@ -512,6 +569,23 @@ export function BlockPreviewBox({
               <Check size={13} /> Aprovar e importar na timeline
             </button>
           )}
+          {b.preview?.aep && (
+            <button
+              className="btn small"
+              onClick={async () => {
+                const r = await api.aeOpen(b.preview!.aep!)
+                if ('error' in r) alert(r.error)
+              }}
+              title="Abre o projeto deste bloco no After Effects. Mexa, salve (Ctrl+S) e volte aqui em Renderizar de novo."
+            >
+              <FolderOpen size={13} /> Abrir no After Effects
+            </button>
+          )}
+          {b.preview?.aep && onRerender && (
+            <button className="btn small" disabled={!!busy} onClick={onRerender} title={busy ? FULL_HINT : 'Grava de novo o projeto do After Effects (salvo) e troca o vídeo desta prévia'}>
+              <Film size={13} /> Renderizar de novo
+            </button>
+          )}
         </div>
       )}
       {b.preview && !mine && <EncoderPick />}
@@ -540,7 +614,7 @@ const generate = (p: { b: InstructionBlock; onGenerate: () => void }) => {
 }
 
 /** painel da direita (inspetor) com o bloco selecionado */
-export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onOpen: () => void; onRemove: () => void; heard?: React.ReactNode }) {
+export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onRerender?: () => void; onOpen: () => void; onRemove: () => void; heard?: React.ReactNode }) {
   return (
     <div className="mt-insp blk-insp">
       <div className="blk-insp-head">
@@ -552,14 +626,14 @@ export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenera
           <Trash2 size={13} />
         </button>
       </div>
-      <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} heard={p.heard} />
+      <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} onRerender={p.onRerender} heard={p.heard} />
       <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} formats={p.formats} videoFormat={p.videoFormat} />
     </div>
   )
 }
 
 /** janela do bloco (duplo clique): todas as propriedades + o player da prévia */
-export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onClose: () => void; heard?: React.ReactNode }) {
+export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onRerender?: () => void; onClose: () => void; heard?: React.ReactNode }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && p.onClose()
     window.addEventListener('keydown', k)
@@ -577,7 +651,7 @@ export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate:
           </button>
         </div>
         <div className="blk-window-body">
-          <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} heard={p.heard} big />
+          <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} onRerender={p.onRerender} heard={p.heard} big />
           <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} formats={p.formats} videoFormat={p.videoFormat} big />
         </div>
       </div>

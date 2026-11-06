@@ -61,7 +61,7 @@ import { YoutubeDownload } from '../components/YoutubeDownload'
 import { SfxFinder, type SfxLib } from '../components/SfxFinder'
 import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H, findGap, mediaLen, splitClip, trackHeight, type GapSel, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
-import { CLIP_ENC, blockDur, blockFromClip, blockLabel, blockWindows, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, previewStale, rangeTweak, soundsToTimeline } from './blocks'
+import { CLIP_ENC, blockDur, blockFromClip, blockLabel, blockWindows, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, rerenderAe, previewStale, rangeTweak, soundsToTimeline } from './blocks'
 import { MotionEditor } from './MotionEditor'
 import { BlockInspector, BlockWindow, busyOverall, type BlockBusy } from './BlockPanel'
 import { busyFor, canStart, withBusy, type BusyMap } from './busy'
@@ -83,6 +83,12 @@ export const fmtTc = (t: number) => {
 
 /** pasta onde entram os clipes de motion aprovados */
 const MOTION_BIN = 'motion'
+/** etapas do motion no After Effects (o main manda pelo mesmo canal da prévia) */
+const AE_STAGE: Record<string, string> = {
+  'ae-abrindo': 'Abrindo o After Effects e montando o projeto…',
+  'ae-montando': 'After Effects montando o projeto…',
+  'ae-render': 'aerender gravando o clipe…'
+}
 /** volume do corte: a barra vai até +30 dB; digitando, até +60 (só pra não virar infinito) */
 const GAIN_SLIDER_MAX = 30
 const clampDb = (v: number) => (Number.isFinite(v) ? Math.round(Math.max(-60, Math.min(60, v)) * 10) / 10 : 0)
@@ -1215,7 +1221,11 @@ export function Montage({
     if (active)
       api.onMotionPreviewProgress((p) =>
         setBlockBusy(p.block, (b) =>
-          b ? (p.stage === 'fila' ? { ...b, queued: true } : { ...b, queued: false, label: p.stage === 'vídeo' ? 'Montando o vídeo…' : b.label, pct: p.pct }) : null
+          b
+            ? p.stage === 'fila'
+              ? { ...b, queued: true }
+              : { ...b, queued: false, label: AE_STAGE[p.stage] ?? (p.stage === 'vídeo' ? 'Montando o vídeo…' : b.label), pct: p.stage === 'ae-abrindo' || p.stage === 'ae-montando' ? null : p.pct }
+            : null
         )
       )
   }, [active])
@@ -1226,6 +1236,7 @@ export function Montage({
     blockAbort.current.get(id)?.abort()
     api.motionTrainCancel(id)
     api.motionPreviewCancel(id)
+    api.aeCancel(id)
     setBlockBusy(id, (b) => (b ? { ...b, label: 'Cancelando…', pct: null } : null))
   }
   /** janela do bloco aberta agora (a prévia continua com ela fechada; aí avisa quando fica pronta) */
@@ -1267,6 +1278,22 @@ export function Montage({
       if (msg !== 'Cancelado.') alert(`Não deu pra fazer a prévia de ${blockLabel(b)}: ` + msg)
     } finally {
       blockAbort.current.delete(id)
+      setBlockBusy(id, null)
+    }
+  }
+  /** After Effects: o autor mexeu no .aep; grava de novo e troca o vídeo da prévia */
+  const rerenderBlock = async (id: string) => {
+    const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
+    const t0 = Date.now()
+    if (!b?.preview?.aep || !claimBusy(id, { id, label: 'Preparando…', pct: null, t0 })) return
+    try {
+      const preview = await rerenderAe({ block: b, onStage: (label, pct, span, frames) => setBlockBusy(id, (cur) => (!cur || cur.label === 'Cancelando…' ? (cur ?? null) : { id, label, pct, span, t0, frames })) })
+      patchBlock(id, { preview })
+      if (blockOpenRef.current !== id) setBlockNote({ id, text: `${blockLabel(b)} renderizado de novo` })
+    } catch (e) {
+      const msg = (e as Error).message
+      if (msg !== 'Cancelado.') alert(`Não deu pra renderizar ${blockLabel(b)} de novo: ` + msg)
+    } finally {
       setBlockBusy(id, null)
     }
   }
@@ -1429,7 +1456,8 @@ export function Montage({
         const html = await fetch(fileUrl(b.preview.html))
           .then((r) => r.text())
           .catch(() => '')
-        const item = await memoryFromBlock(b, html)
+        // o script do AE não serve de exemplo pro HTML: a memória guarda só o que foi pedido
+        const item = await memoryFromBlock(b, b.preview.engine === 'ae' ? '' : html)
         const motion = style.motion ?? { refs: [] }
         onFormatChange({ ...style, motion: { ...motion, memory: [...(motion.memory ?? []), item] } })
       }
@@ -2336,6 +2364,7 @@ export function Montage({
             onAdjust={(t) => makePreview(curBlock.id, t)}
             onCancel={() => cancelBlock(curBlock.id)}
             onApprove={() => approveBlock(curBlock.id)}
+            onRerender={() => rerenderBlock(curBlock.id)}
             heard={<BlockHeardRow data={data} b={curBlock} lang={lang} onOpen={() => setTranscript({ block: curBlock.id })} />}
             onOpen={() => setBlockOpen(curBlock.id)}
             onRemove={() => removeBlock(curBlock.id)}
@@ -2926,6 +2955,7 @@ export function Montage({
           onAdjust={(t) => makePreview(openBlock.id, t)}
           onCancel={() => cancelBlock(openBlock.id)}
           onApprove={() => approveBlock(openBlock.id)}
+          onRerender={() => rerenderBlock(openBlock.id)}
           heard={<BlockHeardRow data={data} b={openBlock} lang={lang} onOpen={() => setTranscript({ block: openBlock.id })} />}
           onClose={() => setBlockOpen(null)}
         />

@@ -37,6 +37,8 @@ export interface AppSettings {
   keys?: Record<string, string>
   /** gravação do clipe de motion: 'cpu' (x264, qualidade máxima, padrão) ou 'gpu' (NVENC da NVIDIA, bem mais rápido) */
   motionEncoder?: 'cpu' | 'gpu'
+  /** caminho manual do AfterFX.exe (motion no After Effects); vazio = procura sozinho */
+  aePath?: string
   /** workspace YouTube (simula a página do vídeo); vazio = ligado */
   youtubePage?: boolean
 }

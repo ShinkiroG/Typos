@@ -8,6 +8,7 @@ import {
   uid,
   type Attachment,
   type BlockAttachment,
+  type BlockPreview,
   type BlockSound,
   type BlockTweak,
   type Format,
@@ -51,7 +52,8 @@ export function blockKey(b: InstructionBlock) {
   const style = b.formatId ? [['estilo', b.formatId]] : []
   const raw = b.useRaw ? [['bruto']] : []
   const neg = b.negative?.trim() ? [['evitar', b.negative.trim()]] : []
-  const s = JSON.stringify([b.start.toFixed(2), b.end.toFixed(2), b.text.trim(), !!b.dynamic, b.attachments.map((a) => [a.path, a.use, a.note ?? '']), blockSync(b), ...chain, ...style, ...raw, ...neg])
+  const eng = b.engine === 'ae' ? [['ae']] : []
+  const s = JSON.stringify([b.start.toFixed(2), b.end.toFixed(2), b.text.trim(), !!b.dynamic, b.attachments.map((a) => [a.path, a.use, a.note ?? '']), blockSync(b), ...chain, ...style, ...raw, ...neg, ...eng])
   let h = 5381
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
   return (h >>> 0).toString(36)
@@ -785,11 +787,16 @@ export function blockPrompt(o: {
   assets?: { list: StyleAsset[]; first: number; shown: number }
   /** Material bruto do projeto (checkbox do bloco); as `shown` primeiras imagens chegam a partir da imagem `first` */
   raw?: { list: RawFile[]; first: number; shown: number; sounds?: BlockSound[] }
+  /** feito no After Effects (script ExtendScript) em vez de HTML */
+  engine?: 'ae'
 }) {
   const b = o.block
   const d = blockDur(b)
+  const ae = o.engine === 'ae'
   const L: string[] = [
-    'Você é o motion designer do canal. Tarefa: criar a PRÉVIA do motion de UM bloco da timeline do vídeo.',
+    ae
+      ? 'Você é o motion designer do canal e trabalha no After Effects. Tarefa: criar o motion de UM bloco da timeline do vídeo, escrevendo o script que monta a composição no AE.'
+      : 'Você é o motion designer do canal. Tarefa: criar a PRÉVIA do motion de UM bloco da timeline do vídeo.',
     '',
     '## O bloco',
     `- Duração: ${d.toFixed(2)} s (de ${formatTime(b.start)} a ${formatTime(b.end)} do vídeo)`,
@@ -896,11 +903,14 @@ export function blockPrompt(o: {
   if (m?.fonts) L.push(`Fontes: título ${m.fonts.title ?? '-'}, subtítulo ${m.fonts.subtitle ?? '-'}, texto ${m.fonts.body ?? '-'}, destaque ${m.fonts.accent ?? '-'}`)
   const mem = memorySection(m?.memory)
   if (mem) L.push('', mem, '')
+  if (ae) L.push(aeDirection(o.size, d), '')
   if (o.adjust) {
     L.push(
       '## AJUSTE na prévia atual (o principal deste pedido)',
-      'Você já fez a animação abaixo pra este bloco e o autor viu a prévia. NÃO recomece do zero: parta deste HTML, mantenha tudo que o autor não pediu pra mudar e aplique os ajustes. Os pedidos anteriores já estão nele; o último é o novo.',
-      '```html',
+      ae
+        ? 'Você já escreveu o script abaixo pra este bloco e o autor viu o resultado. NÃO recomece do zero: parta deste script, mantenha tudo que o autor não pediu pra mudar e aplique os ajustes. Os pedidos anteriores já estão nele; o último é o novo.'
+        : 'Você já fez a animação abaixo pra este bloco e o autor viu a prévia. NÃO recomece do zero: parta deste HTML, mantenha tudo que o autor não pediu pra mudar e aplique os ajustes. Os pedidos anteriores já estão nele; o último é o novo.',
+      ae ? '```javascript' : '```html',
       o.adjust.html.slice(0, 60000),
       '```',
       '',
@@ -911,7 +921,14 @@ export function blockPrompt(o: {
     )
     L.push('')
   }
-  L.push(
+  if (ae)
+    L.push(
+      '## Responda EXATAMENTE neste formato (nada fora das tags)',
+      '<ae>',
+      `Só o miolo do script ExtendScript (ES3) que preenche a composição \`comp\` (${o.size.w}x${o.size.h} px, ${d.toFixed(2)} s), seguindo as regras do After Effects acima. Sem \`\`\` e sem texto em volta.`,
+      '</ae>'
+    )
+  else L.push(
     '## Responda EXATAMENTE neste formato (nada fora das tags)',
     '<demo>',
     `Um arquivo HTML completo e autocontido (CSS e JS inline, sem internet), em ${o.size.w}x${o.size.h} px preenchendo a página (body sem margem, overflow hidden), que toca o motion deste bloco UMA vez, começando em 0 s e durando exatamente ${d.toFixed(2)} s (sem loop; segure o último quadro). Anime com CSS keyframes, Web Animations ou requestAnimationFrame com performance.now(): o Typos controla o relógio e grava quadro a quadro. Use as fontes pelo nome (font-family) e as cores do estilo. O clipe final é gravado ampliado (mesma composição, mais pixels): prefira texto, SVG e CSS, que ficam nítidos; se usar <canvas>, crie ele em largura×devicePixelRatio por altura×devicePixelRatio (com o tamanho CSS normal) e dê ctx.scale(devicePixelRatio, devicePixelRatio), senão ele sai borrado.${o.files.some((f) => f.a.use === 'insert') ? ' As imagens de insert estão na mesma pasta do HTML, pelo nome indicado.' : ''}`,
@@ -924,6 +941,40 @@ export function blockPrompt(o: {
       '</sons>'
     )
   return L.join('\n')
+}
+
+/** como escrever o motion no After Effects (o Typos embrulha o miolo: ver main/aeCore.ts) */
+export function aeDirection(size: { w: number; h: number }, dur: number) {
+  return [
+    '## Motion no After Effects (este bloco NÃO é em HTML)',
+    `O autor escolheu fazer este bloco no After Effects (2024 ou 2025). Você escreve um script ExtendScript que monta a animação numa composição, e o autor pode abrir o projeto depois e mexer à mão. Tudo que este pedido fala de HTML, CSS, <img src="nome"> ou <video src="nome"> vale igual aqui, só que no AE: o arquivo está na pasta do bloco com o mesmo nome e entra com addFile("nome"); "recriar em HTML/CSS" vira recriar com camadas de forma, texto e efeitos do AE.`,
+    '',
+    'O Typos já deixou pronto (não refaça):',
+    `- o projeto novo e a composição \`comp\`: ${size.w}x${size.h} px, ${CLIP_FPS} fps, ${dur.toFixed(2)} s, fundo preto;`,
+    '- o áudio do trecho numa camada de referência, trancada no fundo (o Typos põe o som de novo no clipe: não mexa nela nem crie camadas de áudio);',
+    '- depois do seu código: a fila de render, salvar o .aep e gravar. Seu código roda dentro de uma função que recebe:',
+    '  - `comp` (CompItem);',
+    '  - `addFile(nome)`: importa o arquivo da pasta do bloco e cria a camada dele no topo da comp (devolve o AVLayer);',
+    '  - `importFile(nome)`: só importa (FootageItem, ex.: pra usar em pré-composição); `file(nome)`: o File.',
+    '',
+    'Regras do script:',
+    '- ExtendScript é JavaScript ES3: só var e function. Nada de let, const, arrow function, template string, classes, Array.map/forEach/filter, Object.keys nem JSON. Use laços for.',
+    '- Não chame app.newProject, save, renderQueue, alert, prompt nem nada fora da comp.',
+    '- O AE do autor pode estar em português: pegue propriedades e efeitos SEMPRE pelo matchName, nunca pelo nome exibido. Ex.: layer.property("ADBE Transform Group").property("ADBE Position"), "ADBE Scale", "ADBE Opacity", "ADBE Rotate Z", "ADBE Anchor Point"; efeitos com layer.property("ADBE Effect Parade").addProperty("ADBE Gaussian Blur 2"), "ADBE Glo2" (brilho), "ADBE Drop Shadow", "ADBE Fill", "ADBE Ramp" (degradê).',
+    '- Tempo em segundos, 0 = começo do bloco. Animação com setValueAtTime(t, valor) e easing de verdade (prop.setTemporalEaseAtKey(k, [new KeyframeEase(0, 75)], [new KeyframeEase(0, 75)]); propriedades com 2 ou 3 dimensões espaciais, como Position, levam um KeyframeEase só; Scale leva um por dimensão) ou expressões (prop.expression = "...").',
+    '- Texto: var t = comp.layers.addText("…"); var tp = t.property("ADBE Text Properties").property("ADBE Text Document"); var doc = tp.value; doc.font = "NomePostScript"; doc.fontSize = 120; doc.applyFill = true; doc.fillColor = [1, 1, 1]; doc.justification = ParagraphJustification.CENTER_JUSTIFY; tp.setValue(doc). A fonte é pelo nome PostScript (ex.: "Montserrat-Bold", "Inter-Black"); se não tiver certeza de que existe, use "ArialMT" ou "Arial-BoldMT". Cores vão de 0 a 1.',
+    '- Formas: var sh = comp.layers.addShape(); var g = sh.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group"); var c = g.property("ADBE Vectors Group"); c.addProperty("ADBE Vector Shape - Rect") (ou "ADBE Vector Shape - Ellipse", "ADBE Vector Shape - Group"), depois c.addProperty("ADBE Vector Graphic - Fill") / "ADBE Vector Graphic - Stroke" e "ADBE Vector Filter - Trim" pra desenhar linhas. Sólido: comp.layers.addSolid([r, g, b], "Nome", comp.width, comp.height, 1). Nulo: comp.layers.addNull().',
+    '- Aproveite o que o AE faz melhor que HTML: motion blur (layer.motionBlur = true e comp.motionBlur = true), camadas 3D com câmera (layer.threeDLayer = true; comp.layers.addCamera("Câmera", [comp.width / 2, comp.height / 2])), parent com nulos, máscaras, trim paths, efeitos. Só efeitos que vêm com o AE (nada de plugin de terceiros).',
+    '- Arquivos (imagens, vídeos, embaixo.mp4) entram no tamanho original: ajuste com Scale (%). O embaixo.mp4 fica no fundo da pilha, com startTime 0, sem cortar nem mudar a velocidade.',
+    '- Dê nomes claros às camadas (layer.name = "Título", "Seta", "Fundo"…) e crie de baixo pra cima: o autor vai abrir o projeto e mexer.',
+    '- A safe zone vale em pixels da comp, do mesmo jeito.'
+  ].join('\n')
+}
+
+/** o miolo do script do After Effects na resposta (<ae>…</ae>) */
+export function parseAe(text: string) {
+  const body = text.match(/<ae>([\s\S]*?)<\/ae>/i)?.[1]?.trim() ?? ''
+  return body.replace(/^```(?:javascript|js|jsx|extendscript)?\s*/i, '').replace(/```\s*$/, '').trim()
 }
 
 export function parseDemo(text: string) {
@@ -1041,7 +1092,9 @@ export async function generatePreview(c: PreviewCtx) {
   }
   if (c.signal?.aborted) throw new Error('Cancelado.')
   const files = b.attachments.filter(isImage).map((a, i) => ({ a, name: attachName(a, i) }))
-  const size = previewSize(c.format)
+  // no After Effects a composição já nasce no tamanho do projeto (o render dele já é o clipe final)
+  const ae = b.engine === 'ae'
+  const size = ae ? projectSize(c.format) : previewSize(c.format)
   c.onStage('Olhando o vídeo embaixo do bloco…', null, [0.1, 0.14])
   const under = await underFor(c.data, b, c.dir, size, true)
   if (b.fromPrev || b.toNext) c.onStage('Olhando o que vem antes e depois do bloco…', null, [0.14, 0.17])
@@ -1054,6 +1107,7 @@ export async function generatePreview(c: PreviewCtx) {
       .then((r) => (r.ok ? r.text() : ''))
       .catch(() => '')
     if (!html) throw new Error('Não achei o HTML da prévia atual. Gere a prévia de novo.')
+    if (ae !== (b.preview.engine === 'ae')) throw new Error(ae ? 'A prévia atual foi feita em HTML. Use "Refazer do zero" pra fazer no After Effects.' : 'A prévia atual foi feita no After Effects. Use "Refazer do zero" pra fazer em HTML.')
     adjust = { html, tweaks: c.adjust.tweaks.map((t, i) => ({ text: t.text, names: tf[i].map((f) => f.name) })) }
   }
   const list = await styleAssets(c.format)
@@ -1091,12 +1145,14 @@ export async function generatePreview(c: PreviewCtx) {
     edges,
     adjust,
     assets,
-    raw
+    raw,
+    engine: ae ? 'ae' : undefined
   })
   const images = [...baseImages, ...shownAssets.map((a) => a.path), ...shownRaw.map((f) => f.path)]
   if (c.signal?.aborted) throw new Error('Cancelado.')
   const r = await waitAi(c, adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', [0.17, 0.62], api.motionTrain({ prompt, images, id: b.id }))
   if ('error' in r) throw new Error(r.error)
+  if (ae) return aePreview(c, { r, prompt, images, files, tf, under, edges, list, rawList, heard, hasAudio, size })
   let html = parseDemo(r.text)
   if (!html) throw new Error('A IA respondeu fora do formato (sem o HTML da animação). Tente de novo.')
   let sounds = parseSounds(r.text, rawList, blockDur(b)) ?? []
@@ -1186,6 +1242,102 @@ export async function generatePreview(c: PreviewCtx) {
   }
 }
 
+/** o que a prévia em HTML já juntou e o motion no After Effects reaproveita */
+interface AeCtx {
+  r: { text: string; provider: string }
+  prompt: string
+  images: string[]
+  files: { a: BlockAttachment; name: string }[]
+  tf: ReturnType<typeof tweakFiles>
+  under: UnderInfo | null
+  edges: EdgeInfo[]
+  list: StyleAsset[]
+  rawList: RawFile[]
+  heard: { words: HeardWord[]; prompts: HeardPrompt[]; error?: string }
+  hasAudio: boolean
+  size: { w: number; h: number }
+}
+
+/** o erro do AE volta pro Claude junto com o script que deu errado */
+export function aeFixSection(body: string, error: string) {
+  return [
+    '',
+    '## O script anterior deu ERRO no After Effects (corrija)',
+    'Você mandou o script abaixo e o After Effects parou com este erro (a linha conta a partir do começo do seu script):',
+    error,
+    '```javascript',
+    body.slice(0, 60000),
+    '```',
+    'Mande o script inteiro de novo, corrigido, no mesmo formato. Confira as regras do ExtendScript (ES3, matchNames).'
+  ].join('\n')
+}
+
+/**
+ * Motion no After Effects: o script do Claude vira um projeto .aep (o AE monta), o aerender grava na
+ * resolução do projeto e o ffmpeg põe o áudio do trecho. A "prévia" já é o clipe final (aprovar só importa).
+ * Se o script der erro, o Claude recebe o erro e corrige uma vez.
+ */
+async function aePreview(c: PreviewCtx, x: AeCtx): Promise<BlockPreview> {
+  const b = c.block
+  let body = parseAe(x.r.text)
+  if (!body) throw new Error('A IA respondeu fora do formato (sem o script do After Effects). Tente de novo.')
+  let sounds = parseSounds(x.r.text, x.rawList, blockDur(b)) ?? []
+  c.onStage('Mixando o áudio do trecho…', null, [0.62, 0.64])
+  const mix = await withSounds(c.engine, c.data, c.dur, b, sounds)
+  sounds = mix.sounds
+  const wav = x.hasAudio || sounds.length ? await rangeWav(c.engine, mix.data, mix.dur, b.start, b.end).catch(() => undefined) : undefined
+  const playFiles = (h: string) => [
+    ...x.files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
+    ...x.tf.flat().map((f) => ({ src: absPath(f.a), name: f.name })),
+    ...(x.under ? [{ src: x.under.video, name: UNDER_NAME }] : []),
+    ...edgeFiles(x.edges),
+    ...assetFiles(x.list, h),
+    ...assetFiles(x.rawList, h)
+  ]
+  for (let attempt = 0; ; attempt++) {
+    if (c.signal?.aborted) throw new Error('Cancelado.')
+    c.onStage('After Effects montando o projeto…', null, [0.64, 1], Math.max(1, Math.round(blockDur(b) * CLIP_FPS)))
+    const v = await api.aeBuild({ dir: c.dir, block: b.id, body, seconds: blockDur(b), width: x.size.w, height: x.size.h, fps: CLIP_FPS, wav, files: playFiles(body) })
+    if ('error' in v) throw new Error(v.error)
+    if ('scriptError' in v) {
+      if (attempt >= 1 || c.signal?.aborted) throw new Error('o script do After Effects deu erro de novo: ' + v.scriptError)
+      const fix = await waitAi(c, 'Claude corrigindo o script do After Effects…', [0.62, 0.64], api.motionTrain({ prompt: x.prompt + aeFixSection(body, v.scriptError), images: x.images, id: b.id }))
+      if ('error' in fix) throw new Error(fix.error)
+      const fixed = parseAe(fix.text)
+      if (!fixed) throw new Error('o script do After Effects deu erro: ' + v.scriptError)
+      body = fixed
+      continue
+    }
+    return {
+      video: v.video,
+      html: v.jsx,
+      aep: v.aep,
+      engine: 'ae',
+      at: new Date().toISOString(),
+      provider: x.r.provider,
+      transcript: phrases(x.heard.words),
+      key: blockKey(b),
+      size: x.size,
+      sounds: sounds.length ? sounds : undefined
+    }
+  }
+}
+
+/**
+ * O autor mexeu no projeto do AE: grava o .aep de novo (o mesmo áudio do trecho) e troca o vídeo da prévia.
+ * A chave da prévia fica a mesma (o bloco não mudou).
+ */
+export async function rerenderAe(c: Pick<PreviewCtx, 'block' | 'onStage'>): Promise<BlockPreview> {
+  const b = c.block
+  const p = b.preview
+  if (!p?.aep) throw new Error('Este bloco não tem projeto do After Effects.')
+  const size = p.size ?? { w: 1920, h: 1080 }
+  c.onStage('aerender gravando o clipe…', 0, [0, 1], Math.max(1, Math.round(blockDur(b) * CLIP_FPS)))
+  const v = await api.aeRerender({ block: b.id, aep: p.aep, seconds: blockDur(b), width: size.w, height: size.h, fps: CLIP_FPS })
+  if ('error' in v) throw new Error(v.error)
+  return { ...p, video: v.video, at: new Date().toISOString() }
+}
+
 /**
  * Clipe final do bloco: o HTML da prévia aprovada gravado de novo na resolução do projeto (30 fps),
  * ampliado com zoom (a composição fica igual à que foi aprovada), com o áudio do trecho.
@@ -1193,6 +1345,8 @@ export async function generatePreview(c: PreviewCtx) {
 export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
   const b = c.block
   if (!b.preview) throw new Error('Gere a prévia antes de aprovar.')
+  // After Effects: a prévia já é o clipe na qualidade final
+  if (b.preview.engine === 'ae') return b.preview.video
   const files = b.attachments.filter(isImage).map((a, i) => ({ a, name: attachName(a, i) }))
   const size = projectSize(c.format)
   // o tamanho em que o HTML foi escrito (prévias antigas: o do próprio vídeo da prévia)
