@@ -65,12 +65,14 @@ function runJsx(src: string, env: Record<string, unknown>) {
 }
 
 describe('After Effects', () => {
-  it('pega a versão mais nova da pasta Adobe', () => {
-    expect(pickAeFolders(['Adobe Photoshop 2025', 'Adobe After Effects 2024', 'Adobe After Effects 2025', 'Adobe After Effects CC 2019'])).toEqual([
+  it('prefere o 2025 e o 2024, mesmo com um 2026 instalado junto', () => {
+    expect(pickAeFolders(['Adobe Photoshop 2025', 'Adobe After Effects 2026', 'Adobe After Effects 2024', 'Adobe After Effects 2025', 'Adobe After Effects CC 2019'])).toEqual([
       'Adobe After Effects 2025',
       'Adobe After Effects 2024',
+      'Adobe After Effects 2026',
       'Adobe After Effects CC 2019'
     ])
+    expect(pickAeFolders(['Adobe After Effects 2026', 'Adobe After Effects 2024'])[0]).toBe('Adobe After Effects 2024')
   })
 
   it('lê o quadro do progresso do aerender', () => {

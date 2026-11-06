@@ -30,6 +30,9 @@ export interface HistoryProject {
   lastAt: number
 }
 
+type AeFound = { afterfx: string; aerender: string; year: number | null }
+type AeState = { found: AeFound | null; manual: string | null; all: AeFound[] }
+
 const api = {
   newProject: () => ipcRenderer.invoke('project:new'),
   openProject: (dir?: string) => ipcRenderer.invoke('project:open', dir),
@@ -294,9 +297,9 @@ const api = {
   }): Promise<{ video: string; html: string } | { error: string }> => ipcRenderer.invoke('motion:preview', job),
   motionPreviewCancel: (block?: string) => ipcRenderer.invoke('motion:previewCancel', block),
   // motion no After Effects (script do Claude → projeto .aep → aerender → clipe)
-  aeInfo: (): Promise<{ found: { afterfx: string; aerender: string; year: number | null } | null; manual: string | null }> => ipcRenderer.invoke('ae:info'),
-  /** escolhe o AfterFX.exe na mão; `clear` volta a procurar sozinho */
-  aePick: (clear?: boolean): Promise<{ found: { afterfx: string; aerender: string; year: number | null } | null; manual: string | null } | { error: string }> =>
+  aeInfo: (): Promise<AeState> => ipcRenderer.invoke('ae:info'),
+  /** escolhe o AfterFX.exe na mão; `true` volta a procurar sozinho; um caminho da lista `all` usa essa versão */
+  aePick: (clear?: boolean | string): Promise<AeState | { error: string }> =>
     ipcRenderer.invoke('ae:pick', clear),
   aeBuild: (job: {
     dir: string
