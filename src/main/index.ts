@@ -12,6 +12,7 @@ import { initSpell } from './spell'
 import { initAi, initMotionAi, initSfxFinder } from './ai'
 import { initRender } from './render'
 import { initMotionPreview } from './motionPreview'
+import { initAfterEffects } from './afterEffects'
 import { initMedia, mediaCacheDir, extractFrames, systemFonts, framesForFocus, framesAt, initDownloads, findFfmpeg, findYtDlp, type FrameWeights } from './media'
 import { initWhisper } from './whisper'
 import { initDenoise } from './denoise'
@@ -297,6 +298,7 @@ initMotionAi()
 initSfxFinder()
 initRender()
 initMotionPreview()
+initAfterEffects()
 initMedia()
 initDenoise()
 initDownloads()

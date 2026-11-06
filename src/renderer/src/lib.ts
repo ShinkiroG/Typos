@@ -879,6 +879,10 @@ export interface BlockPreview {
   size?: { w: number; h: number }
   /** sons do Material bruto que o Claude pôs no motion (tempo a partir do começo do bloco); viram cortes de áudio ao aprovar */
   sounds?: BlockSound[]
+  /** feito no After Effects: `html` é o script (.jsx) e `video` já é o clipe na qualidade final */
+  engine?: 'ae'
+  /** projeto do After Effects do bloco (dá pra abrir, mexer e renderizar de novo) */
+  aep?: string
 }
 
 /** um som posto pelo Claude no motion de um bloco */
@@ -925,6 +929,8 @@ export interface InstructionBlock {
   formatId?: string
   /** o Claude pode usar o Material bruto do projeto (imagens, vídeos e sons, mais os sons da pasta SFX) */
   useRaw?: boolean
+  /** onde o motion é feito: HTML (padrão, prévia rápida) ou After Effects (projeto .aep editável) */
+  engine?: 'html' | 'ae'
 }
 
 /** um pedido de ajuste na prévia de um bloco */
