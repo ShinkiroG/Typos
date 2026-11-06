@@ -68,6 +68,7 @@ export function describeChange(prev: MontageData, next: MontageData): string {
     return on ? 'Controlou os picos da voz' : 'Desligou o controle de picos'
   }
   if (JSON.stringify(prev.bins) !== JSON.stringify(next.bins)) return 'Pastas de mídia'
+  if (JSON.stringify(prev.eq ?? null) !== JSON.stringify(next.eq ?? null)) return 'Equalizador'
   if (prev.norm !== next.norm) return 'Alvo do volume'
   if (prev.spliceDefault !== next.spliceDefault) return 'Duração do crossfade'
   if (prev.letteringDur !== next.letteringDur) return 'Tempo do lettering'

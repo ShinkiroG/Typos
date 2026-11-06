@@ -249,8 +249,8 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
   /** o que falta rodar nesta rodada, na ordem */
   const runList = useRef<{ id: RenderItemId; fresh?: boolean }[]>([])
   const runningId = useRef<RenderItemId | null>(null)
-  const qualityRef = useRef({ outW, outH, fps: quality.fps, pct: quality.pct, short: quality.short, plan, finalFile })
-  qualityRef.current = { outW, outH, fps: quality.fps, pct: quality.pct, short: quality.short, plan, finalFile }
+  const qualityRef = useRef({ outW, outH, fps: quality.fps, pct: quality.pct, short: quality.short, plan, finalFile, eq: montage.eq })
+  qualityRef.current = { outW, outH, fps: quality.fps, pct: quality.pct, short: quality.short, plan, finalFile, eq: montage.eq }
 
   /** resolução do recorte: a mesma qualidade escolhida, na proporção dele */
   const shortSize = (aspect: string, pct: number) => {
@@ -267,7 +267,7 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
       return {
         label: 'Vídeo principal',
         aspect: format?.aspect ?? '16:9',
-        job: { dir, width: q.outW, height: q.outH, fps: q.fps, finalFile: q.finalFile, parts: q.plan.parts, letterings: q.plan.letterings, fresh, exportDir, exportName: name }
+        job: { dir, width: q.outW, height: q.outH, fps: q.fps, finalFile: q.finalFile, parts: q.plan.parts, letterings: q.plan.letterings, fresh, exportDir, exportName: name, eq: q.eq }
       }
     }
     const sd = shortsRef.current
@@ -282,7 +282,7 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
       aspect: sd.aspect,
       shortId: sh.id,
       key: shortKey(sh),
-      job: { dir, width: w, height: h, fps: q.fps, finalFile: `${name}-${w}x${h}.mp4`, parts: p.parts, letterings: p.letterings, sub: `clipes/${name}-${sh.id}`, fit: 'cover' as const, exportDir, exportName: `${name}-${w}x${h}.mp4` }
+      job: { dir, width: w, height: h, fps: q.fps, finalFile: `${name}-${w}x${h}.mp4`, parts: p.parts, letterings: p.letterings, sub: `clipes/${name}-${sh.id}`, fit: 'cover' as const, exportDir, exportName: `${name}-${w}x${h}.mp4`, eq: sh.montage.eq ?? q.eq }
     }
   }
 

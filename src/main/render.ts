@@ -7,6 +7,7 @@ import { findFfmpeg, probe } from './media'
 import { concatList, finalArgs, partArgs, partFrames, ENCODE_V, type ALayer, type VLayer } from './compose'
 import { htmlToVideo } from './motionPreview'
 import { cleanAudio } from './denoise'
+import { eqFfmpeg, type MontageEq } from '../shared/eq'
 
 /**
  * Workspace Render: o Typos compila a timeline de montagem aqui no PC com o ffmpeg (sem IA):
@@ -80,6 +81,8 @@ export interface RenderJob {
   /** pasta de export: o vídeo pronto é copiado pra lá (com exportName) e é essa cópia que volta */
   exportDir?: string
   exportName?: string
+  /** equalizador do som (entra no passo final: mudar só ele não refaz as partes) */
+  eq?: MontageEq
 }
 
 interface StepState {
@@ -215,7 +218,8 @@ async function start(sender: WebContents, job: RenderJob) {
     })),
     { id: 'final', label: 'Vídeo final', file: job.finalFile, weight: Math.max(2, total * 0.04), expect: total, sig: '', done: false }
   ]
-  plan[plan.length - 1].sig = sha(plan.map((x) => x.sig).join('|') + job.finalFile)
+  const eq = eqFfmpeg(job.eq)
+  plan[plan.length - 1].sig = sha(plan.map((x) => x.sig).join('|') + job.finalFile + (eq.length ? '|eq:' + eq.join(',') : ''))
   for (const st of plan) {
     const prev = old?.steps.find((p) => p.id === st.id)
     if (prev && prev.sig === st.sig && prev.file === st.file) st.done = await finished(out, st)
@@ -322,9 +326,9 @@ async function start(sender: WebContents, job: RenderJob) {
     await fs.writeFile(join(partsDir, 'video.txt'), concatList(job.parts.map((p) => p.id + '.mp4')), 'utf8')
     await fs.writeFile(join(partsDir, 'audio.txt'), concatList(job.parts.map((p) => p.id + '.wav')), 'utf8')
     const dest = join(out, fin.file)
-    let r = await ffmpeg(ff.ffmpeg, finalArgs(join(partsDir, 'video.txt'), join(partsDir, 'audio.txt'), dest))
+    let r = await ffmpeg(ff.ffmpeg, finalArgs(join(partsDir, 'video.txt'), join(partsDir, 'audio.txt'), dest, true, eq))
     // ffmpeg antigo sem as opções do limitador: junta sem ele
-    if (r.code !== 0 && !cancelled && /alimiter|level/i.test(r.err)) r = await ffmpeg(ff.ffmpeg, finalArgs(join(partsDir, 'video.txt'), join(partsDir, 'audio.txt'), dest, false))
+    if (r.code !== 0 && !cancelled && /alimiter|level/i.test(r.err)) r = await ffmpeg(ff.ffmpeg, finalArgs(join(partsDir, 'video.txt'), join(partsDir, 'audio.txt'), dest, false, eq))
     if (cancelled) throw await stop('Cancelado.')
     if (r.code !== 0) throw await stop('O ffmpeg falhou ao juntar as partes: ' + tail(r.err) + '.')
     fin.done = true

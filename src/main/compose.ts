@@ -201,8 +201,10 @@ export function partArgs(p: PartSpec): string[] {
 /** lista do concat demuxer (nomes relativos à pasta da lista) */
 export const concatList = (names: string[]) => names.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join('\n') + '\n'
 
-/** junta as partes: vídeo copiado (sem recomprimir), áudio com limitador (igual ao da Montagem) em AAC */
-export function finalArgs(videoList: string, audioList: string, out: string, limiter = true): string[] {
+/** junta as partes: vídeo copiado (sem recomprimir), áudio com o EQ e o limitador (iguais aos da Montagem) em AAC */
+export function finalArgs(videoList: string, audioList: string, out: string, limiter = true, eq: string[] = []): string[] {
+  // equalizador do vídeo (o mesmo da prévia) antes do limitador
+  const af = [...eq, ...(limiter ? ['alimiter=limit=0.84:attack=5:release=120:level=0'] : [])]
   return [
     '-hide_banner',
     '-y',
@@ -225,7 +227,7 @@ export function finalArgs(videoList: string, audioList: string, out: string, lim
     '1:a',
     '-c:v',
     'copy',
-    ...(limiter ? ['-af', 'alimiter=limit=0.84:attack=5:release=120:level=0'] : []),
+    ...(af.length ? ['-af', af.join(',')] : []),
     '-c:a',
     'aac',
     '-b:a',
