@@ -254,8 +254,8 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
   /** o que falta rodar nesta rodada, na ordem */
   const runList = useRef<{ id: RenderItemId; fresh?: boolean }[]>([])
   const runningId = useRef<RenderItemId | null>(null)
-  const qualityRef = useRef({ outW, outH, fps: quality.fps, pct: quality.pct, short: quality.short, audio: !!quality.audio, plan, finalFile })
-  qualityRef.current = { outW, outH, fps: quality.fps, pct: quality.pct, short: quality.short, audio: !!quality.audio, plan, finalFile }
+  const qualityRef = useRef({ outW, outH, fps: quality.fps, pct: quality.pct, short: quality.short, audio: !!quality.audio, plan, finalFile, eq: montage.eq })
+  qualityRef.current = { outW, outH, fps: quality.fps, pct: quality.pct, short: quality.short, audio: !!quality.audio, plan, finalFile, eq: montage.eq }
 
   /** resolução do recorte: a mesma qualidade escolhida, na proporção dele */
   const shortSize = (aspect: string, pct: number) => {
@@ -274,7 +274,7 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
       return {
         label: q.audio ? 'Áudio do vídeo principal' : 'Vídeo principal',
         aspect: format?.aspect ?? '16:9',
-        job: { dir, width: q.outW, height: q.outH, fps: q.fps, finalFile: q.finalFile, parts: q.plan.parts, letterings: q.plan.letterings, fresh, exportDir, exportName: name, ...(q.audio ? { sub: 'audio' } : {}), ...audio }
+        job: { dir, width: q.outW, height: q.outH, fps: q.fps, finalFile: q.finalFile, parts: q.plan.parts, letterings: q.plan.letterings, fresh, exportDir, exportName: name, eq: q.eq, ...(q.audio ? { sub: 'audio' } : {}), ...audio }
       }
     }
     const sd = shortsRef.current
@@ -290,8 +290,8 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
       shortId: sh.id,
       key: shortKey(sh),
       job: q.audio
-        ? { dir, width: w, height: h, fps: q.fps, finalFile: `${name}-audio.wav`, parts: p.parts, letterings: [], sub: `clipes/${name}-${sh.id}/audio`, exportDir, exportName: `${name}-audio.wav`, ...audio }
-        : { dir, width: w, height: h, fps: q.fps, finalFile: `${name}-${w}x${h}.mp4`, parts: p.parts, letterings: p.letterings, sub: `clipes/${name}-${sh.id}`, fit: 'cover' as const, exportDir, exportName: `${name}-${w}x${h}.mp4` }
+        ? { dir, width: w, height: h, fps: q.fps, finalFile: `${name}-audio.wav`, parts: p.parts, letterings: [], sub: `clipes/${name}-${sh.id}/audio`, exportDir, exportName: `${name}-audio.wav`, eq: sh.montage.eq ?? q.eq, ...audio }
+        : { dir, width: w, height: h, fps: q.fps, finalFile: `${name}-${w}x${h}.mp4`, parts: p.parts, letterings: p.letterings, sub: `clipes/${name}-${sh.id}`, fit: 'cover' as const, exportDir, exportName: `${name}-${w}x${h}.mp4`, eq: sh.montage.eq ?? q.eq }
     }
   }
 

@@ -852,12 +852,12 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
     {
       label: 'Exibir',
       items: [
+        ...(youtubeOn ? [{ label: 'YouTube (título, thumbnail, descrição)', checked: mode === 'youtube', onClick: () => goMode('youtube') }] : []),
         { label: 'Roteiro', checked: mode === 'script', onClick: () => goMode('script') },
         { label: 'Montagem', checked: mode === 'montage', onClick: () => goMode('montage') },
         ...(shorts ? [{ label: 'Criar Clipes (recortes curtos)', checked: mode === 'clips', onClick: () => goMode('clips') }] : []),
         { label: 'Estilo (treinar motion e formato)', checked: mode === 'style', onClick: () => goMode('style') },
         { label: 'Render (criar o vídeo com o Claude)', checked: mode === 'render', onClick: () => goMode('render') },
-        ...(youtubeOn ? [{ label: 'YouTube (título, thumbnail, descrição)', checked: mode === 'youtube', onClick: () => goMode('youtube') }] : []),
         { sep: true },
         { label: 'Painel Inserir', checked: leftOpen, onClick: () => setLeftOpen((o) => !o) },
         { label: 'Painel lateral', checked: panelOpen, onClick: () => setPanelOpen((o) => !o) },
@@ -1200,6 +1200,12 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
             <Home size={17} />
           </button>
           <nav className="ws-switch v2">
+            {youtubeOn && (
+              <button className={mode === 'youtube' ? 'on' : ''} title="YouTube: como a página do vídeo vai ficar (título, thumbnail, descrição e comentário fixado)" onClick={() => goMode('youtube')}>
+                <MonitorPlay size={15} />
+                <span>YouTube</span>
+              </button>
+            )}
             <button className={mode === 'script' ? 'on' : ''} title="Roteiro: escrever" onClick={() => goMode('script')}>
               <PenLine size={15} />
               <span>Roteiro</span>
@@ -1222,12 +1228,6 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
               <Clapperboard size={15} />
               <span>Render</span>
             </button>
-            {youtubeOn && (
-              <button className={mode === 'youtube' ? 'on' : ''} title="YouTube: como a página do vídeo vai ficar (título, thumbnail, descrição e comentário fixado)" onClick={() => goMode('youtube')}>
-                <MonitorPlay size={15} />
-                <span>YouTube</span>
-              </button>
-            )}
           </nav>
 
           <div className="tb-doc">

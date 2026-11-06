@@ -2,6 +2,7 @@ import type { JSONContent } from '@tiptap/core'
 import { blockPrompts } from './editor/promptMark'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Api } from '../../preload'
+import type { MontageEq } from '../../shared/eq'
 
 declare global {
   interface Window {
@@ -833,6 +834,8 @@ export interface MontageData {
   blocks?: InstructionBlock[]
   /** correções e prompts do autor na transcrição de cada arquivo (chave: caminho do arquivo) */
   transcriptEdits?: Record<string, TranscriptEdit>
+  /** equalizador do som do vídeo (prévia e render) */
+  eq?: MontageEq
 }
 /** prompt preso a um trecho da fala transcrita (tempos do arquivo, em s) */
 export interface TranscriptPrompt {

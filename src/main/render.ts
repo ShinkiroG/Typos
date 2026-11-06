@@ -7,6 +7,7 @@ import { findFfmpeg, probe } from './media'
 import { concatList, finalArgs, finalAudioArgs, partArgs, partAudioArgs, partFrames, ENCODE_V, type ALayer, type VLayer } from './compose'
 import { htmlToVideo } from './motionPreview'
 import { cleanAudio } from './denoise'
+import { eqFfmpeg, type MontageEq } from '../shared/eq'
 
 /**
  * Workspace Render: o Typos compila a timeline de montagem aqui no PC com o ffmpeg (sem IA):
@@ -82,6 +83,8 @@ export interface RenderJob {
   exportName?: string
   /** só o som: cada parte vira um WAV e o final é um WAV (sem vídeo nem letterings) */
   audioOnly?: boolean
+  /** equalizador do som (entra no passo final: mudar só ele não refaz as partes) */
+  eq?: MontageEq
 }
 
 interface StepState {
@@ -219,7 +222,8 @@ async function start(sender: WebContents, job: RenderJob) {
     })),
     { id: 'final', label: audioOnly ? 'Áudio final' : 'Vídeo final', file: job.finalFile, weight: Math.max(2, total * 0.04), expect: total, sig: '', done: false }
   ]
-  plan[plan.length - 1].sig = sha(plan.map((x) => x.sig).join('|') + job.finalFile)
+  const eq = eqFfmpeg(job.eq)
+  plan[plan.length - 1].sig = sha(plan.map((x) => x.sig).join('|') + job.finalFile + (eq.length ? '|eq:' + eq.join(',') : ''))
   for (const st of plan) {
     const prev = old?.steps.find((p) => p.id === st.id)
     if (prev && prev.sig === st.sig && prev.file === st.file) st.done = await finished(out, st)
@@ -335,7 +339,7 @@ async function start(sender: WebContents, job: RenderJob) {
     await fs.writeFile(join(partsDir, 'audio.txt'), concatList(job.parts.map((p) => p.id + '.wav')), 'utf8')
     const dest = join(out, fin.file)
     const args = (limiter: boolean) =>
-      audioOnly ? finalAudioArgs(join(partsDir, 'audio.txt'), dest, limiter) : finalArgs(join(partsDir, 'video.txt'), join(partsDir, 'audio.txt'), dest, limiter)
+      audioOnly ? finalAudioArgs(join(partsDir, 'audio.txt'), dest, limiter, eq) : finalArgs(join(partsDir, 'video.txt'), join(partsDir, 'audio.txt'), dest, limiter, eq)
     if (!audioOnly) await fs.writeFile(join(partsDir, 'video.txt'), concatList(job.parts.map((p) => p.id + '.mp4')), 'utf8')
     let r = await ffmpeg(ff.ffmpeg, args(true))
     // ffmpeg antigo sem as opções do limitador: junta sem ele
