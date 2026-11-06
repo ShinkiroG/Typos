@@ -46,10 +46,13 @@ import {
   ListPlus,
   SlidersHorizontal,
   Check,
-  AudioLines
+  AudioLines,
+  SlidersVertical
 } from 'lucide-react'
 import { api, audioPath, clipDur, clipEndT, DENOISE_HINT, DENOISE_LABEL, fileUrl, PEAKS_HINT, RESOLUTIONS, uid, type DenoiseLevel, type Attachment, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
+import { EqPanel } from './EqPanel'
+import { eqActive } from '../../../shared/eq'
 import { SILENCE_DEFAULT, silenceCut, silenceStats, suggestThreshold, type SilenceOpts } from './silence'
 import { blocksMoved, fitBlocksToLetterings, silenceStart, timelineSilences } from './letterings'
 import { Recorder } from '../audio'
@@ -501,6 +504,7 @@ export function Montage({
   /** quando cada passo aconteceu (chave: o estado de antes dele) */
   const stamps = useRef(new WeakMap<MontageData, number>())
   const [histOpen, setHistOpen] = useState(false)
+  const [eqOpen, setEqOpen] = useState(false)
   const change = useCallback(
     (next: MontageData, gesture?: string) => {
       // lettering de capítulo é transição: os blocos que passam por ele são cortados em volta
@@ -546,6 +550,12 @@ export function Montage({
     window.addEventListener('typos:montage-history', on)
     return () => window.removeEventListener('typos:montage-history', on)
   })
+
+  // equalizador do vídeo: vale na hora na prévia
+  useEffect(() => {
+    engine.setEq(data.eq)
+  }, [data.eq, engine])
+  const analyser = useCallback(() => engine.analyser, [engine])
 
   // mexeu na timeline tocando: reagenda o áudio
   useEffect(() => {
@@ -2518,6 +2528,16 @@ export function Montage({
             <option value="lufs:-19">−19 LUFS · podcast</option>
           </optgroup>
         </select>
+        <div className="mt-hist-wrap">
+          <button
+            className={'btn small' + (eqOpen || eqActive(data.eq) ? ' on' : '')}
+            title="Frequências e equalizador: vê em Hz o que está tocando (subgrave, grave, médio, agudo) e equaliza o som do vídeo inteiro (ex.: cortar o subgrave que treme no subwoofer). Sai igual no render."
+            onClick={() => setEqOpen((o) => !o)}
+          >
+            <SlidersVertical size={13} /> <span className="lbl">EQ</span>
+          </button>
+          {eqOpen && <EqPanel eq={data.eq} onChange={(eq, g) => change({ ...dataRef.current, eq }, g)} analyser={analyser} playing={playing} onClose={() => setEqOpen(false)} />}
+        </div>
         {normMsg && <span className="mt-norm-msg">{normMsg}</span>}
         {busy && !normMsg && (
           <span className="mt-norm-msg">
