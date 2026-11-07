@@ -628,6 +628,7 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
                 />
               </label>
             )}
+            <EncoderPick />
             <label className="rn-fps">
               Quadros por segundo
               <select value={quality.fps} onChange={(e) => setQuality((q) => ({ ...q, fps: Number(e.target.value) }))}>
@@ -772,5 +773,24 @@ function QState({ s }: { s: RunState['status'] | 'pendente' | 'fora' }) {
     <span className="rn-q-off" />
   ) : (
     <Clock size={14} className="muted" />
+  )
+}
+
+/** onde o vídeo é comprimido: na placa NVIDIA (NVENC, bem mais rápido) ou na CPU (x264) */
+function EncoderPick() {
+  const [st, setSt] = useState<{ mode: 'cpu' | 'gpu'; gpu: boolean } | null>(null)
+  useEffect(() => {
+    api.renderEncoder().then(setSt).catch(() => null)
+  }, [])
+  if (!st) return null
+  return (
+    <label className="rn-fps" title="A compressão é a parte mais demorada do render. Na placa NVIDIA sai várias vezes mais rápido e com várias partes ao mesmo tempo.">
+      Comprimir na
+      <select value={st.mode} disabled={!st.gpu} onChange={async (e) => setSt(await api.renderEncoder(e.target.value as 'cpu' | 'gpu'))}>
+        <option value="gpu">Placa NVIDIA (rápido)</option>
+        <option value="cpu">CPU (mais lento)</option>
+      </select>
+      {!st.gpu && <small>GPU NVIDIA não encontrada pelo ffmpeg</small>}
+    </label>
   )
 }

@@ -4,8 +4,9 @@ import { promises as fs, existsSync } from 'fs'
 import { spawn, type ChildProcess } from 'child_process'
 import { createHash } from 'crypto'
 import { findFfmpeg, probe } from './media'
-import { concatList, finalArgs, finalAudioArgs, partArgs, partAudioArgs, partFrames, ENCODE_V, type ALayer, type VLayer } from './compose'
-import { htmlToVideo } from './motionPreview'
+import { concatList, finalArgs, finalAudioArgs, partArgs, partAudioArgs, partFrames, nvencArgs, nvencFailed, x264Args, ENCODE_V, type ALayer, type VLayer } from './compose'
+import { htmlToVideo, hasNvenc } from './motionPreview'
+import { loadSettings, saveSettings } from './settings'
 import { cleanAudio } from './denoise'
 import { eqFfmpeg, type MontageEq } from '../shared/eq'
 
@@ -120,7 +121,21 @@ export interface RenderProgress {
 const STATE = 'estado.json'
 const sha = (s: string) => createHash('sha1').update(s).digest('hex').slice(0, 16)
 
-let current: ChildProcess | null = null
+/** ffmpegs rodando agora (com GPU, várias partes ao mesmo tempo) */
+const running = new Set<ChildProcess>()
+
+/**
+ * Encoder do render: NVENC (placa NVIDIA) quando ela existe e não foi desligado, senão x264.
+ * Com NVENC a compressão sai da CPU e o gargalo vira ler/montar as camadas, que roda melhor com
+ * várias partes em paralelo; o x264 já usa todos os núcleos, então lá é uma parte por vez.
+ */
+/** a placa recusou num render: até fechar o app, o render vai direto pela CPU */
+let nvencBroken = false
+async function renderEncoder(): Promise<{ gpu: boolean; args: string[]; parallel: number }> {
+  const s = await loadSettings()
+  if (s.renderEncoder !== 'cpu' && !nvencBroken && (await hasNvenc())) return { gpu: true, args: nvencArgs(), parallel: 3 }
+  return { gpu: false, args: x264Args('master'), parallel: 1 }
+}
 let busy = false
 let cancelled = false
 
@@ -151,7 +166,7 @@ async function finished(out: string, s: StepState) {
 function ffmpeg(bin: string, args: string[], onFrame?: (frame: number) => void) {
   return new Promise<{ code: number; err: string }>((resolve) => {
     const p = spawn(bin, args, { windowsHide: true })
-    current = p
+    running.add(p)
     let err = ''
     let buf = ''
     p.stdout.on('data', (d) => {
@@ -168,11 +183,11 @@ function ffmpeg(bin: string, args: string[], onFrame?: (frame: number) => void) 
       if (err.length > 400_000) err = err.slice(-200_000)
     })
     p.on('close', (code) => {
-      current = null
+      running.delete(p)
       resolve({ code: code ?? -1, err })
     })
     p.on('error', (e) => {
-      current = null
+      running.delete(p)
       resolve({ code: -1, err: String(e) })
     })
   })
@@ -201,6 +216,7 @@ async function start(sender: WebContents, job: RenderJob) {
   }
   await fs.mkdir(partsDir, { recursive: true })
   await fs.mkdir(letDir, { recursive: true })
+  const enc = await renderEncoder()
   const t0 = Date.now()
   const total = job.parts[job.parts.length - 1].to - job.parts[0].from
   const audioOnly = !!job.audioOnly
@@ -210,6 +226,12 @@ async function start(sender: WebContents, job: RenderJob) {
   const letById = new Map(job.letterings.map((l) => [l.id, l]))
   const letFile = (l: LetteringIn) => join(letDir, sha([l.html, l.dur, job.width, job.height, job.fps, ENCODE_V].join('|')) + '.mp4')
   const old = await readState(out)
+  // partes de encoders diferentes não emendam sem recomprimir (cada um escreve o cabeçalho do H.264 do
+  // seu jeito): o encoder entra na assinatura, e trocar de CPU pra GPU refaz as partes
+  const partSig = (p: RenderPartIn, gpu: boolean) =>
+    audioOnly
+      ? sha('audio|' + JSON.stringify([p.from, p.to, p.audio]))
+      : sha(p.key + '|' + ENCODE_V + '|' + p.letterings.map((id) => letById.get(id)?.html ?? '').join('|') + (gpu ? '|nvenc' : ''))
   const plan: StepState[] = [
     ...job.parts.map((p) => ({
       id: p.id,
@@ -217,13 +239,14 @@ async function start(sender: WebContents, job: RenderJob) {
       file: partFile(p.id),
       weight: p.to - p.from,
       expect: p.to - p.from,
-      sig: audioOnly ? sha('audio|' + JSON.stringify([p.from, p.to, p.audio])) : sha(p.key + '|' + ENCODE_V + '|' + p.letterings.map((id) => letById.get(id)?.html ?? '').join('|')),
+      sig: partSig(p, enc.gpu),
       done: false
     })),
     { id: 'final', label: audioOnly ? 'Áudio final' : 'Vídeo final', file: job.finalFile, weight: Math.max(2, total * 0.04), expect: total, sig: '', done: false }
   ]
   const eq = eqFfmpeg(job.eq)
-  plan[plan.length - 1].sig = sha(plan.map((x) => x.sig).join('|') + job.finalFile + (eq.length ? '|eq:' + eq.join(',') : ''))
+  const finSig = () => sha(plan.slice(0, -1).map((x) => x.sig).join('|') + '|' + job.finalFile + (eq.length ? '|eq:' + eq.join(',') : ''))
+  plan[plan.length - 1].sig = finSig()
   for (const st of plan) {
     const prev = old?.steps.find((p) => p.id === st.id)
     if (prev && prev.sig === st.sig && prev.file === st.file) st.done = await finished(out, st)
@@ -264,7 +287,7 @@ async function start(sender: WebContents, job: RenderJob) {
     progress('letterings')
     try {
       const tmp = letFile(l).replace(/\.mp4$/, '.tmp.mp4')
-      await htmlToVideo({ out: letDir, html: l.html, seconds: l.dur, width: job.width, height: job.height, fps: job.fps, files: [], video: tmp, quality: 'final', cancelled: () => cancelled })
+      await htmlToVideo({ out: letDir, html: l.html, seconds: l.dur, width: job.width, height: job.height, fps: job.fps, files: [], video: tmp, quality: 'final', encoder: enc.gpu ? nvencArgs() : undefined, cancelled: () => cancelled })
       await fs.rename(tmp, letFile(l))
     } catch (e: any) {
       if (cancelled) throw await stop('Cancelado.')
@@ -286,50 +309,104 @@ async function start(sender: WebContents, job: RenderJob) {
   }
   const audioOf = (list: ALayer[]) => list.map((a) => (a.denoise || a.peaks ? { ...a, path: cleaned.get(keyOf(a)) ?? a.path } : a))
 
-  // ---------- partes ----------
-  for (const p of pending) {
-    if (cancelled) throw await stop('Cancelado.')
+  // ---------- partes (com GPU, várias ao mesmo tempo) ----------
+  if (!audioOnly) send({ kind: 'info', text: enc.gpu ? 'Comprimindo na placa NVIDIA (NVENC).' : 'Comprimindo na CPU (x264).' })
+  /** quanto de cada parte em andamento já saiu (peso) */
+  const partial = new Map<string, number>()
+  const extra = () => [...partial.values()].reduce((a, x) => a + x, 0)
+  let encArgs = enc.args
+  let failure: Error | null = null
+  const runPart = async (p: RenderPartIn) => {
     const st = plan.find((x) => x.id === p.id)!
-    const lets: VLayer[] = p.letterings
-      .map((id) => letById.get(id))
-      .filter((l): l is LetteringIn => !!l)
-      .map((l) => {
-        const f = Math.min(0.35, l.dur / 4)
-        return { path: letFile(l), image: false, t0: l.t, t1: l.t + l.dur, src0: 0, fadeIn: f, fadeOut: f }
-      })
     send({ kind: 'info', text: `${p.label}…` })
     if (audioOnly) {
       const r = await ffmpeg(ff.ffmpeg, partAudioArgs({ from: p.from, to: p.to, audio: audioOf(p.audio), outWav: join(out, st.file) }))
+      if (failure) return
       if (cancelled) throw await stop('Cancelado.')
       if (r.code !== 0) throw await stop(`O ffmpeg falhou no som da ${p.label}: ${tail(r.err)}.`)
-      st.done = true
-      await writeState(out, state)
-      progress('partes')
-      continue
-    }
-    const frames = partFrames({ from: p.from, to: p.to, fps: job.fps })
-    const args = partArgs({
-      from: p.from,
-      to: p.to,
-      width: job.width,
-      height: job.height,
-      fps: job.fps,
-      video: [...p.video, ...lets],
-      audio: audioOf(p.audio),
-      fit: job.fit,
-      outVideo: join(out, st.file),
-      outWav: join(out, st.file.replace(/\.mp4$/i, '.wav'))
-    })
-    const r = await ffmpeg(ff.ffmpeg, args, (f) => progress('partes', st.weight * Math.min(1, f / frames)))
-    if (cancelled) throw await stop('Cancelado.')
-    if (r.code !== 0) {
-      const old = /normalize/i.test(r.err) ? ' (o ffmpeg é antigo demais: atualize pra versão 5 ou mais nova)' : ''
-      throw await stop(`O ffmpeg falhou na ${p.label}${old}: ${tail(r.err)}.`)
+    } else {
+      const lets: VLayer[] = p.letterings
+        .map((id) => letById.get(id))
+        .filter((l): l is LetteringIn => !!l)
+        .map((l) => {
+          const f = Math.min(0.35, l.dur / 4)
+          return { path: letFile(l), image: false, t0: l.t, t1: l.t + l.dur, src0: 0, fadeIn: f, fadeOut: f }
+        })
+      const frames = partFrames({ from: p.from, to: p.to, fps: job.fps })
+      const spec = {
+        from: p.from,
+        to: p.to,
+        width: job.width,
+        height: job.height,
+        fps: job.fps,
+        video: [...p.video, ...lets],
+        audio: audioOf(p.audio),
+        fit: job.fit,
+        outVideo: join(out, st.file),
+        outWav: join(out, st.file.replace(/\.mp4$/i, '.wav'))
+      }
+      const onFrame = (f: number) => {
+        partial.set(p.id, st.weight * Math.min(1, f / frames))
+        progress('partes', extra())
+      }
+      let used = encArgs
+      let r = await ffmpeg(ff.ffmpeg, partArgs(spec, used), onFrame)
+      // a placa recusou (ocupada, sessões demais, driver): essa parte e as próximas vão pela CPU
+      if (r.code !== 0 && !cancelled && !failure && enc.gpu && used === enc.args && nvencFailed(r.err)) {
+        if (encArgs === enc.args) {
+          send({ kind: 'info', text: 'A placa NVIDIA recusou a compressão: o render segue pela CPU.' })
+          encArgs = x264Args('master')
+          nvencBroken = true
+          // as partes que já saíram pela GPU são refeitas na CPU (senão não emendam)
+          for (const q of job.parts) {
+            const qs = plan.find((x) => x.id === q.id)!
+            qs.sig = partSig(q, false)
+            if (qs.done) {
+              qs.done = false
+              queue.push(q)
+            }
+          }
+          plan[plan.length - 1].sig = finSig()
+          plan[plan.length - 1].done = false
+          await writeState(out, state)
+        }
+        used = encArgs
+        r = await ffmpeg(ff.ffmpeg, partArgs(spec, used), onFrame)
+      }
+      partial.delete(p.id)
+      // a placa falhou em outra parte enquanto esta saía pela GPU: refaz na CPU pra emendar igual
+      if (r.code === 0 && used !== encArgs && !cancelled && !failure) {
+        queue.push(p)
+        return
+      }
+      // outra parte já falhou e esta foi parada junto: o erro que vale é o dela
+      if (failure) return
+      if (cancelled) throw await stop('Cancelado.')
+      if (r.code !== 0) {
+        const old = /normalize/i.test(r.err) ? ' (o ffmpeg é antigo demais: atualize pra versão 5 ou mais nova)' : ''
+        throw await stop(`O ffmpeg falhou na ${p.label}${old}: ${tail(r.err)}.`)
+      }
     }
     st.done = true
     await writeState(out, state)
-    progress('partes')
+    progress('partes', extra())
   }
+  const queue = [...pending]
+  const worker = async () => {
+    while (queue.length && !failure && !cancelled) {
+      const p = queue.shift()!
+      try {
+        await runPart(p)
+      } catch (e: any) {
+        if (!failure) failure = e
+        // uma parte falhou: para as outras também
+        for (const c of running) c.kill()
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: audioOnly ? 2 : Math.max(1, Math.min(enc.parallel, pending.length)) }, worker))
+  if (failure) throw failure
+  if (cancelled) throw await stop('Cancelado.')
 
   // ---------- final: junta as partes (vídeo copiado) e passa o limitador no áudio ----------
   const fin = plan[plan.length - 1]
@@ -410,9 +487,15 @@ export function initRender() {
     const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     return r.canceled ? null : (r.filePaths[0] ?? null)
   })
+  /** encoder do render: lê/troca e diz se a placa NVIDIA (NVENC) está disponível */
+  ipcMain.handle('render:encoder', async (_e, mode?: 'cpu' | 'gpu') => {
+    if (mode === 'cpu' || mode === 'gpu') await saveSettings({ renderEncoder: mode })
+    const [s, gpu] = await Promise.all([loadSettings(), hasNvenc()])
+    return { mode: gpu ? (s.renderEncoder ?? 'gpu') : 'cpu', gpu }
+  })
   ipcMain.handle('render:exists', (_e, paths: string[]) => paths.map((p) => !!p && existsSync(p)))
   ipcMain.handle('render:cancel', () => {
     cancelled = true
-    current?.kill()
+    for (const c of running) c.kill()
   })
 }

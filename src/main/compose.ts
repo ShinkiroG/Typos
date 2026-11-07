@@ -35,6 +35,9 @@ export function nvencArgs(): string[] {
   ]
 }
 
+/** o ffmpeg falhou por causa do NVENC (placa ocupada, sessões demais, driver)? aí dá pra refazer na CPU */
+export const nvencFailed = (err: string) => /nvenc|cuda|OpenEncodeSession|No capable devices|nvEncode/i.test(err)
+
 /** RGB (quadros PNG do navegador) → YUV 4:2:0 em BT.709, com arredondamento preciso (sem degrau extra) */
 export const RGB_TO_YUV = 'flags=bicubic+accurate_rnd+full_chroma_int:out_color_matrix=bt709:out_range=tv'
 
@@ -158,7 +161,7 @@ function mixAudio(p: Pick<PartSpec, 'from' | 'to' | 'audio'>, args: string[], fi
  * Um trecho da timeline → parte-NN.mp4 (só vídeo, H.264) + parte-NN.wav (mix em float, sem limitar:
  * o limitador roda uma vez só, no vídeo final, pra não ter emenda entre as partes).
  */
-export function partArgs(p: PartSpec): string[] {
+export function partArgs(p: PartSpec, encoder: string[] = x264Args('master')): string[] {
   const { width: W, height: H, fps } = p
   const frames = partFrames(p)
   const samples = partSamples(p)
@@ -202,7 +205,7 @@ export function partArgs(p: PartSpec): string[] {
   mixAudio(p, args, fil, k)
 
   args.push('-filter_complex', fil.join(';'))
-  args.push('-map', '[vout]', '-frames:v', String(frames), ...x264Args('master'), '-r', String(fps), '-an', p.outVideo)
+  args.push('-map', '[vout]', '-frames:v', String(frames), ...encoder, '-r', String(fps), '-an', p.outVideo)
   args.push('-map', '[aout]', '-c:a', 'pcm_f32le', '-ar', String(RATE), '-ac', '2', p.outWav)
   return args
 }

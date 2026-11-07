@@ -271,6 +271,8 @@ const api = {
     ipcRenderer.on('render:state', (_e, p) => cb(p))
   },
   renderCancel: () => ipcRenderer.invoke('render:cancel'),
+  /** encoder do render: GPU (NVENC) ou CPU (x264); sem mode só lê */
+  renderEncoder: (mode?: 'cpu' | 'gpu'): Promise<{ mode: 'cpu' | 'gpu'; gpu: boolean }> => ipcRenderer.invoke('render:encoder', mode),
   /** escolhe a pasta de export (null = cancelou) */
   renderPickDir: (current?: string): Promise<string | null> => ipcRenderer.invoke('render:pickDir', current),
   /** os arquivos ainda existem? (pra prévia dos vídeos já renderizados) */

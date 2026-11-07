@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain, session, type NativeImage, type WebContents } f
 import { dirname, join } from 'path'
 import { promises as fs, existsSync } from 'fs'
 import { createHash } from 'crypto'
+import { spawn } from 'child_process'
 import { findFfmpeg, run } from './media'
 import { partArgs, x264Args, nvencArgs, RGB_TO_YUV, type VLayer } from './compose'
 import { loadSettings, saveSettings } from './settings'
@@ -137,9 +138,6 @@ export async function htmlToVideo(job: HtmlVideoJob) {
   const ff = await findFfmpeg()
   if (!ff) throw new Error('O ffmpeg não foi encontrado (Configurações → Mídia).')
   const out = job.out
-  const frames = join(out, 'quadros-' + Math.random().toString(36).slice(2, 8))
-  await fs.rm(frames, { recursive: true, force: true })
-  await fs.mkdir(frames, { recursive: true })
   for (const f of job.files) await fs.copyFile(f.src, join(out, safeName(f.name))).catch(() => null)
   const playPath = join(out, `_tocar-${Math.random().toString(36).slice(2, 8)}.html`)
   await fs.writeFile(playPath, withClock(job.html), 'utf8')
@@ -191,6 +189,58 @@ export async function htmlToVideo(job: HtmlVideoJob) {
       win.webContents.invalidate()
     })
   win.webContents.setFrameRate(60)
+  let wav = ''
+  if (job.wav?.length) {
+    wav = join(out, `audio-${Math.random().toString(36).slice(2, 8)}.wav`)
+    await fs.writeFile(wav, job.wav)
+  }
+  /**
+   * ffmpeg lendo os quadros crus (BGRA) pela entrada padrão. Antes cada quadro virava PNG no disco
+   * (compressão lenta na thread principal) e o ffmpeg só começava no fim; agora os dois andam juntos.
+   */
+  const startEncoder = async (size: { width: number; height: number }) => {
+    const iw = size.width
+    const ih = size.height
+    const args = ['-hide_banner', '-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'bgra', '-s', `${iw}x${ih}`, '-framerate', String(job.fps), '-i', 'pipe:0']
+    if (wav) args.push('-i', wav)
+    args.push('-vf', `scale=${W}:${H}:${RGB_TO_YUV},format=yuv420p`)
+    // prévia: leve e rápida; clipe e lettering: qualidade de entrega (o grão do fundo tem que sobreviver)
+    if (job.quality === 'preview') args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p')
+    else args.push(...(job.encoder ?? x264Args('grain')))
+    args.push('-r', String(job.fps))
+    if (wav) args.push('-c:a', 'aac', '-b:a', job.quality === 'preview' ? '96k' : '192k', '-shortest')
+    args.push('-movflags', '+faststart', job.video)
+    const p = spawn(ff.ffmpeg, args, { windowsHide: true })
+    let err = ''
+    p.stderr.on('data', (d) => {
+      err += d
+      if (err.length > 200_000) err = err.slice(-100_000)
+    })
+    const closed = new Promise<{ code: number; err: string }>((resolve) => {
+      p.on('close', (code) => resolve({ code: code ?? -1, err }))
+      p.on('error', (e) => resolve({ code: -1, err: String(e) }))
+    })
+    // o ffmpeg morreu no meio: a escrita falha e o erro dele aparece no finish
+    p.stdin.on('error', () => null)
+    let dead = false
+    closed.then(() => (dead = true))
+    return {
+      async write(img: NativeImage) {
+        if (dead) throw new Error('O ffmpeg parou no meio: ' + (await closed).err.split('\n').slice(-3).join(' ').slice(0, 300))
+        const s = img.getSize()
+        const buf = s.width === iw && s.height === ih ? img.toBitmap() : img.resize({ width: iw, height: ih }).toBitmap()
+        if (!p.stdin.write(buf)) await new Promise<void>((r) => { p.stdin.once('drain', r); closed.then(() => r()) })
+      },
+      finish() {
+        p.stdin.end()
+        return closed
+      },
+      abort() {
+        p.kill()
+      }
+    }
+  }
+  let enc: Awaited<ReturnType<typeof startEncoder>> | null = null
   try {
     await win.loadFile(playPath)
     win.webContents.setZoomFactor(zoom)
@@ -204,35 +254,23 @@ export async function htmlToVideo(job: HtmlVideoJob) {
       await win.webContents.executeJavaScript(`window.__typosStep && window.__typosStep(${((i * 1000) / job.fps).toFixed(3)})`).catch(() => null)
       const img = await nextPaint(400)
       if (!img) throw new Error('A animação não desenhou nada (o HTML veio vazio ou quebrado).')
-      await fs.writeFile(join(frames, `q${String(i).padStart(5, '0')}.png`), img.toPNG())
+      // o ffmpeg comprime enquanto a página desenha o próximo quadro (o quadro vai cru, sem virar PNG no disco)
+      enc ??= await startEncoder(img.getSize())
+      await enc.write(img)
       if (i % 3 === 0) job.onPct?.((i + 1) / n)
     }
+    job.onPct?.(1)
+    const r = await enc!.finish()
+    if (r.code !== 0) throw new Error('O ffmpeg falhou ao montar o vídeo: ' + r.err.split('\n').slice(-3).join(' ').slice(0, 300))
   } catch (e) {
-    await fs.rm(frames, { recursive: true, force: true }).catch(() => null)
+    enc?.abort()
+    await fs.rm(job.video, { force: true }).catch(() => null)
     throw e
   } finally {
     win.destroy()
     await fs.rm(playPath, { force: true }).catch(() => null)
+    if (wav) await fs.rm(wav, { force: true }).catch(() => null)
   }
-  job.onPct?.(1)
-  const args = ['-hide_banner', '-y', '-framerate', String(job.fps), '-i', join(frames, 'q%05d.png')]
-  let wav = ''
-  if (job.wav?.length) {
-    wav = join(out, `audio-${Math.random().toString(36).slice(2, 8)}.wav`)
-    await fs.writeFile(wav, job.wav)
-    args.push('-i', wav)
-  }
-  args.push('-vf', `scale=${W}:${H}:${RGB_TO_YUV},format=yuv420p`)
-  // prévia: leve e rápida; clipe e lettering: qualidade de entrega (o grão do fundo tem que sobreviver)
-  if (job.quality === 'preview') args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p')
-  else args.push(...(job.encoder ?? x264Args('grain')))
-  args.push('-r', String(job.fps))
-  if (wav) args.push('-c:a', 'aac', '-b:a', job.quality === 'preview' ? '96k' : '192k', '-shortest')
-  args.push('-movflags', '+faststart', job.video)
-  const r = await run(ff.ffmpeg, args)
-  await fs.rm(frames, { recursive: true, force: true }).catch(() => null)
-  if (wav) await fs.rm(wav, { force: true }).catch(() => null)
-  if (r.code !== 0) throw new Error('O ffmpeg falhou ao montar o vídeo: ' + r.err.split('\n').slice(-3).join(' ').slice(0, 300))
   return job.video
 }
 
