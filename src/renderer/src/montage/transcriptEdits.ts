@@ -85,7 +85,27 @@ export const promptOf = (edit: TranscriptEdit | undefined, w: { s: number; e: nu
 export function tidy(edit: TranscriptEdit): TranscriptEdit | undefined {
   const fix = edit.fix && Object.keys(edit.fix).length ? edit.fix : undefined
   const prompts = edit.prompts?.length ? edit.prompts : undefined
-  return fix || prompts ? { fix, prompts } : undefined
+  const fixLang = fix ? edit.fixLang : undefined
+  return fix || prompts ? { fix, ...(fixLang ? { fixLang } : {}), prompts } : undefined
+}
+
+/**
+ * O que vale numa leitura em `lang`: correções feitas lendo em outro idioma não servem (são outras
+ * palavras); os prompts ficam presos ao tempo e valem em qualquer idioma.
+ */
+export function editFor(edit: TranscriptEdit | undefined, lang: string): TranscriptEdit | undefined {
+  if (!edit?.fixLang || edit.fixLang === lang) return edit
+  return { prompts: edit.prompts }
+}
+
+/**
+ * Guarda a edição feita lendo em `lang` por cima da que estava guardada: correção nova fica marcada
+ * com o idioma (e troca as de outro idioma); sem correção nova, as de outro idioma continuam lá.
+ */
+export function storeEdit(stored: TranscriptEdit | undefined, next: TranscriptEdit, lang: string): TranscriptEdit | undefined {
+  if (next.fix && Object.keys(next.fix).length) return tidy({ ...next, fixLang: lang })
+  if (stored?.fixLang && stored.fixLang !== lang) return tidy({ ...next, fix: stored.fix, fixLang: stored.fixLang })
+  return tidy({ ...next, fixLang: undefined })
 }
 
 /** quebra em linhas nas pausas (ou a cada ~12 palavras), como o resumo que vai pro Claude */

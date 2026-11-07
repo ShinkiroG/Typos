@@ -43,6 +43,9 @@ import {
   buildTiming,
   computeStats,
   formatLang,
+  speechLangOf,
+  speechLangLabel,
+  SPEECH_LANGS,
   formatTime,
   langLabel,
   setProjectDir,
@@ -144,6 +147,8 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
 
   const [title, setTitle] = useState(data.title)
   const [formatId, setFormatId] = useState(data.formatId)
+  /** idioma da fala pro Whisper escolhido no projeto ('' = segue o corretor do estilo) */
+  const [speechLang, setSpeechLang] = useState(data.speechLang ?? '')
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [panelOpen, setPanelOpen] = useState(true)
   const [tab, setTab] = useState<'ai' | 'library' | 'folders'>('library')
@@ -308,13 +313,14 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
   /** formato dos Clipes: o próprio (ex.: Shorts/Vertical) ou, sem escolha, o mesmo da Montagem */
   const clipsFormat = formats.find((f) => f.id === shorts?.formatId) ?? format
   const wpm = customWpm ?? format?.wpm ?? 150
+  const whisperLang = speechLangOf(speechLang, format)
 
   // refs pros handlers do editor (que são criados uma vez só)
   const editorRef = useRef<Editor | null>(null)
   const libraryRef = useRef(library)
   libraryRef.current = library
-  const metaRef = useRef({ title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts, renderSettings, youtube })
-  metaRef.current = { title, formatId, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts, renderSettings, youtube }
+  const metaRef = useRef({ title, formatId, speechLang, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts, renderSettings, youtube })
+  metaRef.current = { title, formatId, speechLang, format, clips, customWpm, wpm, tracks, assets, notes, montage, mode, chapterLettering, shorts, renderSettings, youtube }
 
   // ---------- desfazer/refazer da tela inteira (texto + timeline) ----------
   // O texto usa o histórico do editor; os clipes de áudio guardam cópias. A pilha "ordem"
@@ -736,7 +742,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
       alert('Não há narração na Montagem pra comparar com o roteiro.')
       return 0
     }
-    const lang = (formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]
+    const lang = whisperLang
     const words = new Map<string, { s: number; e: number; w: string }[]>()
     setToast('Atualizando roteiro: lendo o que foi falado…')
     for (const c of clips) {
@@ -923,6 +929,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
       render: metaRef.current.renderSettings,
       // projeto que nunca usou a página do YouTube não ganha o campo vazio
       youtube: data.youtube || Object.values(metaRef.current.youtube).some(Boolean) ? metaRef.current.youtube : undefined,
+      speechLang: metaRef.current.speechLang || undefined,
       doc: ed.getJSON(),
       updatedAt: new Date().toISOString()
     }
@@ -973,7 +980,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
     setSaveState('dirty')
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => save(), 800)
-  }, [title, formatId, clips, customWpm, tracks, assets, notes, montage, chapterLettering, shorts, renderSettings, youtube, save])
+  }, [title, formatId, speechLang, clips, customWpm, tracks, assets, notes, montage, chapterLettering, shorts, renderSettings, youtube, save])
 
   useEffect(() => {
     try {
@@ -1282,6 +1289,21 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
                 </select>
               </label>
             )}
+            <label
+              className="tb-group tb-format"
+              title={`Idioma da fala: o Whisper lê a narração do projeto inteiro (Montagem, blocos, Clipes, Atualizar roteiro) em ${speechLangLabel(whisperLang)}. "Igual ao corretor" segue o idioma do corretor do estilo; o corretor ortográfico do roteiro não muda.`}
+            >
+              <span className="tb-group-label">Fala</span>
+              <select className="format-select" value={speechLang} onChange={(e) => setSpeechLang(e.target.value)}>
+                <option value="">Igual ao corretor ({speechLangLabel(speechLangOf('', format))})</option>
+                {SPEECH_LANGS.map((l) => (
+                  <option key={l} value={l}>
+                    {speechLangLabel(l)}
+                  </option>
+                ))}
+                <option value="auto">{speechLangLabel('auto')}</option>
+              </select>
+            </label>
             <div className="tb-group save-group">
               {draft ? (
                 <button className="btn small primary" title="Escolher onde salvar (Ctrl+S)" onClick={saveAs}>
@@ -1364,7 +1386,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
             main={montage}
             shorts={shorts}
             onChange={setShorts}
-            lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
+            lang={whisperLang}
             wpm={wpm}
             format={clipsFormat}
             formats={formats}
@@ -1414,7 +1436,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
             format={format}
             formats={formats}
             onFormatChange={(f) => onFormatsChange(formats.map((x) => (x.id === f.id ? f : x)))}
-            lang={(formatLang(format) === 'off' ? 'pt-BR' : formatLang(format)).split('-')[0]}
+            lang={whisperLang}
             getBlocks={() => {
               const out: { index: number; type: string; text: string; seconds?: number }[] = []
               editorRef.current?.state.doc.forEach((n, _o, i) =>

@@ -25,7 +25,7 @@ import { roleLabel } from '../style/assets'
 import { envAt, envPoints, spans, type MontageEngine } from './engine'
 import type { ScriptBlock } from './autocut'
 import { jobPct, runningLabel, speechFiles, watchJobs } from './transcripts'
-import { applyFixes, inPrompt } from './transcriptEdits'
+import { applyFixes, editFor, inPrompt } from './transcriptEdits'
 import { planRender, type VLayer } from '../render/plan'
 import { issuesTweak, layoutProbe, safeZoneDirection, safeZones, type LayoutIssue } from './safezone'
 
@@ -172,7 +172,7 @@ export async function heardIn(
       error = r.error
       continue
     }
-    const edit = data.transcriptEdits?.[path]
+    const edit = editFor(data.transcriptEdits?.[path], lang)
     const fixed = applyFixes(r.words, edit)
     for (const c of clips.filter((x) => media.get(x.media)!.path === path)) {
       const here = fixed.filter((w) => {

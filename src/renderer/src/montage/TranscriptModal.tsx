@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { Ear, FileText, Loader2, Pencil, Undo2, X } from 'lucide-react'
-import { api, type MontageData, type TranscriptEdit } from '../lib'
+import { api, speechLangLabel, type MontageData, type TranscriptEdit } from '../lib'
 import { RefModal } from '../components/References'
 import { readAudio, readState, useReadCache, useWhisperJobs, jobLabel } from './transcripts'
-import { applyFixes, fixWords, lines, promptOf, removePrompt, revertWord, setPrompt, tidy, type RawWord, type ShownWord } from './transcriptEdits'
+import { applyFixes, editFor, fixWords, lines, promptOf, removePrompt, revertWord, setPrompt, storeEdit, type RawWord, type ShownWord } from './transcriptEdits'
 
 /**
  * A transcrição do que o Whisper ouviu, pra corrigir palavras e prender prompts em falas (como no Roteiro:
@@ -76,10 +76,10 @@ export function TranscriptModal({
     }
   }, [menu])
 
-  const editOf = (path: string) => data.transcriptEdits?.[path]
+  const editOf = (path: string) => editFor(data.transcriptEdits?.[path], lang)
   const save = (path: string, next: TranscriptEdit) => {
     const all = { ...(data.transcriptEdits ?? {}) }
-    const t = tidy(next)
+    const t = storeEdit(all[path], next, lang)
     if (t) all[path] = t
     else delete all[path]
     change({ ...data, transcriptEdits: Object.keys(all).length ? all : undefined })
@@ -126,6 +126,9 @@ export function TranscriptModal({
       <div className="modal tr-modal" onMouseDown={(e) => e.stopPropagation()}>
         <h3>
           <FileText size={16} /> {title}
+          <span className="muted" title="Muda em Fala, na barra de cima" style={{ fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
+            fala em {speechLangLabel(lang)}
+          </span>
           <button className="icon-btn" onClick={onClose} title="Fechar">
             <X size={16} />
           </button>

@@ -289,6 +289,22 @@ export interface MotionStyle {
 
 export const formatLang = (f?: Format) => f?.lang || 'pt-BR'
 
+/** idiomas que dá pra escolher pra fala (códigos do Whisper) */
+export const SPEECH_LANGS = ['pt', 'en', 'es', 'fr', 'it', 'de', 'ja', 'ko', 'zh', 'ru']
+
+/**
+ * Idioma que o Whisper usa pra ler a narração: o escolhido no projeto ou, sem escolha, o do corretor
+ * do estilo ("pt-BR" → "pt"; corretor desligado → "pt"). "auto" = o Whisper descobre sozinho.
+ */
+export function speechLangOf(project: string | undefined, f?: Format) {
+  if (project) return project
+  const l = formatLang(f)
+  return (l === 'off' ? 'pt-BR' : l).split('-')[0]
+}
+
+/** "en" → "inglês"; "auto" → "detectar sozinho" */
+export const speechLangLabel = (code: string) => (code === 'auto' ? 'detectar sozinho' : langLabel(code))
+
 /** "pt-BR" → "português (Brasil)" */
 export function langLabel(code: string) {
   if (code === 'off') return 'desligado'
@@ -326,6 +342,8 @@ export interface ProjectData {
   render?: RenderSettings
   /** workspace YouTube: como a página do vídeo vai ficar (título, thumbnail, descrição, comentário fixado) */
   youtube?: YoutubePage
+  /** idioma da fala pro Whisper no projeto inteiro ("pt", "en"… ou "auto"); vazio = segue o corretor do estilo */
+  speechLang?: string
   createdAt: string
   updatedAt: string
 }
@@ -848,6 +866,8 @@ export interface TranscriptPrompt {
 export interface TranscriptEdit {
   /** palavra corrigida pelo começo dela no arquivo (s.toFixed(2)); '' = some (foi juntada na anterior) */
   fix?: Record<string, string>
+  /** idioma da leitura em que as correções foram feitas ("pt", "en"…); vazio = antigas, valem pra qualquer um */
+  fixLang?: string
   prompts?: TranscriptPrompt[]
 }
 export interface MontageMarker {
