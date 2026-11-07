@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine, FolderOpen } from 'lucide-react'
+import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine, FolderOpen, ListPlus, ListX, Zap } from 'lucide-react'
 import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type Format, type InstructionBlock, type MontageData } from '../lib'
 import { PromptMenu } from './PromptMenu'
 import { rememberPrompt } from './prompts'
@@ -481,11 +481,16 @@ export function BlockPreviewBox({
   onApprove,
   onRerender,
   heard,
-  big
+  big,
+  queued = 0,
+  onUnqueue,
+  onAuto,
+  error
 }: {
   b: InstructionBlock
   dir: string
   busy: BlockBusy | null
+  /** Gerar: começa agora, ou entra na fila se as vagas estão ocupadas */
   onGenerate: () => void
   onAdjust: AdjustFn
   onCancel: () => void
@@ -495,8 +500,18 @@ export function BlockPreviewBox({
   /** linha "Som do trecho: lido / não lido" */
   heard?: React.ReactNode
   big?: boolean
+  /** posição na fila de motion (1 = o próximo); 0 = fora da fila */
+  queued?: number
+  onUnqueue?: () => void
+  /** troca o modo: prévia pra revisar ou aprovar sozinho */
+  onAuto?: (v: boolean) => void
+  /** erro do último pedido que saiu da fila */
+  error?: string
 }) {
   const mine = busy?.id === b.id
+  // as vagas estão com outros blocos: o Gerar põe na fila em vez de ficar desligado
+  const full = !!busy && !mine
+  const auto = !!b.autoApprove
   const stale = previewStale(b)
   // com rascunho guardado, o painel de ajustes já volta aberto
   const [asking, setAsking] = useState(() => hasDraft(previewDraftKey(b)))
@@ -537,17 +552,41 @@ export function BlockPreviewBox({
           </ul>
         </details>
       )}
+      {error && !mine && !queued && (
+        <div className="blk-prev-stale">
+          <AlertTriangle size={12} /> Na fila, deu erro: {error}
+        </div>
+      )}
       {mine ? (
         <BusyBar busy={busy!} onCancel={onCancel} big={big} />
+      ) : queued ? (
+        <div className="blk-prev-btns blk-queued">
+          <span className="blk-queued-label">
+            <ListPlus size={13} /> Na fila ({queued}º): {auto ? 'vai gerar e importar direto na timeline' : 'vai gerar a prévia pra você revisar'}
+          </span>
+          {onUnqueue && (
+            <button className="btn small" onClick={onUnqueue}>
+              <ListX size={13} /> Tirar da fila
+            </button>
+          )}
+        </div>
       ) : (
         <div className="blk-prev-btns">
           <button
-            className={'btn small' + (b.preview ? '' : ' primary')}
-            disabled={!!busy}
-            title={busy ? FULL_HINT : b.preview ? 'Cria o motion de novo, do zero (esquece os ajustes pedidos)' : ''}
+            className={'btn small' + (b.preview && !full ? '' : ' primary')}
+            title={
+              full
+                ? `Já tem motions sendo feitos: este bloco entra na fila e começa sozinho quando abrir uma vaga${auto ? ' (e já importa na timeline)' : ''}`
+                : auto
+                  ? 'Faz o motion e já grava o clipe final na timeline, no lugar do bloco, sem parar na prévia (Ctrl+Z desfaz)'
+                  : b.preview
+                    ? 'Cria o motion de novo, do zero (esquece os ajustes pedidos)'
+                    : ''
+            }
             onClick={onGenerate}
           >
-            <Sparkles size={13} /> {b.preview ? 'Refazer do zero' : 'Gerar prévia'}
+            {full ? <ListPlus size={13} /> : auto ? <Zap size={13} /> : <Sparkles size={13} />}{' '}
+            {full ? 'Pôr na fila' : auto ? (b.preview ? 'Refazer e importar' : 'Gerar e importar') : b.preview ? 'Refazer do zero' : 'Gerar prévia'}
           </button>
           {b.preview && (
             <button
@@ -588,7 +627,16 @@ export function BlockPreviewBox({
           )}
         </div>
       )}
-      {b.preview && !mine && <EncoderPick />}
+      {onAuto && !mine && (
+        <label className="blk-auto" title="Aprovar sozinho: o Typos faz o motion e já grava o clipe final na timeline, sem parar pra você aprovar a prévia. Vale pro Gerar e pra fila de motion.">
+          Ao gerar
+          <select value={auto ? 'auto' : 'preview'} onChange={(e) => onAuto(e.target.value === 'auto')}>
+            <option value="preview">Prévia pra revisar</option>
+            <option value="auto">Aprovar sozinho (importa direto)</option>
+          </select>
+        </label>
+      )}
+      {(b.preview || auto) && !mine && <EncoderPick />}
       {heard}
       {b.preview && asking && <AdjustBox b={b} dir={dir} busy={!!busy} onAdjust={onAdjust} onClose={() => setAsking(false)} />}
       {!!b.preview?.sounds?.length && (
@@ -614,7 +662,7 @@ const generate = (p: { b: InstructionBlock; onGenerate: () => void }) => {
 }
 
 /** painel da direita (inspetor) com o bloco selecionado */
-export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onRerender?: () => void; onOpen: () => void; onRemove: () => void; heard?: React.ReactNode }) {
+export function BlockInspector(p: FormProps & { queued?: number; onUnqueue?: () => void; error?: string; busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onRerender?: () => void; onOpen: () => void; onRemove: () => void; heard?: React.ReactNode }) {
   return (
     <div className="mt-insp blk-insp">
       <div className="blk-insp-head">
@@ -626,14 +674,14 @@ export function BlockInspector(p: FormProps & { busy: BlockBusy | null; onGenera
           <Trash2 size={13} />
         </button>
       </div>
-      <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} onRerender={p.onRerender} heard={p.heard} />
+      <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} onRerender={p.onRerender} heard={p.heard} queued={p.queued} onUnqueue={p.onUnqueue} error={p.error} onAuto={(v) => p.patch({ autoApprove: v })} />
       <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} formats={p.formats} videoFormat={p.videoFormat} />
     </div>
   )
 }
 
 /** janela do bloco (duplo clique): todas as propriedades + o player da prévia */
-export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onRerender?: () => void; onClose: () => void; heard?: React.ReactNode }) {
+export function BlockWindow(p: FormProps & { queued?: number; onUnqueue?: () => void; error?: string; busy: BlockBusy | null; onGenerate: () => void; onAdjust: AdjustFn; onCancel: () => void; onApprove: () => void; onRerender?: () => void; onClose: () => void; heard?: React.ReactNode }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && p.onClose()
     window.addEventListener('keydown', k)
@@ -651,7 +699,7 @@ export function BlockWindow(p: FormProps & { busy: BlockBusy | null; onGenerate:
           </button>
         </div>
         <div className="blk-window-body">
-          <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} onRerender={p.onRerender} heard={p.heard} big />
+          <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} onRerender={p.onRerender} heard={p.heard} queued={p.queued} onUnqueue={p.onUnqueue} error={p.error} onAuto={(v) => p.patch({ autoApprove: v })} big />
           <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} formats={p.formats} videoFormat={p.videoFormat} big />
         </div>
       </div>

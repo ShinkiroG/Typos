@@ -942,6 +942,8 @@ export interface InstructionBlock {
   negative?: string
   attachments: BlockAttachment[]
   preview?: BlockPreview
+  /** ao gerar: aprova sozinho (grava o clipe final e importa na timeline, sem parar na prévia) */
+  autoApprove?: boolean
   /** o autor aprovou a prévia (o render reaproveita a ideia) */
   approved?: boolean
   /** quanto o motion acompanha a fala: 0 = não sincroniza, 1 = sincroniza tudo (sem valor = 0,3) */

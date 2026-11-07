@@ -33,3 +33,37 @@ export function withBusy(map: BusyMap, id: string, next: BlockBusy | null | ((cu
 
 /** aviso dos botões quando as vagas acabaram */
 export const FULL_HINT = `Já tem ${MAX_PARALLEL} motions sendo feitos. Espere um terminar.`
+
+/**
+ * Fila de motion: blocos esperando vaga. A ordem é a do pedido; cada bloco aparece uma vez só e
+ * um bloco que já está sendo feito não entra (ele já está rodando).
+ */
+export function enqueue(queue: string[], ids: string[], map: BusyMap): string[] {
+  const out = [...queue]
+  for (const id of ids) if (!out.includes(id) && !map[id]) out.push(id)
+  return out
+}
+
+/** tira esses blocos da fila */
+export const dequeue = (queue: string[], ids: string[]) => queue.filter((id) => !ids.includes(id))
+
+/**
+ * O que sai da fila agora: os primeiros blocos que cabem nas vagas livres. Blocos que não existem
+ * mais (apagados, ou já importados) saem da fila sem rodar.
+ */
+export function takeFromQueue(queue: string[], map: BusyMap, exists: (id: string) => boolean): { start: string[]; rest: string[] } {
+  let free = MAX_PARALLEL - Object.keys(map).length
+  const start: string[] = []
+  const rest: string[] = []
+  for (const id of queue) {
+    if (!exists(id)) continue
+    if (free > 0 && !map[id]) {
+      start.push(id)
+      free--
+    } else rest.push(id)
+  }
+  return { start, rest }
+}
+
+/** posição do bloco na fila (1 = o próximo); 0 = fora da fila */
+export const queuePos = (queue: string[], id: string) => queue.indexOf(id) + 1
