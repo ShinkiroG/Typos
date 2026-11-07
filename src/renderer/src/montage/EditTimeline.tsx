@@ -55,6 +55,8 @@ interface Props {
   onBlockMenu: (e: React.MouseEvent, id: string) => void
   /** blocos gerando motion agora → quanto já foi (0–1) */
   blockBusy: Record<string, number>
+  /** blocos na fila de motion, na ordem */
+  blockQueue?: string[]
   onBlockCancel?: (id: string) => void
   /** o som de cada bloco já foi lido (Whisper)? */
   blockHeard?: (b: InstructionBlock) => BlockHeard
@@ -753,6 +755,7 @@ export function EditTimeline(p: Props) {
                         showSnap={showSnap}
                         trackAt={trackAt}
                         busy={p.blockBusy}
+                        queue={p.blockQueue}
                         onCancel={p.onBlockCancel}
                         heard={p.blockHeard}
                       />

@@ -27,6 +27,8 @@ export function BlockLayer(p: {
   trackAt: (clientY: number) => { id: string; kind: 'video' | 'audio' } | null
   /** blocos gerando prévia agora → quanto já foi (0–1) */
   busy: Record<string, number>
+  /** blocos na fila de motion, na ordem */
+  queue?: string[]
   onCancel?: (id: string) => void
   /** o som do bloco já foi lido (Whisper)? */
   heard?: (b: InstructionBlock) => BlockHeard
@@ -153,6 +155,11 @@ export function BlockLayer(p: {
                 </span>
               )}
             </span>
+            {!(b.id in p.busy) && !!p.queue?.includes(b.id) && (
+              <span className="mt-iblock-queued" title={b.autoApprove ? 'Na fila de motion: vai gerar e importar direto' : 'Na fila de motion: vai gerar a prévia'}>
+                fila {p.queue.indexOf(b.id) + 1}º{b.autoApprove ? ' · auto' : ''}
+              </span>
+            )}
             {b.id in p.busy && (
               <>
                 <div className="mt-iblock-prog">

@@ -2540,3 +2540,111 @@
   font-size: 11px;
   opacity: 0.55;
 }
+
+/* ---------- fila de motion ---------- */
+.mt-iblock-queued {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 3;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 9px;
+  color: var(--text);
+  background: color-mix(in srgb, #000 55%, transparent);
+}
+.blk-queued {
+  align-items: center;
+}
+.blk-queued-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.blk-auto {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+.blk-auto select {
+  font-size: 11px;
+}
+.mq-window {
+  width: min(760px, 94vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mq-hint {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.75;
+}
+.mq-list {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 60px;
+}
+.mq-row {
+  display: grid;
+  grid-template-columns: auto minmax(140px, 1fr) auto minmax(180px, 1.4fr);
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.mq-row.run {
+  background: color-mix(in srgb, #4ade80 8%, transparent);
+}
+.mq-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mq-name small {
+  opacity: 0.6;
+}
+.mq-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.8;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mq-status.run {
+  color: #4ade80;
+  opacity: 1;
+}
+.mq-status.err {
+  color: var(--c-transition);
+  opacity: 1;
+}
+.mq-foot,
+.mq-modes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.mq-foot .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
