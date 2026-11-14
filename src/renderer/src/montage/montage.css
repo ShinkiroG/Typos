@@ -2648,3 +2648,15 @@
   align-items: center;
   gap: 4px;
 }
+
+/* atalho pro HTML do motion (abrir no navegador / mostrar na pasta pra editar à mão) */
+.blk-prev-html {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.blk-prev-html span {
+  margin-right: 2px;
+}

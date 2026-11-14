@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine, FolderOpen, ListPlus, ListX, Zap } from 'lucide-react'
+import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine, FolderOpen, ListPlus, ListX, Zap, ExternalLink } from 'lucide-react'
 import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type Format, type InstructionBlock, type MontageData } from '../lib'
 import { PromptMenu } from './PromptMenu'
 import { rememberPrompt } from './prompts'
@@ -578,6 +578,17 @@ export function BlockPreviewBox({
               ? 'Sem prévia ainda. O Claude escreve o script, o After Effects monta o projeto e o aerender grava na resolução do projeto, com o áudio do trecho. Aprovada, ela entra na timeline como clipe.'
               : 'Sem prévia ainda. A prévia sai em 12 fps e baixa resolução, com o áudio do trecho. Aprovada, ela é gravada na resolução do projeto e entra na timeline como clipe.'}
           </span>
+        </div>
+      )}
+      {b.preview?.html && b.engine !== 'ae' && (
+        <div className="blk-prev-html" title="O motion é um HTML na pasta do projeto (previas/). Dá pra abrir e editar à mão: o clipe final é gravado a partir deste arquivo quando você aprova.">
+          <span>HTML do motion</span>
+          <button className="icon-btn" title="Abrir o HTML no navegador" onClick={() => api.openPath(b.preview!.html)}>
+            <ExternalLink size={12} />
+          </button>
+          <button className="icon-btn" title="Mostrar o HTML na pasta (pra abrir num editor)" onClick={() => api.showItem(b.preview!.html)}>
+            <FolderOpen size={12} />
+          </button>
         </div>
       )}
       {stale && (

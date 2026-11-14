@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { SoundProfile } from '../main/soundProfile'
+import type { GlobalFx } from '../shared/fx'
 
 type AiProvider = 'claude-code' | 'codex' | 'anthropic' | 'openai'
 
@@ -296,6 +297,8 @@ const api = {
     final?: boolean
     zoom?: number
     htmlPath?: string
+    /** efeitos globais do estilo (camera shake, grão) */
+    fx?: GlobalFx
   }): Promise<{ video: string; html: string } | { error: string }> => ipcRenderer.invoke('motion:preview', job),
   motionPreviewCancel: (block?: string) => ipcRenderer.invoke('motion:previewCancel', block),
   // motion no After Effects (script do Claude → projeto .aep → aerender → clipe)
