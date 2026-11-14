@@ -29,6 +29,7 @@ import { applyFixes, editFor, inPrompt } from './transcriptEdits'
 import { planRender, type VLayer } from '../render/plan'
 import { issuesTweak, layoutProbe, safeZoneDirection, safeZones, type LayoutIssue } from './safezone'
 import { fxPrompt } from '../../../shared/fx'
+import { motionLibPrompt } from '../../../shared/motionLib'
 
 /**
  * Blocos de instrução: pedaços de tempo na faixa de vídeo com instruções de motion.
@@ -883,7 +884,7 @@ export function blockPromptParts(o: BlockPromptIn): { fixed: string; block: stri
   if (rules) F.push('## Regras do estilo (respeite)', rules, '')
   const guide = o.format?.motion?.learned?.guide
   if (guide) F.push('## Guia de estilo do formato', guide, '')
-  if (!ae) F.push(...fxPrompt(o.format?.motion?.fx))
+  if (!ae) F.push(...motionLibPrompt(), ...fxPrompt(o.format?.motion?.fx))
   if (o.assets?.list.length) {
     const a = o.assets
     F.push(
@@ -1414,6 +1415,67 @@ export async function generatePreview(c: PreviewCtx) {
     errors: errors.length ? errors : undefined,
     reviewed,
     sounds: sounds.length ? sounds : undefined
+  }
+}
+
+/**
+ * Regrava a prévia a partir do HTML que está no disco, sem passar pela IA: pra quando o autor editou
+ * o arquivo na mão (ou trocou um asset) e quer ver como ficou. A conferência de safe zone e de erros
+ * roda de novo, só pra avisar; o arquivo não é alterado.
+ */
+export async function rerecordPreview(c: Omit<PreviewCtx, 'script' | 'lang'>): Promise<BlockPreview> {
+  const b = c.block
+  const p = b.preview
+  if (!p?.html || p.engine === 'ae') throw new Error('Este bloco não tem uma prévia em HTML pra regravar.')
+  const html = await fetch(fileUrl(p.html))
+    .then((r) => (r.ok ? r.text() : ''))
+    .catch(() => '')
+  if (!html.trim()) throw new Error('Não achei o HTML desta prévia (o arquivo foi apagado ou está vazio).')
+  let size = p.size
+  if (!size) {
+    const info = await api.probeMedia(p.video)
+    size = !('error' in info) && info.width && info.height ? { w: info.width, h: info.height } : previewSize(c.format)
+  }
+  const shot = shotSize(size)
+  const zoom = shot.w / size.w
+  const files = b.attachments.filter(isImage).map((a, i) => ({ a, name: attachName(a, i) }))
+  c.onStage('Olhando o que está na timeline…', null, [0, 0.15])
+  const [under, edges, list, rawList] = await Promise.all([
+    html.includes(UNDER_NAME) ? underFor(c.data, b, c.dir, shot, true) : Promise.resolve(null),
+    html.includes(PREV_NAME) || html.includes(NEXT_NAME) ? edgesFor(c.data, b, c.dir, shot).catch(() => [] as EdgeInfo[]) : Promise.resolve([] as EdgeInfo[]),
+    html.includes('estilo-') ? styleAssets(c.format) : Promise.resolve([] as StyleAsset[]),
+    html.includes('bruto-') ? rawFiles(c.data, c.format) : Promise.resolve([] as RawFile[])
+  ])
+  const playFiles = [
+    ...files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
+    ...tweakFiles(b.tweaks).flat().map((f) => ({ src: absPath(f.a), name: f.name })),
+    ...(under ? [{ src: under.video, name: UNDER_NAME }] : []),
+    ...edgeFiles(edges),
+    ...assetFiles(list, html),
+    ...assetFiles(rawList, html)
+  ]
+  c.onStage('Conferindo a animação (safe zone e erros)…', null, [0.15, 0.25])
+  const zones = safeZones(c.format?.aspect, size.w, size.h)
+  const got = await api.motionCheckLayout({ dir: c.dir, block: b.id, html, seconds: blockDur(b), width: shot.w, height: shot.h, zoom, files: playFiles, probe: layoutProbe(zones) })
+  if ('error' in got && got.error === 'Cancelado.') throw new Error(got.error)
+  const issues: LayoutIssue[] = 'error' in got ? [] : got.issues
+  const errors = 'error' in got ? [] : (got.errors ?? [])
+  c.onStage('Mixando o áudio do trecho…', null, [0.25, 0.3])
+  const sounds = p.sounds ?? []
+  const mix = await withSounds(c.engine, c.data, c.dur, b, sounds)
+  const wav = audioIn(c.data, b).length > 0 || sounds.length ? await rangeWav(c.engine, mix.data, mix.dur, b.start, b.end).catch(() => undefined) : undefined
+  c.onStage('Gravando a prévia (12 fps)…', 0, [0.3, 1], Math.max(1, Math.round(blockDur(b) * PREVIEW_FPS)))
+  const v = await api.motionPreview({ dir: c.dir, block: b.id, html: '', htmlPath: p.html, seconds: blockDur(b), width: shot.w, height: shot.h, zoom, fps: PREVIEW_FPS, wav, files: playFiles, fx: c.format?.motion?.fx })
+  if ('error' in v) throw new Error(v.error)
+  return {
+    ...p,
+    video: v.video,
+    html: v.html,
+    at: new Date().toISOString(),
+    size,
+    safeIssues: issues.length ? issuesTweak(issues, zones).split('\n').slice(1) : undefined,
+    errors: errors.length ? errors : undefined,
+    reviewed: undefined
   }
 }
 

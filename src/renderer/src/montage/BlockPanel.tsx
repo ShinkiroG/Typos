@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine, FolderOpen, ListPlus, ListX, Zap, ExternalLink, Eye } from 'lucide-react'
+import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine, FolderOpen, ListPlus, ListX, Zap, ExternalLink, Eye, RefreshCw } from 'lucide-react'
 import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type Format, type InstructionBlock, type MontageData } from '../lib'
 import { PromptMenu } from './PromptMenu'
 import { rememberPrompt } from './prompts'
@@ -617,6 +617,11 @@ export function BlockPreviewBox({
           <button className="icon-btn" title="Mostrar o HTML na pasta (pra abrir num editor)" onClick={() => api.showItem(b.preview!.html)}>
             <FolderOpen size={12} />
           </button>
+          {onRerender && (
+            <button className="icon-btn" disabled={!!busy} title={busy ? FULL_HINT : 'Regravar a prévia a partir do HTML (depois de editar o arquivo à mão), sem pedir nada à IA'} onClick={onRerender}>
+              <RefreshCw size={12} />
+            </button>
+          )}
         </div>
       )}
       {stale && (

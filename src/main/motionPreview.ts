@@ -6,6 +6,7 @@ import { spawn } from 'child_process'
 import { findFfmpeg, run } from './media'
 import { partArgs, x264Args, nvencArgs, seekArgs, RGB_TO_YUV, type VLayer } from './compose'
 import { loadSettings, saveSettings } from './settings'
+import { MOTION_LIB, MOTION_LIB_FILE } from '../shared/motionLib'
 import { logTime } from './log'
 import { withFx, type GlobalFx } from '../shared/fx'
 
@@ -93,6 +94,9 @@ function withClock(html: string, fx?: GlobalFx): string {
 const CAPTURE_HZ = 240
 
 const safeName = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 60) || 'arquivo'
+
+/** a biblioteca de animação do Typos na pasta do motion (o HTML carrega pelo nome; regravada pra ficar na versão do app) */
+const putMotionLib = (dir: string) => fs.writeFile(join(dir, MOTION_LIB_FILE), MOTION_LIB, 'utf8').catch(() => null)
 
 /** prévias/clipes em andamento, por bloco (até 2 blocos ao mesmo tempo; o Cancelar vale só pro bloco dele) */
 const jobs = new Map<string, { cancel: boolean }>()
@@ -322,6 +326,7 @@ export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const out = join(job.dir, 'previas', safeName(job.block))
   await fs.mkdir(out, { recursive: true })
+  await putMotionLib(out)
   let htmlPath = job.htmlPath ?? ''
   if (!htmlPath) {
     htmlPath = join(out, `motion-${stamp}.html`)
@@ -393,6 +398,7 @@ export interface LayoutHit {
 export async function checkLayout(job: LayoutJob, cancelled: () => boolean = () => false): Promise<{ issues: LayoutHit[]; errors: string[] }> {
   const out = join(job.dir, 'previas', safeName(job.block))
   await fs.mkdir(out, { recursive: true })
+  await putMotionLib(out)
   for (const f of job.files) await fs.copyFile(f.src, join(out, safeName(f.name))).catch(() => null)
   const playPath = join(out, `_checar-${Math.random().toString(36).slice(2, 8)}.html`)
   await fs.writeFile(playPath, withClock(job.html), 'utf8')
