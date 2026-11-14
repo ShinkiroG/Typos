@@ -20,7 +20,7 @@ describe('estilo do bloco', () => {
     const p = prompt({ assets: { list: assets, first: 3, shown: 2 } })
     expect(p).toContain('pngtuber no canto inferior direito')
     expect(p).toContain('estilo-1-feliz.png ← pngtuber/feliz.png')
-    expect(p).toContain('As imagens 3 a 4')
+    expect(p).toContain('as imagens 3 a 4')
   })
   it('só copia os assets que a animação usa', () => {
     expect(assetFiles(assets, '<img src="estilo-11-bravo.png">')).toEqual([{ src: '/p/bravo.png', name: 'estilo-11-bravo.png' }])

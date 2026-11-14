@@ -763,7 +763,7 @@ export function negativePrompt(style?: string, block?: string) {
   ]
 }
 
-export function blockPrompt(o: {
+export interface BlockPromptIn {
   block: InstructionBlock
   format?: Format
   heard: HeardWord[]
@@ -790,15 +790,36 @@ export function blockPrompt(o: {
   raw?: { list: RawFile[]; first: number; shown: number; sounds?: BlockSound[] }
   /** feito no After Effects (script ExtendScript) em vez de HTML */
   engine?: 'ae'
-}) {
+  /** num ajuste: a resposta pode vir só com as edições (<edits>) em vez do arquivo inteiro */
+  edits?: boolean
+  /** revisão: se não houver nada pra mudar, a resposta pode ser só <ok/> */
+  okAllowed?: boolean
+}
+
+/** o pedido inteiro, num texto só (a parte fixa do vídeo e do estilo, depois o bloco) */
+export function blockPrompt(o: BlockPromptIn) {
+  const p = blockPromptParts(o)
+  return p.fixed + '\n\n' + p.block
+}
+
+/**
+ * O pedido em duas partes. `fixed` é o que vale pra todos os blocos do mesmo vídeo e estilo (papel,
+ * roteiro, direção, safe zone, regras, guia, assets, memória): vai na frente e igual, pra API guardar em
+ * cache e os blocos seguintes da fila custarem e esperarem menos. `block` é o que é só deste bloco.
+ */
+export function blockPromptParts(o: BlockPromptIn): { fixed: string; block: string } {
   const b = o.block
   const d = blockDur(b)
   const ae = o.engine === 'ae'
-  const L: string[] = [
+  const full = o.size.w >= 1000 || o.size.h >= 1000
+  const F: string[] = [
     ae
       ? 'Você é o motion designer do canal e trabalha no After Effects. Tarefa: criar o motion de UM bloco da timeline do vídeo, escrevendo o script que monta a composição no AE.'
       : 'Você é o motion designer do canal. Tarefa: criar a PRÉVIA do motion de UM bloco da timeline do vídeo.',
-    '',
+    'Primeiro vem o que vale pro vídeo e pro estilo inteiros; o bloco em que você vai trabalhar e o formato da resposta vêm no fim.',
+    ''
+  ]
+  const L: string[] = [
     '## O bloco',
     `- Duração: ${d.toFixed(2)} s (de ${formatTime(b.start)} a ${formatTime(b.end)} do vídeo)`,
     b.dynamic
@@ -854,26 +875,27 @@ export function blockPrompt(o: {
     )
   if (o.scriptHere.length) L.push('', 'Falas do roteiro que caem aqui (use pra acertar nomes e termos; a fala gravada manda, inclusive improvisos):', ...o.scriptHere.map((s) => '> ' + s))
   L.push('')
-  if (o.falas) L.push('## Roteiro do vídeo (só as falas, com os capítulos como "# título", pra entender o tema)', o.falas.slice(0, 12000), '')
-  L.push('## Direção de motion', MOTION_DIRECTION, syncDirection(blockSync(b)), '')
-  L.push(safeZoneDirection(safeZones(o.format?.aspect, o.size.w, o.size.h), o.size), '')
+  if (o.falas) F.push('## Roteiro do vídeo (só as falas, com os capítulos como "# título", pra entender o tema)', o.falas.slice(0, 12000), '')
+  F.push('## Direção de motion', MOTION_DIRECTION, '')
+  L.push('## Sincronia deste bloco com a fala', syncDirection(blockSync(b)), '')
+  F.push(safeZoneDirection(safeZones(o.format?.aspect, o.size.w, o.size.h), o.size), '')
   const rules = o.format?.rules?.trim()
-  if (rules) L.push('## Regras do estilo (respeite)', rules, '')
+  if (rules) F.push('## Regras do estilo (respeite)', rules, '')
   const guide = o.format?.motion?.learned?.guide
-  if (guide) L.push('## Guia de estilo do formato', guide, '')
-  if (!ae) L.push(...fxPrompt(o.format?.motion?.fx))
+  if (guide) F.push('## Guia de estilo do formato', guide, '')
+  if (!ae) F.push(...fxPrompt(o.format?.motion?.fx))
   if (o.assets?.list.length) {
     const a = o.assets
-    L.push(
+    F.push(
       '## Assets do estilo (as pastas fixas deste formato)',
       'São os arquivos que este estilo sempre usa (ex.: pngtuber, logo, molduras, fundos). Quando as regras, o guia ou as instruções pedirem algum deles (ex.: o pngtuber no canto), USE o arquivo de verdade, nunca um desenho inventado no lugar: ele está na mesma pasta do HTML com o nome abaixo. Imagem: <img src="nome">. Vídeo: <video src="nome" muted playsinline></video> (o Typos sincroniza o tempo; não use autoplay nem mexa em currentTime). Escolha pela pasta e pelo nome o que combina com o momento (ex.: a expressão do pngtuber que casa com a fala).',
       ...a.list.map((x) => `- ${x.name} ← ${x.rel} (${x.kind === 'image' ? 'imagem' : 'vídeo'})`),
-      a.shown ? `As imagens ${a.first} a ${a.first + a.shown - 1} são as ${a.shown} primeiras imagens desta lista, na mesma ordem.` : '',
       ''
     )
+    if (a.shown) L.push(`Assets do estilo: as imagens ${a.first} a ${a.first + a.shown - 1} deste pedido são as ${a.shown} primeiras imagens da lista de assets do estilo, na mesma ordem.`, '')
   }
   const assetsGuide = o.format?.motion?.assetsGuide?.guide
-  if (assetsGuide && (o.assets?.list.length || o.raw?.list.some((f) => f.style))) L.push('## Como usar os assets do estilo (o que você estudou no treino do estilo)', assetsGuide, '')
+  if (assetsGuide && (o.assets?.list.length || o.raw?.list.some((f) => f.style))) F.push('## Como usar os assets do estilo (o que você estudou no treino do estilo)', assetsGuide, '')
   const raw = o.raw?.list.length ? o.raw : null
   const rawSounds = !!raw?.list.some((f) => f.kind === 'audio' || f.kind === 'video')
   if (raw) {
@@ -901,10 +923,16 @@ export function blockPrompt(o: {
     )
   }
   const m = o.format?.motion
-  if (m?.colors?.length) L.push('Cores: ' + m.colors.join(', '))
-  if (m?.fonts) L.push(`Fontes: título ${m.fonts.title ?? '-'}, subtítulo ${m.fonts.subtitle ?? '-'}, texto ${m.fonts.body ?? '-'}, destaque ${m.fonts.accent ?? '-'}`)
+  if (m?.colors?.length) F.push('Cores: ' + m.colors.join(', '))
+  if (m?.fonts) F.push(`Fontes: título ${m.fonts.title ?? '-'}, subtítulo ${m.fonts.subtitle ?? '-'}, texto ${m.fonts.body ?? '-'}, destaque ${m.fonts.accent ?? '-'}`)
   const mem = memorySection(m?.memory)
-  if (mem) L.push('', mem, '')
+  if (mem)
+    F.push(
+      '',
+      mem,
+      full && !ae ? `(Os exemplos da memória podem ter sido escritos numa tela menor, de 480 px. Aproveite a linguagem e a ideia; os números em px refaça pra tela de ${o.size.w}x${o.size.h}.)` : '',
+      ''
+    )
   if (ae) L.push(aeDirection(o.size, d), '')
   if (o.adjust) {
     L.push(
@@ -930,19 +958,38 @@ export function blockPrompt(o: {
       `Só o miolo do script ExtendScript (ES3) que preenche a composição \`comp\` (${o.size.w}x${o.size.h} px, ${d.toFixed(2)} s), seguindo as regras do After Effects acima. Sem \`\`\` e sem texto em volta.`,
       '</ae>'
     )
-  else L.push(
-    '## Responda EXATAMENTE neste formato (nada fora das tags)',
-    '<demo>',
-    `Um arquivo HTML completo e autocontido (CSS e JS inline, sem internet), em ${o.size.w}x${o.size.h} px preenchendo a página (body sem margem, overflow hidden), que toca o motion deste bloco UMA vez, começando em 0 s e durando exatamente ${d.toFixed(2)} s (sem loop; segure o último quadro). Anime com CSS keyframes, Web Animations ou requestAnimationFrame com performance.now(): o Typos controla o relógio e grava quadro a quadro. Use as fontes pelo nome (font-family) e as cores do estilo. O clipe final é gravado ampliado (mesma composição, mais pixels): prefira texto, SVG e CSS, que ficam nítidos; se usar <canvas>, crie ele em largura×devicePixelRatio por altura×devicePixelRatio (com o tamanho CSS normal) e dê ctx.scale(devicePixelRatio, devicePixelRatio), senão ele sai borrado.${o.files.some((f) => f.a.use === 'insert') ? ' As imagens de insert estão na mesma pasta do HTML, pelo nome indicado.' : ''}`,
-    '</demo>'
-  )
+  else {
+    const how = full
+      ? `O clipe final é gravado neste tamanho e a prévia é a mesma página reduzida: desenhe com o detalhe de uma tela de ${o.size.w}x${o.size.h} (traços finos, grão fino, texto pequeno legível).`
+      : 'O clipe final é gravado ampliado (mesma composição, mais pixels): prefira texto, SVG e CSS, que ficam nítidos; se usar <canvas>, crie ele em largura×devicePixelRatio por altura×devicePixelRatio (com o tamanho CSS normal) e dê ctx.scale(devicePixelRatio, devicePixelRatio), senão ele sai borrado.'
+    const demo = `Um arquivo HTML completo e autocontido (CSS e JS inline, sem internet), em ${o.size.w}x${o.size.h} px preenchendo a página (body sem margem, overflow hidden), que toca o motion deste bloco UMA vez, começando em 0 s e durando exatamente ${d.toFixed(2)} s (sem loop; segure o último quadro). Anime com CSS keyframes, Web Animations ou requestAnimationFrame com performance.now(): o Typos controla o relógio e grava quadro a quadro. Use as fontes pelo nome (font-family) e as cores do estilo. ${how}${o.files.some((f) => f.a.use === 'insert') ? ' As imagens de insert estão na mesma pasta do HTML, pelo nome indicado.' : ''}`
+    if (o.adjust && o.edits)
+      L.push(
+        '## Responda EXATAMENTE num destes formatos (nada fora das tags)',
+        ...(o.okAllowed ? ['Se não há nada pra mudar, responda só:', '<ok/>', ''] : []),
+        'Mudança pequena ou média (o normal num ajuste): mande SÓ as edições, sem repetir o arquivo. O Typos aplica cada uma, em ordem, no HTML acima:',
+        '<edits>',
+        '<edit>',
+        '<old>trecho do HTML atual copiado EXATAMENTE como está (mesmos espaços e quebras de linha), longo o bastante pra aparecer uma vez só no arquivo</old>',
+        '<new>o que entra no lugar (vazio pra apagar)</new>',
+        '</edit>',
+        '</edits>',
+        'Quantos <edit> precisar. Cada <old> tem que existir no arquivo, uma vez só; pra inserir algo, use como <old> um trecho vizinho e repita ele dentro do <new>.',
+        '',
+        'Mudança grande (mais da metade do arquivo muda): mande o arquivo inteiro:',
+        '<demo>',
+        demo,
+        '</demo>'
+      )
+    else L.push('## Responda EXATAMENTE neste formato (nada fora das tags)', '<demo>', demo, '</demo>')
+  }
   if (rawSounds)
     L.push(
       '<sons>',
       'Lista JSON dos sons do Material bruto que tocam neste motion; "em" é o segundo a partir do começo do bloco e "volume" vai de 0 a 1. Ex.: [{"arquivo": "bruto-3-whoosh.wav", "em": 1.2, "volume": 0.6}]. Sem som: [].',
       '</sons>'
     )
-  return L.join('\n')
+  return { fixed: F.join('\n'), block: L.join('\n') }
 }
 
 /** como escrever o motion no After Effects (o Typos embrulha o miolo: ver main/aeCore.ts) */
@@ -991,6 +1038,39 @@ export function errorsTweak(errors: string[]) {
     'CORREÇÃO DE ERRO (automática, do Typos): ao tocar a animação, o navegador registrou os erros abaixo. Com erro de script a animação para no meio ou nem começa; arquivo que não carregou aparece quebrado. Corrija a causa e mantenha a ideia, a composição e os tempos. Só existem na pasta os arquivos listados neste pedido, com exatamente esses nomes.',
     ...errors.slice(0, 12).map((e) => '- ' + e)
   ].join('\n')
+}
+
+/** as edições da resposta (<edits><edit><old>…</old><new>…</new></edit></edits>); null = não veio nenhuma */
+export function parseEdits(text: string): { old: string; next: string }[] | null {
+  const out: { old: string; next: string }[] = []
+  const trim = (x: string) => x.replace(/^\r?\n/, '').replace(/\r?\n[ \t]*$/, '')
+  for (const m of text.matchAll(/<edit>\s*<old>([\s\S]*?)<\/old>\s*<new>([\s\S]*?)<\/new>\s*<\/edit>/gi)) out.push({ old: trim(m[1]), next: trim(m[2]) })
+  return out.length ? out : null
+}
+
+/**
+ * Aplica as edições em ordem. Cada trecho antigo tem que aparecer uma vez só; se não bater letra por
+ * letra, tenta de novo ignorando diferenças de espaço e quebra de linha. Devolve o HTML novo ou o motivo
+ * de não ter dado (aí o Typos pede o arquivo inteiro).
+ */
+export function applyEdits(html: string, edits: { old: string; next: string }[]): { html: string } | { error: string } {
+  let cur = html
+  for (const [i, e] of edits.entries()) {
+    if (!e.old.trim()) return { error: `a edição ${i + 1} veio sem o trecho antigo` }
+    const n = cur.split(e.old).length - 1
+    if (n === 1) {
+      const at = cur.indexOf(e.old)
+      cur = cur.slice(0, at) + e.next + cur.slice(at + e.old.length)
+      continue
+    }
+    if (n > 1) return { error: `o trecho antigo da edição ${i + 1} aparece ${n} vezes no arquivo` }
+    const loose = new RegExp(e.old.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'), 'g')
+    const hits = [...cur.matchAll(loose)]
+    if (hits.length !== 1) return { error: `o trecho antigo da edição ${i + 1} ${hits.length ? `aparece ${hits.length} vezes no arquivo` : 'não existe no arquivo'}` }
+    const at = hits[0].index!
+    cur = cur.slice(0, at) + e.next.trim() + cur.slice(at + hits[0][0].length)
+  }
+  return { html: cur }
 }
 
 /** nome do arquivo de anexo dentro da pasta da prévia */
@@ -1091,6 +1171,64 @@ async function waitAi<T>(c: Pick<PreviewCtx, 'onStage'>, label: string, span: [n
   }
 }
 
+/** tamanho do vídeo da prévia: a página reduzida até o lado maior ter 480 px (o que já é pequeno fica como está) */
+export function shotSize(size: { w: number; h: number }) {
+  const k = Math.min(1, 480 / Math.max(size.w, size.h))
+  return { w: Math.max(2, Math.round((size.w * k) / 2) * 2), h: Math.max(2, Math.round((size.h * k) / 2) * 2) }
+}
+
+/** o pedido de revisão: o Claude olha quadros da prévia gravada e conserta só o que está errado na tela */
+export function reviewTweak(times: number[]) {
+  return [
+    `REVISÃO PELOS QUADROS (automática, do Typos): as ÚLTIMAS ${times.length} imagens deste pedido são quadros da prévia gravada desta animação, em ordem, nos instantes ${times.map((t) => t.toFixed(1) + ' s').join(', ')}. Olhe cada um como quem vai aprovar o vídeo e confira:`,
+    '- textos ou elementos em cima um do outro sem ser de propósito; texto cortado, vazando ou pequeno demais pra ler;',
+    '- contraste fraco (texto que some no fundo); imagem quebrada ou que não apareceu;',
+    '- quadro vazio, ou parado por muito tempo sem intenção; elemento que já devia ter saído e continua na tela;',
+    '- alinhamento torto, espaçamento desigual, composição desequilibrada;',
+    '- o que aparece não bate com as instruções do autor ou com o que é falado nesse instante.',
+    'Conserte SÓ o que estiver errado, mantendo a ideia, o estilo e os tempos. Se a prévia está boa, não mexa: responda <ok/>.'
+  ].join('\n')
+}
+
+/**
+ * Pede uma mudança num HTML que já existe (ajuste do autor, correção automática, revisão). O Claude pode
+ * responder só com as edições; se elas não derem pra aplicar (trecho que não bate), o Typos pede de novo,
+ * aí o arquivo inteiro. `ok` = ele disse que não há o que mudar (só quando `okAllowed`).
+ */
+async function askChange(
+  c: Pick<PreviewCtx, 'onStage' | 'block'>,
+  label: string,
+  span: [number, number],
+  o: BlockPromptIn,
+  images: string[],
+  effort: 'medium' | 'high',
+  okAllowed = false
+): Promise<{ html?: string; ok?: boolean; r: { text: string; provider: string } } | { error: string }> {
+  const b = c.block
+  const base = o.adjust?.html ?? ''
+  const ask = (edits: boolean) => {
+    const p = blockPromptParts({ ...o, edits, okAllowed })
+    return api.motionTrain({ prefix: p.fixed, prompt: p.block, images, id: b.id, model: b.model, offline: true, effort })
+  }
+  const r = await waitAi(c, label, span, ask(true))
+  if ('error' in r) return r
+  const hasDemo = /<demo>/i.test(r.text)
+  const eds = hasDemo ? null : parseEdits(r.text)
+  if (eds) {
+    const got = applyEdits(base, eds)
+    if ('html' in got) return { html: got.html, r }
+  } else {
+    if (okAllowed && !hasDemo && /<ok\s*\/?>/i.test(r.text)) return { ok: true, r }
+    const full = parseDemo(r.text)
+    if (full) return { html: full, r }
+  }
+  // as edições não bateram com o arquivo (ou a resposta veio fora do formato): pede o arquivo inteiro
+  const r2 = await waitAi(c, label.replace(/…$/, '') + ' (arquivo inteiro)…', span, ask(false))
+  if ('error' in r2) return r2
+  const full = parseDemo(r2.text)
+  return full ? { html: full, r: r2 } : { r: r2 }
+}
+
 export async function generatePreview(c: PreviewCtx) {
   const b = c.block
   const hasAudio = audioIn(c.data, b).length > 0
@@ -1098,7 +1236,12 @@ export async function generatePreview(c: PreviewCtx) {
   const files = b.attachments.filter(isImage).map((a, i) => ({ a, name: attachName(a, i) }))
   // no After Effects a composição já nasce no tamanho do projeto (o render dele já é o clipe final)
   const ae = b.engine === 'ae'
-  const size = ae ? projectSize(c.format) : previewSize(c.format)
+  // o HTML é escrito no tamanho do projeto (é nele que o clipe final é gravado) e a prévia é a mesma página
+  // reduzida. Ajuste em cima de uma prévia antiga, escrita em 480 px, continua no tamanho dela.
+  const size = ae || !c.adjust ? projectSize(c.format) : (b.preview?.size ?? previewSize(c.format))
+  // tamanho do vídeo da prévia (e do que só ela usa: vídeo de baixo, quadros das emendas)
+  const shot = ae ? size : shotSize(size)
+  const zoom = shot.w / size.w
   // a fala (Whisper), o vídeo de baixo, as emendas, os assets do estilo e o Material bruto não dependem
   // um do outro: saem juntos, em vez de um esperar o outro
   const PREP: [number, number] = [0, 0.17]
@@ -1107,8 +1250,8 @@ export async function generatePreview(c: PreviewCtx) {
     hasAudio && !deaf
       ? heardIn(c.data, b, c.lang, { signal: c.signal, onWait: (l, p) => c.onStage(l, p, PREP) })
       : Promise.resolve<{ words: HeardWord[]; prompts: HeardPrompt[]; error?: string }>({ words: [], prompts: [] }),
-    underFor(c.data, b, c.dir, size, true),
-    edgesFor(c.data, b, c.dir, size),
+    underFor(c.data, b, c.dir, shot, true),
+    edgesFor(c.data, b, c.dir, shot),
     styleAssets(c.format),
     b.useRaw ? rawFiles(c.data, c.format).then(withProfiles) : Promise.resolve<RawFile[]>([])
   ])
@@ -1139,7 +1282,7 @@ export async function generatePreview(c: PreviewCtx) {
     sounds: adjust ? b.preview?.sounds : undefined
   }
   const chapter = chapterAt(c.data, b, c.script)
-  const prompt = blockPrompt({
+  const po: BlockPromptIn = {
     block: b,
     format: c.format,
     heard: heard.words,
@@ -1158,15 +1301,28 @@ export async function generatePreview(c: PreviewCtx) {
     assets,
     raw,
     engine: ae ? 'ae' : undefined
-  })
+  }
   const images = [...baseImages, ...shownAssets.map((a) => a.path), ...shownRaw.map((f) => f.path)]
   if (c.signal?.aborted) throw new Error('Cancelado.')
-  const r = await waitAi(c, adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', [0.17, 0.62], api.motionTrain({ prompt, images, id: b.id, model: b.model, offline: true }))
-  if ('error' in r) throw new Error(r.error)
-  if (ae) return aePreview(c, { r, prompt, images, files, tf, under, edges, list, rawList, heard, hasAudio, size })
-  let html = parseDemo(r.text)
-  if (!html) throw new Error('A IA respondeu fora do formato (sem o HTML da animação). Tente de novo.')
-  let sounds = parseSounds(r.text, rawList, blockDur(b)) ?? []
+  let r: { text: string; provider: string }
+  let html = ''
+  if (adjust && !ae) {
+    // ajuste: o Claude manda só as edições (bem mais rápido que reescrever o arquivo inteiro)
+    const got = await askChange(c, 'Claude ajustando o motion…', [0.17, 0.62], po, images, 'high')
+    if ('error' in got) throw new Error(got.error)
+    if (!got.html) throw new Error('A IA respondeu fora do formato (sem as edições nem o HTML da animação). Tente de novo.')
+    r = got.r
+    html = got.html
+  } else {
+    const parts = blockPromptParts(po)
+    const got = await waitAi(c, adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', [0.17, 0.62], api.motionTrain({ prefix: parts.fixed, prompt: parts.block, images, id: b.id, model: b.model, offline: true }))
+    if ('error' in got) throw new Error(got.error)
+    r = got
+    if (ae) return aePreview(c, { r, prompt: parts.fixed + '\n\n' + parts.block, images, files, tf, under, edges, list, rawList, heard, hasAudio, size })
+    html = parseDemo(r.text)
+    if (!html) throw new Error('A IA respondeu fora do formato (sem o HTML da animação). Tente de novo.')
+  }
+  let sounds = parseSounds(r.text, rawList, blockDur(b)) ?? (adjust ? (b.preview?.sounds ?? []) : [])
   const playFiles = (h: string) => [
     ...files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
     ...tf.flat().map((f) => ({ src: absPath(f.a), name: f.name })),
@@ -1179,7 +1335,7 @@ export async function generatePreview(c: PreviewCtx) {
   // se achou algo, devolve pro Claude corrigir (uma vez)
   const zones = safeZones(c.format?.aspect, size.w, size.h)
   const check = async (h: string): Promise<{ issues: LayoutIssue[]; errors: string[] }> => {
-    const got = await api.motionCheckLayout({ dir: c.dir, block: b.id, html: h, seconds: blockDur(b), width: size.w, height: size.h, files: playFiles(h), probe: layoutProbe(zones) })
+    const got = await api.motionCheckLayout({ dir: c.dir, block: b.id, html: h, seconds: blockDur(b), width: shot.w, height: shot.h, zoom, files: playFiles(h), probe: layoutProbe(zones) })
     if ('error' in got) {
       if (got.error === 'Cancelado.') throw new Error(got.error)
       return { issues: [], errors: [] }
@@ -1190,33 +1346,13 @@ export async function generatePreview(c: PreviewCtx) {
   let { issues, errors } = await check(html)
   if ((issues.length || errors.length) && !c.signal?.aborted) {
     const fixText = [errors.length ? errorsTweak(errors) : '', issues.length ? issuesTweak(issues, zones) : ''].filter(Boolean).join('\n\n')
-    const fixPrompt = blockPrompt({
-      block: b,
-      format: c.format,
-      heard: heard.words,
-      heardError: heard.error,
-      heardPrompts: heard.prompts,
-      deaf,
-      hasAudio,
-      scriptHere: scriptIn(c.data, b, c.script),
-      falas: scriptFalas(c.script),
-      chapter,
-      files,
-      size,
-      under,
-      edges,
-      adjust: { html, tweaks: [...(adjust?.tweaks ?? []), { text: fixText, names: [] }] },
-      assets,
-      raw: { ...raw, sounds }
-    })
     const what = [errors.length ? `${errors.length} erro${errors.length > 1 ? 's' : ''} na animação` : '', issues.length ? `${issues.length} elemento${issues.length > 1 ? 's' : ''} fora da safe zone` : ''].filter(Boolean).join(' e ')
-    // correção mecânica (reposicionar, consertar um erro apontado): não precisa do esforço de criar do zero
-    const f = await waitAi(c, `Claude corrigindo (${what})…`, [0.66, 0.78], api.motionTrain({ prompt: fixPrompt, images, id: b.id, model: b.model, offline: true, effort: 'medium' }))
+    // correção mecânica (reposicionar, consertar um erro apontado): edições, e sem o esforço de criar do zero
+    const f = await askChange(c, `Claude corrigindo (${what})…`, [0.66, 0.78], { ...po, adjust: { html, tweaks: [...(adjust?.tweaks ?? []), { text: fixText, names: [] }] }, raw: { ...raw, sounds } }, images, 'medium')
     if (c.signal?.aborted) throw new Error('Cancelado.')
-    const fixed = 'error' in f ? '' : parseDemo(f.text)
-    if (fixed) {
-      html = fixed
-      sounds = ('error' in f ? null : parseSounds(f.text, rawList, blockDur(b))) ?? sounds
+    if (!('error' in f) && f.html) {
+      html = f.html
+      sounds = parseSounds(f.r.text, rawList, blockDur(b)) ?? sounds
       c.onStage('Conferindo a animação de novo…', null, [0.78, 0.8])
       ;({ issues, errors } = await check(html))
     }
@@ -1226,20 +1362,46 @@ export async function generatePreview(c: PreviewCtx) {
   const mix = await withSounds(c.engine, c.data, c.dur, b, sounds)
   sounds = mix.sounds
   const wav = hasAudio || sounds.length ? await rangeWav(c.engine, mix.data, mix.dur, b.start, b.end).catch(() => undefined) : undefined
-  c.onStage('Gravando a prévia (12 fps)…', 0, [0.82, 1], Math.max(1, Math.round(blockDur(b) * PREVIEW_FPS)))
-  const v = await api.motionPreview({
-    dir: c.dir,
-    block: b.id,
-    html,
-    seconds: blockDur(b),
-    width: size.w,
-    height: size.h,
-    fps: PREVIEW_FPS,
-    wav,
-    files: playFiles(html),
-    fx: c.format?.motion?.fx
-  })
-  if ('error' in v) throw new Error(v.error)
+  const review = !!b.review
+  const record = async (h: string, span: [number, number]) => {
+    c.onStage('Gravando a prévia (12 fps)…', 0, span, Math.max(1, Math.round(blockDur(b) * PREVIEW_FPS)))
+    const got = await api.motionPreview({ dir: c.dir, block: b.id, html: h, seconds: blockDur(b), width: shot.w, height: shot.h, zoom, fps: PREVIEW_FPS, wav, files: playFiles(h), fx: c.format?.motion?.fx })
+    if ('error' in got) throw new Error(got.error)
+    return got
+  }
+  let v = await record(html, review ? [0.82, 0.88] : [0.82, 1])
+  // revisão com os quadros (opção do bloco): o Claude vê a prévia gravada e conserta o que saiu errado na tela
+  let reviewed: 'ok' | 'fixed' | undefined
+  if (review && !c.signal?.aborted) {
+    const d = blockDur(b)
+    const n = Math.max(4, Math.min(8, Math.round(d / 1.5)))
+    const times = Array.from({ length: n }, (_, i) => +((d * (i + 0.5)) / n).toFixed(2))
+    const frames = (await api.motionFramesAt(v.video, times, shot.w)).map((p, i) => ({ p, t: times[i] })).filter((x): x is { p: string; t: number } => !!x.p)
+    if (frames.length) {
+      const got = await askChange(
+        c,
+        'Claude revendo a prévia pelos quadros…',
+        [0.88, 0.96],
+        { ...po, adjust: { html, tweaks: [...(adjust?.tweaks ?? []), { text: reviewTweak(frames.map((x) => x.t)), names: [] }] }, raw: { ...raw, sounds } },
+        [...images, ...frames.map((x) => x.p)],
+        'high',
+        true
+      )
+      if (c.signal?.aborted) throw new Error('Cancelado.')
+      if (!('error' in got) && got.ok) reviewed = 'ok'
+      else if (!('error' in got) && got.html) {
+        // a versão revista só fica se não trouxe erro novo nem piorou a safe zone
+        const again = await check(got.html)
+        if (!again.errors.length && again.issues.length <= issues.length) {
+          html = got.html
+          issues = again.issues
+          sounds = parseSounds(got.r.text, rawList, blockDur(b)) ?? sounds
+          v = await record(html, [0.96, 1])
+          reviewed = 'fixed'
+        }
+      }
+    }
+  }
   return {
     video: v.video,
     html: v.html,
@@ -1250,6 +1412,7 @@ export async function generatePreview(c: PreviewCtx) {
     size,
     safeIssues: issues.length ? issuesTweak(issues, zones).split('\n').slice(1) : undefined,
     errors: errors.length ? errors : undefined,
+    reviewed,
     sounds: sounds.length ? sounds : undefined
   }
 }

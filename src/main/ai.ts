@@ -7,7 +7,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { loadSettings, saveSettings, type AiSettings } from './settings'
 import { chargeAnthropic, chargeOpenAI, initAiMeter, metered } from './aiMeter'
 import { claudeModelLabel, motionModelFor } from '../shared/claudeModels'
-import { logTime } from './log'
+import { logLine, logTime } from './log'
 
 /**
  * IA do Typos, sem depender de um fornecedor só. O app pede uma TAREFA ("texto" ou
@@ -437,6 +437,8 @@ export function initAi() {
 export interface MotionTrainJob {
   /** pedido completo (o que analisar e como responder) */
   prompt: string
+  /** começo do pedido que se repete de um pedido pro outro (o vídeo e o estilo): na API da Anthropic fica em cache */
+  prefix?: string
   /** imagens de referência (prints e quadros dos vídeos), caminhos absolutos */
   images: string[]
   /** quem pediu (ex.: o id do bloco): é o que o Cancelar para */
@@ -532,12 +534,16 @@ async function motionAnthropic(s: AiSettings, job: MotionTrainJob, signal?: Abor
         output_config: { effort: job.effort ?? 'high' },
         betas: ['server-side-fallback-2026-07-01'],
         fallbacks: 'default',
+        // a parte que se repete (o vídeo e o estilo) vai como sistema e fica em cache: os blocos seguintes
+        // da fila leem ela pronta, mais rápido e mais barato
+        ...(job.prefix ? { system: [{ type: 'text' as const, text: job.prefix, cache_control: { type: 'ephemeral' as const } }] } : {}),
         messages: [{ role: 'user', content: [...imgs, { type: 'text', text: job.prompt }] }]
       },
       { timeout: 30 * 60000, signal }
     )
     .finalMessage()
   chargeAnthropic(res.model, res.usage)
+  if (job.prefix) logLine('tempo', `cache do pedido: ${res.usage.cache_read_input_tokens ?? 0} tokens lidos, ${res.usage.cache_creation_input_tokens ?? 0} gravados`)
   if (res.stop_reason === 'refusal') throw new Error('O Claude recusou esse pedido.')
   return res.content
     .map((b) => (b.type === 'text' ? b.text : ''))
@@ -558,14 +564,17 @@ async function motionOpenAI(s: AiSettings, job: MotionTrainJob) {
 }
 
 export function initMotionAi() {
-  ipcMain.handle('ai:motionTrain', async (_e, job: MotionTrainJob) => {
+  ipcMain.handle('ai:motionTrain', async (_e, asked: MotionTrainJob) => {
     const ac = new AbortController()
-    const key = job.id ?? randomUUID()
+    const key = asked.id ?? randomUUID()
     motionRunning.get(key)?.abort()
     motionRunning.set(key, ac)
     const t0 = Date.now()
+    let job = asked
     try {
       const provider = await routeFor('text')
+      // só a API da Anthropic separa a parte em cache; os outros recebem o pedido num texto só
+      if (provider !== 'anthropic' && asked.prefix) job = { ...asked, prompt: asked.prefix + '\n\n' + asked.prompt, prefix: undefined }
       const s = (await loadSettings()).ai ?? {}
       const stopped = new Promise<never>((_, rej) => ac.signal.addEventListener('abort', () => rej(new Error('Cancelado.')), { once: true }))
       const text = await Promise.race([
