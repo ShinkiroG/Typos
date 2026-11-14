@@ -15,6 +15,8 @@ export interface AiSettings {
   codexPath?: string
   /** modelo do Codex (vazio = o padrão do Codex) */
   codexModel?: string
+  /** modelo do Claude pro motion dos blocos (Claude Code e API da Anthropic); vazio = o padrão da conexão */
+  motionModel?: string
   routeText?: 'claude-code' | 'codex' | 'anthropic' | 'openai'
   routeImage?: 'claude-code' | 'codex' | 'anthropic' | 'openai'
 }

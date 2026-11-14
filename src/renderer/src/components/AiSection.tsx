@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Sparkles, CheckCircle2, XCircle, Loader2, KeyRound, Terminal, Copy } from 'lucide-react'
 import { api } from '../lib'
+import { CLAUDE_MOTION_MODELS, claudeModelLabel } from '../../../shared/claudeModels'
 
 type Status = Awaited<ReturnType<typeof api.aiStatus>>
 type ProviderId = Status['providers'][number]['id']
@@ -194,6 +195,23 @@ export function AiSection({ currentDir }: { currentDir?: string }) {
                 {x.configured ? '' : ' (não configurado)'}
               </option>
             ))}
+          </select>
+        </label>
+        <label>
+          Motion dos blocos de instrução <span className="muted small">(qual Claude; cada bloco pode trocar)</span>
+          <select
+            value={st.models.motionModel}
+            disabled={st.routes.text !== 'claude-code' && st.routes.text !== 'anthropic'}
+            title={st.routes.text === 'claude-code' || st.routes.text === 'anthropic' ? '' : 'Só vale quando o texto é feito pelo Claude Code ou pela API da Anthropic'}
+            onChange={(e) => set({ motionModel: e.target.value })}
+          >
+            <option value="">Padrão ({st.routes.text === 'anthropic' ? claudeModelLabel(st.models.anthropicModel) : 'o do Claude Code'})</option>
+            {CLAUDE_MOTION_MODELS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label} · {m.hint}
+              </option>
+            ))}
+            {st.models.motionModel && !CLAUDE_MOTION_MODELS.some((m) => m.id === st.models.motionModel) && <option value={st.models.motionModel}>{st.models.motionModel}</option>}
           </select>
         </label>
         <label>

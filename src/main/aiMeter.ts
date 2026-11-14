@@ -21,6 +21,7 @@ const ANTHROPIC: [string, number, number][] = [
   ['claude-sonnet-4', 3, 15],
   ['claude-haiku-5', 0.1, 0.5],
   ['claude-haiku-4', 1, 5],
+  ['claude-fable-5-2', 8, 40],
   ['claude-fable-5', 10, 50]
 ]
 const OPENAI: [string, number, number][] = [

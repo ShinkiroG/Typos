@@ -5,6 +5,7 @@ import { PromptMenu } from './PromptMenu'
 import { rememberPrompt } from './prompts'
 import { hasDraft, loadDraft, saveDraft } from './drafts'
 import { FULL_HINT } from './busy'
+import { CLAUDE_MOTION_MODELS, claudeModelLabel } from '../../../shared/claudeModels'
 import { blockDur, blockLabel, blockSync, isImage, neighborOf, neighborText, previewStale } from './blocks'
 
 const fmtTc = (t: number) => {
@@ -470,6 +471,47 @@ export function EncoderPick() {
   )
 }
 
+type AiStatus = Awaited<ReturnType<typeof api.aiStatus>>
+
+/** o que vale quando o bloco não escolhe modelo: o de Configurações → IA, senão o padrão da conexão */
+export function defaultMotionModelText(st: AiStatus) {
+  if (st.models.motionModel) return claudeModelLabel(st.models.motionModel)
+  if (st.routes.text === 'anthropic') return claudeModelLabel(st.models.anthropicModel)
+  return 'o do Claude Code'
+}
+
+/** modelo do Claude que faz o motion deste bloco (só vale pro Claude Code e pra API da Anthropic) */
+export function ModelPick({ value, onChange }: { value?: string; onChange: (v: string | undefined) => void }) {
+  const [st, setSt] = useState<AiStatus | null>(null)
+  useEffect(() => {
+    api.aiStatus().then(setSt).catch(() => null)
+  }, [])
+  if (!st) return null
+  const claude = st.routes.text === 'claude-code' || st.routes.text === 'anthropic'
+  const known = !value || CLAUDE_MOTION_MODELS.some((m) => m.id === value)
+  return (
+    <label
+      className="blk-auto blk-model"
+      title={
+        claude
+          ? 'Qual Claude faz o motion deste bloco (prévia, ajustes e correções). "Padrão" usa o escolhido em Configurações → IA.'
+          : 'A escolha de modelo só vale quando o texto é feito pelo Claude (Claude Code ou API da Anthropic). Troque em Configurações → IA.'
+      }
+    >
+      Modelo
+      <select value={value ?? ''} disabled={!claude} onChange={(e) => onChange(e.target.value || undefined)}>
+        <option value="">Padrão ({defaultMotionModelText(st)})</option>
+        {CLAUDE_MOTION_MODELS.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label} · {m.hint}
+          </option>
+        ))}
+        {!known && <option value={value}>{value}</option>}
+      </select>
+    </label>
+  )
+}
+
 /** prévia: vídeo, gerar de novo, pedir ajustes, aprovar (vira clipe na timeline) */
 export function BlockPreviewBox({
   b,
@@ -485,6 +527,7 @@ export function BlockPreviewBox({
   queued = 0,
   onUnqueue,
   onAuto,
+  onModel,
   error
 }: {
   b: InstructionBlock
@@ -507,6 +550,8 @@ export function BlockPreviewBox({
   onAuto?: (v: boolean) => void
   /** erro do último pedido que saiu da fila */
   error?: string
+  /** troca o modelo do Claude deste bloco (undefined = o padrão) */
+  onModel?: (v: string | undefined) => void
 }) {
   const mine = busy?.id === b.id
   // as vagas estão com outros blocos: o Gerar põe na fila em vez de ficar desligado
@@ -636,6 +681,7 @@ export function BlockPreviewBox({
           </select>
         </label>
       )}
+      {onModel && !mine && <ModelPick value={b.model} onChange={onModel} />}
       {(b.preview || auto) && !mine && <EncoderPick />}
       {heard}
       {b.preview && asking && <AdjustBox b={b} dir={dir} busy={!!busy} onAdjust={onAdjust} onClose={() => setAsking(false)} />}
@@ -674,7 +720,7 @@ export function BlockInspector(p: FormProps & { queued?: number; onUnqueue?: () 
           <Trash2 size={13} />
         </button>
       </div>
-      <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} onRerender={p.onRerender} heard={p.heard} queued={p.queued} onUnqueue={p.onUnqueue} error={p.error} onAuto={(v) => p.patch({ autoApprove: v })} />
+      <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} onRerender={p.onRerender} heard={p.heard} queued={p.queued} onUnqueue={p.onUnqueue} error={p.error} onAuto={(v) => p.patch({ autoApprove: v })} onModel={(v) => p.patch({ model: v })} />
       <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} formats={p.formats} videoFormat={p.videoFormat} />
     </div>
   )
@@ -699,7 +745,7 @@ export function BlockWindow(p: FormProps & { queued?: number; onUnqueue?: () => 
           </button>
         </div>
         <div className="blk-window-body">
-          <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} onRerender={p.onRerender} heard={p.heard} queued={p.queued} onUnqueue={p.onUnqueue} error={p.error} onAuto={(v) => p.patch({ autoApprove: v })} big />
+          <BlockPreviewBox b={p.b} dir={p.dir} busy={p.busy} onGenerate={() => generate(p)} onAdjust={p.onAdjust} onCancel={p.onCancel} onApprove={p.onApprove} onRerender={p.onRerender} heard={p.heard} queued={p.queued} onUnqueue={p.onUnqueue} error={p.error} onAuto={(v) => p.patch({ autoApprove: v })} onModel={(v) => p.patch({ model: v })} big />
           <BlockForm b={p.b} data={p.data} dir={p.dir} patch={p.patch} formats={p.formats} videoFormat={p.videoFormat} big />
         </div>
       </div>

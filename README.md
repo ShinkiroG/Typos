@@ -51,6 +51,8 @@ Na Montagem, **Preparar Clipes** pergunta o tempo mínimo, ideal e máximo dos r
 ### Claude
 O botão **Claude** salva e copia um pedido pronto. É só colar no Claude, que ele lê o `roteiro.md` e os anexos. Recortes feitos pelo Claude vão em `assets/recortes/` e aparecem no app ao lado da imagem original.
 
+**Modelo do motion**: em Configurações → IA, "Motion dos blocos de instrução" escolhe qual Claude faz o motion (Fable 5.2, Fable 5.1, Opus 5.5, Opus 5 ou Sonnet 5.5). Cada bloco pode trocar no seletor **Modelo**, ao lado de "Ao gerar"; "Padrão" usa o das Configurações. Vale pro Claude Code (o seu plano precisa incluir o modelo) e pra chave da Anthropic.
+
 ## Arquivos de um roteiro
 ```
 Minha pasta/
