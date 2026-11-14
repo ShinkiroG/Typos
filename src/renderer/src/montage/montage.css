@@ -191,6 +191,25 @@
   object-fit: contain;
   background: #000;
 }
+/* lettering de capítulo por cima das camadas do visualizador */
+.mt-screen > .mt-lettering {
+  grid-area: 1 / 1;
+  border: 0;
+  pointer-events: none;
+  z-index: 10;
+  background: transparent;
+}
+/* o teleprompter fica por cima das camadas do visualizador (que usam z-index de 1 a 3) e do lettering */
+.mt-screen > .mt-prompter,
+.mt-screen > .mt-prompter-guide,
+.mt-screen > .mt-prompter-hud {
+  z-index: 20;
+}
+.mt-screen.zoomed > .mt-lettering {
+  height: var(--zh);
+  width: auto;
+  aspect-ratio: var(--frame, var(--seq));
+}
 .mt-screen > video.audio {
   height: 60px;
   width: 80%;
@@ -1779,6 +1798,8 @@
   max-width: 100%;
   outline: 1px dashed color-mix(in srgb, var(--text) 25%, transparent);
   pointer-events: none;
+  /* por cima das camadas do visualizador (que usam z-index pra se empilhar) */
+  z-index: 11;
 }
 .mt-clips-btn {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line));

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Maximize2,
   Minimize2,
@@ -61,7 +61,9 @@ import { YoutubeDownload } from '../components/YoutubeDownload'
 import { SfxFinder, type SfxLib } from '../components/SfxFinder'
 import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H, findGap, mediaLen, splitClip, trackHeight, type GapSel, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
-import { CLIP_ENC, blockDur, blockFromClip, blockLabel, blockWindows, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, rerenderAe, rerecordPreview, previewStale, rangeTweak, soundsToTimeline } from './blocks'
+import { CLIP_ENC, blockDur, blockFromClip, blockLabel, blockWindows, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, rerenderAe, rerecordPreview, previewStale, projectSize, rangeTweak, soundsToTimeline } from './blocks'
+import { letteringAt, nextPicture, pictureLayers, type PicLayer } from './monitor'
+import { letteringHtml } from '../render/plan'
 import { MotionEditor } from './MotionEditor'
 import { BlockInspector, BlockWindow, busyOverall, type BlockBusy } from './BlockPanel'
 import { busyFor, canStart, dequeue, enqueue, queuePos, takeFromQueue, withBusy, type BusyMap } from './busy'
@@ -458,8 +460,9 @@ export function Montage({
     zoomAnchor.current = null
   }, [pps])
   const tcRef = useRef<HTMLSpanElement>(null)
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const imgRef = useRef<HTMLImageElement>(null)
+  /** vagas do visualizador (cada uma com um <video> e um <img>) e qual corte está em cada */
+  const slotsRef = useRef<{ video: HTMLVideoElement; img: HTMLImageElement; clip: string }[]>([])
+  const letRef = useRef<HTMLIFrameElement>(null)
   const dataRef = useRef(data)
   dataRef.current = data
 
@@ -485,6 +488,10 @@ export function Montage({
     () => (frame ? { ...(format ?? { id: '', name: 'Clipes', wpm, maxSeconds: null }), aspect: frame } : format),
     [format, frame, wpm]
   )
+  const formatRef = useRef(blockFormat)
+  formatRef.current = blockFormat
+  const frameRef = useRef(frame)
+  frameRef.current = frame
   /** estilo de um bloco: o que ele escolheu (no quadro desta timeline) ou o do vídeo */
   const styleOf = (b: InstructionBlock) => (b.formatId ? formats?.find((f) => f.id === b.formatId) : undefined)
   const formatFor = (b: InstructionBlock): Format | undefined => {
@@ -660,50 +667,124 @@ export function Montage({
     return () => cancelAnimationFrame(raf)
   }, [active, pps, engine, source])
 
-  /** quadro da faixa de vídeo mais de cima que tem algo nesse instante */
+  /**
+   * O visualizador em camadas: até 3 vagas (um <video> e um <img> cada) mostram o que o render vai compor
+   * nesse instante, com as opacidades dos fades e crossfades; uma vaga livre já carrega o próximo corte.
+   * O lettering de capítulo entra por cima de tudo, como no vídeo final.
+   */
   const syncPicture = (t: number) => {
-    const v = videoRef.current
-    const img = imgRef.current
-    if (!v || !img) return
+    const box = screenRef.current
+    if (!box) return
+    // o visualizador foi montado de novo (voltou de uma mídia aberta): pega os elementos novos
+    if (!slotsRef.current.length || !box.contains(slotsRef.current[0].video)) {
+      const vs = [...box.querySelectorAll<HTMLVideoElement>(':scope > video.mt-layer')]
+      const is = [...box.querySelectorAll<HTMLImageElement>(':scope > img.mt-layer')]
+      slotsRef.current = vs.map((video, i) => ({ video, img: is[i], clip: '' }))
+    }
+    const slots = slotsRef.current
+    if (!slots.length) return
     const d = dataRef.current
-    let hit: MontageClip | undefined
-    for (const tr of d.tracks) {
-      if (tr.kind !== 'video' || tr.muted) continue
-      hit = d.clips.find((c) => c.track === tr.id && c.start <= t && clipEndT(c) > t)
-      if (hit) break
+    const size = projectSize(formatRef.current)
+    // no quadro do recorte (Criar Clipes) o vídeo preenche e corta, então todo vídeo opaco cobre o quadro
+    const layers = pictureLayers(d, mediaRef.current, t, { width: size.w, height: size.h, fit: frameRef.current ? 'cover' : undefined }, slots.length)
+    const used = new Set<number>()
+    const place = (l: PicLayer) => {
+      let i = slots.findIndex((s, k) => !used.has(k) && s.clip === l.id)
+      if (i < 0) i = slots.findIndex((s, k) => !used.has(k) && !layers.some((x) => x.id === s.clip))
+      if (i >= 0) used.add(i)
+      return i
     }
-    const m = hit && mediaRef.current.get(hit.media)
-    if (!hit || !m) {
-      v.style.visibility = 'hidden'
-      img.style.visibility = 'hidden'
-      if (!v.paused) v.pause()
-      return
-    }
-    if (m.kind === 'image') {
-      v.style.visibility = 'hidden'
-      if (!v.paused) v.pause()
-      const src = fileUrl(m.path)
-      if (img.dataset.src !== src) {
-        img.src = src
-        img.dataset.src = src
+    const show = (i: number, l: PicLayer, z: number, visible: boolean) => {
+      const s = slots[i]
+      s.clip = l.id
+      const el = l.image ? s.img : s.video
+      const other = l.image ? s.video : s.img
+      other.style.visibility = 'hidden'
+      if (!l.image) {
+        const src = fileUrl(proxyRef.current.get(l.path) ?? l.path)
+        if (s.video.dataset.src !== src) {
+          s.video.src = src
+          s.video.dataset.src = src
+        }
+        if (visible && engine.playing) {
+          if (s.video.paused) s.video.play().catch(() => null)
+          if (Math.abs(s.video.currentTime - l.src) > 0.25) s.video.currentTime = l.src
+        } else {
+          if (!s.video.paused) s.video.pause()
+          if (Math.abs(s.video.currentTime - l.src) > 0.02) s.video.currentTime = l.src
+        }
+      } else {
+        if (!s.video.paused) s.video.pause()
+        const src = fileUrl(l.path)
+        if (s.img.dataset.src !== src) {
+          s.img.src = src
+          s.img.dataset.src = src
+        }
       }
-      img.style.visibility = 'visible'
+      el.style.visibility = visible ? 'visible' : 'hidden'
+      el.style.opacity = String(l.opacity)
+      el.style.zIndex = String(z)
+      // só a camada de baixo tem fundo preto: nas de cima, a sobra do quadro deixa ver a de baixo (como no render)
+      el.style.background = z === 1 ? '#000' : 'transparent'
+    }
+    layers.forEach((l, k) => {
+      const i = place(l)
+      if (i >= 0) show(i, l, k + 1, true)
+    })
+    // vaga sobrando: deixa o próximo corte carregado e parado no ponto de entrada
+    const next = engine.playing ? nextPicture(d, mediaRef.current, t) : null
+    if (next && !layers.some((l) => l.id === next.id)) {
+      const i = place(next)
+      if (i >= 0) show(i, next, 0, false)
+    }
+    slots.forEach((s, i) => {
+      if (used.has(i)) return
+      s.clip = ''
+      s.video.style.visibility = 'hidden'
+      s.img.style.visibility = 'hidden'
+      if (!s.video.paused) s.video.pause()
+    })
+    syncLettering(t)
+  }
+  /** lettering de capítulo por cima do vídeo: o mesmo HTML que o render grava, parado no tempo da agulha */
+  const syncLettering = (t: number) => {
+    const f = letRef.current
+    if (!f) return
+    const m = letteringAt(dataRef.current, t)
+    if (!m) {
+      if (f.dataset.mark) {
+        f.dataset.mark = ''
+        f.style.display = 'none'
+        f.srcdoc = ''
+      }
       return
     }
-    img.style.visibility = 'hidden'
-    v.style.visibility = 'visible'
-    const src = fileUrl(proxyRef.current.get(m.path) ?? m.path)
-    if (v.dataset.src !== src) {
-      v.src = src
-      v.dataset.src = src
+    const fmt = formatRef.current
+    const mark = [m.id, m.label, m.dur, fmt?.id, fmt?.aspect].join('|')
+    if (f.dataset.mark !== mark) {
+      f.dataset.mark = mark
+      f.srcdoc = letteringHtml(m.label, m.dur, fmt)
     }
-    const want = hit.in + (t - hit.start)
-    if (engine.playing) {
-      if (v.paused) v.play().catch(() => null)
-      if (Math.abs(v.currentTime - want) > 0.25) v.currentTime = want
-    } else {
-      if (!v.paused) v.pause()
-      if (Math.abs(v.currentTime - want) > 0.02) v.currentTime = want
+    // ocupa a área do quadro (a mesma do vídeo, com a proporção do projeto)
+    const box = f.parentElement
+    const size = projectSize(fmt)
+    if (box?.classList.contains('zoomed')) {
+      // com zoom, o tamanho vem do CSS (o mesmo das camadas)
+      f.style.width = ''
+      f.style.height = ''
+    } else if (box) {
+      const k = Math.min(box.clientWidth / size.w, box.clientHeight / size.h)
+      f.style.width = Math.floor(size.w * k) + 'px'
+      f.style.height = Math.floor(size.h * k) + 'px'
+    }
+    f.style.display = 'block'
+    try {
+      f.contentDocument?.getAnimations().forEach((a) => {
+        a.pause()
+        a.currentTime = Math.max(0, (t - m.t) * 1000)
+      })
+    } catch {
+      /* o documento ainda está carregando */
     }
   }
 
@@ -2261,8 +2342,13 @@ export function Montage({
             )
           ) : (
             <>
-              <video ref={videoRef} muted playsInline />
-              <img ref={imgRef} alt="" style={{ visibility: 'hidden' }} />
+              {[0, 1, 2].map((i) => (
+                <Fragment key={i}>
+                  <video className="mt-layer" muted playsInline style={{ visibility: 'hidden' }} />
+                  <img className="mt-layer" alt="" style={{ visibility: 'hidden' }} />
+                </Fragment>
+              ))}
+              <iframe ref={letRef} className="mt-lettering" title="lettering" sandbox="allow-same-origin" tabIndex={-1} style={{ display: 'none' }} />
             </>
           )}
           {!source && prompter && (rec || rehearse) && (
