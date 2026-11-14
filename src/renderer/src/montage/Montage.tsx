@@ -61,7 +61,7 @@ import { YoutubeDownload } from '../components/YoutubeDownload'
 import { SfxFinder, type SfxLib } from '../components/SfxFinder'
 import { EditTimeline, HEAD_W, MEDIA_MIME, PCFILE_MIME, TRACK_MAX_H, TRACK_MIN_H, findGap, mediaLen, splitClip, trackHeight, type GapSel, type Tool } from './EditTimeline'
 import { autoCut, type AutoCutResult, type ScriptBlock, type Take } from './autocut'
-import { CLIP_ENC, blockDur, blockFromClip, blockLabel, blockWindows, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, rerenderAe, previewStale, rangeTweak, soundsToTimeline } from './blocks'
+import { CLIP_ENC, blockDur, blockFromClip, blockLabel, blockWindows, extendTweak, generateClip, generatePreview, memoryFromBlock, newBlock, rerenderAe, rerecordPreview, previewStale, rangeTweak, soundsToTimeline } from './blocks'
 import { MotionEditor } from './MotionEditor'
 import { BlockInspector, BlockWindow, busyOverall, type BlockBusy } from './BlockPanel'
 import { busyFor, canStart, dequeue, enqueue, queuePos, takeFromQueue, withBusy, type BusyMap } from './busy'
@@ -1310,15 +1310,18 @@ export function Montage({
       setBlockBusy(id, null)
     }
   }
-  /** After Effects: o autor mexeu no .aep; grava de novo e troca o vídeo da prévia */
+  /** o autor mexeu por fora (no .aep do After Effects ou no HTML do motion): grava de novo e troca o vídeo da prévia */
   const rerenderBlock = async (id: string) => {
     const b = (dataRef.current.blocks ?? []).find((x) => x.id === id)
     const t0 = Date.now()
-    if (!b?.preview?.aep || !claimBusy(id, { id, label: 'Preparando…', pct: null, t0 })) return
+    if (!b?.preview || !claimBusy(id, { id, label: 'Preparando…', pct: null, t0 })) return
     try {
-      const preview = await rerenderAe({ block: b, onStage: (label, pct, span, frames) => setBlockBusy(id, (cur) => (!cur || cur.label === 'Cancelando…' ? (cur ?? null) : { id, label, pct, span, t0, frames })) })
-      patchBlock(id, { preview })
-      if (blockOpenRef.current !== id) setBlockNote({ id, text: `${blockLabel(b)} renderizado de novo` })
+      const onStage: Parameters<typeof rerenderAe>[0]['onStage'] = (label, pct, span, frames) => setBlockBusy(id, (cur) => (!cur || cur.label === 'Cancelando…' ? (cur ?? null) : { id, label, pct, span, t0, frames }))
+      // After Effects: grava o .aep de novo; HTML: regrava a prévia a partir do arquivo (editado à mão)
+      const preview = b.preview.aep ? await rerenderAe({ block: b, onStage }) : await rerecordPreview({ block: b, data: dataRef.current, engine, dur, format: formatFor(b), dir, onStage })
+      // o HTML mudou por fora: o clipe aprovado antes não vale mais
+      patchBlock(id, b.preview.aep ? { preview } : { preview, approved: false })
+      if (blockOpenRef.current !== id) setBlockNote({ id, text: `${blockLabel(b)} ${b.preview.aep ? 'renderizado' : 'gravado'} de novo` })
     } catch (e) {
       const msg = (e as Error).message
       if (msg !== 'Cancelado.') alert(`Não deu pra renderizar ${blockLabel(b)} de novo: ` + msg)
