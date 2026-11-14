@@ -16,6 +16,10 @@ export interface VLayer {
   src0: number
   fadeIn: number
   fadeOut: number
+  /** sem transparência (vídeo comum, JPG): o ffmpeg não precisa do canal alfa pra ele quando é a camada de baixo */
+  opaque?: boolean
+  /** opaca e cobre o quadro inteiro: enquanto está 100% visível, o que fica embaixo não aparece */
+  covers?: boolean
 }
 
 export interface ALayer {
@@ -40,8 +44,13 @@ export interface RenderPart {
   label: string
   from: number
   to: number
-  /** tudo que define a parte: mudou = refaz */
+  /**
+   * Tudo que define a parte, com os tempos contados do começo dela: mudou = refaz. Como não leva a
+   * posição na timeline, uma parte que só foi empurrada (entrou ou saiu algo antes dela) continua valendo.
+   */
   key: string
+  /** o mesmo, só do som (render só de áudio) */
+  audioKey: string
   video: VLayer[]
   audio: ALayer[]
   /** ids dos letterings que aparecem nela (ficam por cima de tudo) */
@@ -90,6 +99,44 @@ function segments(montage: MontageData, a: number, b: number): [number, number][
   return out
 }
 
+const OPAQUE_VIDEO = /\.(mp4|m4v|mkv|avi|mpg|mpeg|ts|mts|m2ts|wmv|flv)$/i
+const OPAQUE_IMAGE = /\.jpe?g$/i
+
+/**
+ * Tira de uma parte o que ninguém vê: camada que fica o tempo todo embaixo de outra que cobre o quadro
+ * (o caso comum é o motion em tela cheia por cima do material bruto) some; a que fica escondida só no
+ * começo ou no fim é encurtada. Antes o ffmpeg lia, redimensionava e sobrepunha tudo isso à toa.
+ * `layers` vem de baixo pra cima.
+ */
+export function cullHidden(layers: VLayer[], from: number, to: number): VLayer[] {
+  const out: VLayer[] = []
+  layers.forEach((x, i) => {
+    let a = Math.max(x.t0, from)
+    let b = Math.min(x.t1, to)
+    // trechos em que uma camada de cima está inteira (fora dos fades dela) e cobre tudo
+    const solid = layers
+      .slice(i + 1)
+      .filter((y) => y.covers)
+      .map((y) => [y.t0 + y.fadeIn, y.t1 - y.fadeOut] as [number, number])
+      .filter(([s0, s1]) => s1 > s0)
+    // come as pontas escondidas (repete até não mudar: uma camada pode emendar na outra)
+    for (let moved = true; moved && b - a > 1e-3; ) {
+      moved = false
+      for (const [s0, s1] of solid) {
+        if (s0 <= a + 1e-3 && s1 > a + 1e-3) (a = Math.min(b, s1)), (moved = true)
+        if (s1 >= b - 1e-3 && s0 < b - 1e-3) (b = Math.max(a, s0)), (moved = true)
+      }
+    }
+    if (b - a <= 1e-3) return
+    let y = x
+    // só encurta fora dos fades da própria camada (senão o fade mudaria de lugar)
+    if (a > x.t0 + 1e-3 && a >= x.t0 + x.fadeIn) y = { ...y, t0: r3(a), src0: x.image ? x.src0 : r3(x.src0 + (a - x.t0)), fadeIn: 0 }
+    if (b < x.t1 - 1e-3 && b <= x.t1 - x.fadeOut) y = { ...y, t1: r3(b), fadeOut: 0 }
+    out.push(y)
+  })
+  return out
+}
+
 /** cor CSS válida? (o fundo do estilo às vezes é uma descrição em texto) */
 const isColor = (s?: string) => !!s && /^(#[0-9a-f]{3,8}|rgba?\(|hsla?\()/i.test(s.trim())
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
@@ -117,11 +164,33 @@ h1{margin:0;padding:0 8vw;text-align:center;font-family:"${esc(font)}",sans-seri
 </style></head><body><div class="glow"></div><div class="wrap"><div class="bar"></div><h1>${esc(label)}</h1></div></body></html>`
 }
 
+/** a camada é opaca? cobre o quadro inteiro? (pelo tipo do arquivo e pela proporção dele contra a do vídeo) */
+function layerCover(m: MontageData['media'][number], o: { width: number; height: number; fit?: 'contain' | 'cover' }): Pick<VLayer, 'opaque' | 'covers'> {
+  const opaque = m.kind === 'image' ? OPAQUE_IMAGE.test(m.path) : OPAQUE_VIDEO.test(m.path)
+  if (!opaque) return {}
+  const same = !!m.width && !!m.height && Math.abs(m.width / m.height - o.width / o.height) < 0.01
+  return o.fit === 'cover' || same ? { opaque: true, covers: true } : { opaque: true }
+}
+
 /**
  * Plano do render: [from, to] da timeline (o vídeo inteiro ou só um pedaço) em partes.
  * Faixa de vídeo de cima cobre as de baixo; faixa muda não entra; som de clipe desligado não entra.
  */
-export function planRender(montage: MontageData, o: { from: number; to: number; width: number; height: number; fps: number; format?: Format }): RenderPlan {
+export function planRender(
+  montage: MontageData,
+  o: {
+    from: number
+    to: number
+    width: number
+    height: number
+    fps: number
+    format?: Format
+    /** como o vídeo entra no quadro (o do render): com 'cover' todo vídeo opaco cobre o quadro */
+    fit?: 'contain' | 'cover'
+    /** tira das partes as camadas escondidas (só o render usa; quem quer a lista inteira de camadas não liga) */
+    cull?: boolean
+  }
+): RenderPlan {
   const media = new Map(montage.media.map((m) => [m.id, m]))
   const mediaDur = (id: string) => mediaLen(media.get(id))
   const total = timelineEnd(montage)
@@ -137,9 +206,10 @@ export function planRender(montage: MontageData, o: { from: number; to: number; 
     .map((s) => ({ s, m: media.get(s.clip.media) }))
     .filter(({ m }) => m && (m.kind === 'image' || (m.kind === 'video' && m.hasVideo)))
     .sort((x, y) => z.get(x.s.clip.track)! - z.get(y.s.clip.track)! || x.s.t0 - y.s.t0)
-    .map(({ s, m }) => ({
+    .map(({ s, m }): VLayer => ({
       path: m!.path,
       image: m!.kind === 'image',
+      ...layerCover(m!, o),
       t0: r3(s.t0),
       t1: r3(s.t1),
       src0: r3(s.src0),
@@ -167,15 +237,21 @@ export function planRender(montage: MontageData, o: { from: number; to: number; 
 
   const parts = segments(montage, a, b).map(([from, to], i) => {
     const hit = <T extends { t0: number; t1: number }>(x: T) => x.t0 < to && x.t1 > from
-    const v = video.filter(hit)
+    const v = o.cull ? cullHidden(video.filter(hit), from, to) : video.filter(hit)
     const au = audio.filter(hit)
     const lt = letterings.filter((l) => l.t < to && l.t + l.dur > from)
+    // a chave conta os tempos do começo da parte; os quadros e amostras entram porque dependem de onde a
+    // parte cai na grade de quadros (um empurrão de meio quadro muda a conta e aí a parte é refeita)
+    const rel = <T extends { t0: number; t1: number }>(x: T) => ({ ...x, t0: r3(x.t0 - from), t1: r3(x.t1 - from) })
+    const shape = { dur: r3(to - from), frames: Math.round(to * o.fps) - Math.round(from * o.fps), samples: Math.round(to * 48000) - Math.round(from * 48000) }
+    const auKey = au.map(rel)
     return {
       id: 'parte-' + pad(i + 1),
       label: `Parte ${i + 1} (${fmt(from)} → ${fmt(to)})`,
       from,
       to,
-      key: JSON.stringify({ from, to, w: o.width, h: o.height, fps: o.fps, v, au, lt }),
+      key: JSON.stringify({ ...shape, w: o.width, h: o.height, fps: o.fps, fit: o.fit ?? 'contain', v: v.map(rel), au: auKey, lt: lt.map((l) => ({ ...l, t: r3(l.t - from) })) }),
+      audioKey: JSON.stringify({ ...shape, au: auKey }),
       video: v,
       audio: au,
       letterings: lt.map((l) => l.id)

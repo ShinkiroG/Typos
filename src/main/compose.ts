@@ -18,8 +18,16 @@ export const ENCODE_V = 3
  *   as áreas escuras e lisas.
  * As cores saem em BT.709 (o padrão de vídeo HD), marcadas no arquivo.
  */
-export function x264Args(kind: 'grain' | 'master'): string[] {
-  const q = kind === 'grain' ? ['-preset', 'slow', '-crf', '12', '-tune', 'grain'] : ['-preset', 'medium', '-crf', '14', '-x264-params', 'aq-mode=3']
+export function x264Args(kind: 'grain' | 'master' | 'clip'): string[] {
+  const q =
+    kind === 'clip'
+      ? // clipe de motion: arquivo intermediário, que o render comprime de novo. Preset rápido com mais
+        // bitrate (crf 10) guarda mais que o 'slow' crf 12 de antes e grava várias vezes mais rápido;
+        // quadro-chave a cada 30 quadros pra Montagem pular nele sem engasgar
+        ['-preset', 'veryfast', '-crf', '10', '-tune', 'grain', '-g', '30']
+      : kind === 'grain'
+        ? ['-preset', 'slow', '-crf', '12', '-tune', 'grain']
+        : ['-preset', 'medium', '-crf', '14', '-x264-params', 'aq-mode=3']
   return ['-c:v', 'libx264', ...q, '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709']
 }
 
@@ -63,6 +71,9 @@ export interface VLayer {
   /** fades de opacidade (s) a partir das bordas da camada */
   fadeIn: number
   fadeOut: number
+  /** sem transparência (vídeo comum, JPG): quando é a camada de baixo e ocupa a parte toda, dispensa o fundo preto e o alfa */
+  opaque?: boolean
+  covers?: boolean
 }
 
 /** trecho de áudio: tempos na timeline e o envelope de volume (s desde t0, ganho linear) */
@@ -193,6 +204,9 @@ export function partArgs(p: PartSpec, encoder: string[] = x264Args('master')): s
     const len = vis1 - d0
     if (v.image) args.push('-loop', '1', '-framerate', String(fps), '-t', n(len + 1 / fps, 3), '-i', v.path)
     else args.push('-ss', n(Math.max(0, v.src0 + d0 - v.t0)), '-t', n(len + 1 / fps), '-i', v.path)
+    // camada de baixo, opaca e presente na parte toda: ela mesma é o fundo. Sem isso cada quadro era
+    // convertido pra formato com alfa e sobreposto num fundo preto que nunca aparecia
+    const base = last === '0:v' && !!v.opaque && vis0 <= p.from + 0.5 / fps && vis1 >= p.to - 0.5 / fps
     const f = [
       'setpts=PTS-STARTPTS',
       `fps=${fps}`,
@@ -200,15 +214,24 @@ export function partArgs(p: PartSpec, encoder: string[] = x264Args('master')): s
         ? [`scale=${W}:${H}:force_original_aspect_ratio=increase:flags=bicubic`, `crop=${W}:${H}`]
         : [`scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=bicubic`]),
       'setsar=1',
-      'format=yuva420p',
-      `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black@0`
+      base ? 'format=yuv420p' : 'format=yuva420p',
+      `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=${base ? 'black' : 'black@0'}`
     ]
-    if (v.fadeIn > 0 && d0 === v.t0) f.push(`fade=t=in:st=0:d=${n(v.fadeIn)}:alpha=1`)
-    if (v.fadeOut > 0) f.push(`fade=t=out:st=${n(v.t1 - v.fadeOut - d0)}:d=${n(v.fadeOut)}:alpha=1`)
+    // no fundo o fade é pro preto (igual a ficar transparente em cima do preto)
+    const alpha = base ? '' : ':alpha=1'
+    if (v.fadeIn > 0 && d0 === v.t0) f.push(`fade=t=in:st=0:d=${n(v.fadeIn)}${alpha}`)
+    if (v.fadeOut > 0) f.push(`fade=t=out:st=${n(v.t1 - v.fadeOut - d0)}:d=${n(v.fadeOut)}${alpha}`)
     f.push(`trim=start=${n(vis0 - d0)}:duration=${n(vis1 - vis0)}`, `setpts=PTS-STARTPTS+${n(vis0 - p.from)}/TB`)
-    fil.push(`[${k}:v]${f.join(',')}[l${i}]`)
-    fil.push(`[${last}][l${i}]overlay=eof_action=pass:format=auto[o${i}]`)
-    last = `o${i}`
+    if (base) {
+      // arquivo que acaba antes do previsto: segura o último quadro em vez de a parte sair curta
+      f.push(`tpad=stop_duration=${n(frames / fps + 1, 3)}:stop_mode=clone`)
+      fil.push(`[${k}:v]${f.join(',')}[l${i}]`)
+      last = `l${i}`
+    } else {
+      fil.push(`[${k}:v]${f.join(',')}[l${i}]`)
+      fil.push(`[${last}][l${i}]overlay=eof_action=pass:format=auto[o${i}]`)
+      last = `o${i}`
+    }
     k++
   })
   fil.push(`[${last}]format=yuv420p[vout]`)

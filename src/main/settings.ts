@@ -39,6 +39,10 @@ export interface AppSettings {
   keys?: Record<string, string>
   /** gravação do clipe de motion: 'cpu' (x264, qualidade máxima, padrão) ou 'gpu' (NVENC da NVIDIA, bem mais rápido) */
   motionEncoder?: 'cpu' | 'gpu'
+  /** quadros por segundo do clipe de motion em HTML (30 padrão; 60 pra render em 60 fps) */
+  motionFps?: 30 | 60
+  /** motion blur do clipe de motion em HTML: quantos subquadros misturar por quadro (0 = desligado) */
+  motionBlur?: 0 | 4 | 8
   /** render da timeline (partes e letterings): 'gpu' (NVENC, padrão quando a placa existe) ou 'cpu' (x264) */
   renderEncoder?: 'cpu' | 'gpu'
   /** caminho manual do AfterFX.exe (motion no After Effects); vazio = procura sozinho */

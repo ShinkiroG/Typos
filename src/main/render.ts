@@ -1,5 +1,5 @@
 import { BrowserWindow, dialog, ipcMain, type WebContents } from 'electron'
-import { basename, join, resolve as resolvePath, sep } from 'path'
+import { basename, join } from 'path'
 import { promises as fs, existsSync } from 'fs'
 import { spawn, type ChildProcess } from 'child_process'
 import { createHash } from 'crypto'
@@ -52,6 +52,8 @@ export interface RenderPartIn {
   from: number
   to: number
   key: string
+  /** o mesmo, só do som (render só de áudio) */
+  audioKey?: string
   video: VLayer[]
   audio: ALayer[]
   letterings: string[]
@@ -150,8 +152,6 @@ async function readState(out: string): Promise<RenderState | null> {
 }
 const writeState = (out: string, st: RenderState) => fs.writeFile(join(out, STATE), JSON.stringify({ ...st, updated: Date.now() }, null, 1), 'utf8').catch(() => {})
 
-/** só mexe em arquivos dentro de render/ */
-const insideDir = (dir: string, p: string) => resolvePath(p).startsWith(resolvePath(dir) + sep)
 
 /** a etapa está pronta? o arquivo existe e tem a duração esperada (um .mp4 interrompido não tem índice e não conta) */
 async function finished(out: string, s: StepState) {
@@ -161,6 +161,30 @@ async function finished(out: string, s: StepState) {
   if (!s.expect) return true
   const info = await probe(p)
   return !('error' in info) && info.duration >= s.expect * 0.97 - 0.3
+}
+
+/** quantas partes fora do plano atual ficam guardadas (um desfazer, ou voltar um trecho ao que era, acha elas prontas) */
+const KEEP_PARTS = 60
+
+/**
+ * Faxina da pasta de partes: restos de gravação interrompida e partes com o nome antigo (por posição)
+ * somem; das partes que não estão no plano atual, ficam só as mais novas.
+ */
+async function sweepParts(partsDir: string, keep: Set<string>) {
+  const names = await fs.readdir(partsDir).catch(() => [] as string[])
+  const spare: { stem: string; t: number }[] = []
+  for (const n of names) {
+    if (keep.has(n) || !/\.(mp4|wav)$/i.test(n)) continue
+    if (/\.tmp\.(mp4|wav)$/i.test(n) || /^parte-\d+\./i.test(n)) await fs.rm(join(partsDir, n), { force: true }).catch(() => null)
+    else if (/^p-[0-9a-f]+\.mp4$/i.test(n) || (/^p-[0-9a-f]+\.wav$/i.test(n) && !names.includes(n.replace(/\.wav$/i, '.mp4')))) {
+      const st = await fs.stat(join(partsDir, n)).catch(() => null)
+      if (st) spare.push({ stem: n.replace(/\.(mp4|wav)$/i, ''), t: st.mtimeMs })
+    }
+  }
+  for (const x of spare.sort((a, z) => z.t - a.t).slice(KEEP_PARTS)) {
+    await fs.rm(join(partsDir, x.stem + '.mp4'), { force: true }).catch(() => null)
+    await fs.rm(join(partsDir, x.stem + '.wav'), { force: true }).catch(() => null)
+  }
 }
 
 /** roda o ffmpeg acompanhando o -progress (quadros feitos) */
@@ -221,7 +245,10 @@ async function start(sender: WebContents, job: RenderJob) {
   const t0 = Date.now()
   const total = job.parts[job.parts.length - 1].to - job.parts[0].from
   const audioOnly = !!job.audioOnly
-  const partFile = (id: string) => `partes/${id}.${audioOnly ? 'wav' : 'mp4'}`
+  // o arquivo da parte leva o nome do conteúdo dela (a assinatura), não a posição: uma parte que só foi
+  // empurrada na timeline (entrou ou saiu algo antes) acha o arquivo que já estava pronto
+  const partFile = (sig: string) => `partes/p-${sig}.${audioOnly ? 'wav' : 'mp4'}`
+  const tmpOf = (file: string) => file.replace(/\.(mp4|wav)$/i, '.tmp.$1')
 
   // ---------- o que já está pronto de uma rodada anterior ----------
   const letById = new Map(job.letterings.map((l) => [l.id, l]))
@@ -231,13 +258,13 @@ async function start(sender: WebContents, job: RenderJob) {
   // seu jeito): o encoder entra na assinatura, e trocar de CPU pra GPU refaz as partes
   const partSig = (p: RenderPartIn, gpu: boolean) =>
     audioOnly
-      ? sha('audio|' + JSON.stringify([p.from, p.to, p.audio]))
+      ? sha('audio|' + (p.audioKey ?? JSON.stringify([p.from, p.to, p.audio])))
       : sha(p.key + '|' + ENCODE_V + '|' + p.letterings.map((id) => letById.get(id)?.html ?? '').join('|') + (gpu ? '|nvenc' : ''))
   const plan: StepState[] = [
     ...job.parts.map((p) => ({
       id: p.id,
       label: p.label,
-      file: partFile(p.id),
+      file: partFile(partSig(p, enc.gpu)),
       weight: p.to - p.from,
       expect: p.to - p.from,
       sig: partSig(p, enc.gpu),
@@ -248,15 +275,20 @@ async function start(sender: WebContents, job: RenderJob) {
   const eq = eqFfmpeg(job.eq)
   const finSig = () => sha(plan.slice(0, -1).map((x) => x.sig).join('|') + '|' + job.finalFile + (eq.length ? '|eq:' + eq.join(',') : ''))
   plan[plan.length - 1].sig = finSig()
-  for (const st of plan) {
-    const prev = old?.steps.find((p) => p.id === st.id)
-    if (prev && prev.sig === st.sig && prev.file === st.file) st.done = await finished(out, st)
-    // arquivo de um plano antigo (a timeline mudou): some, pra ninguém achar que está pronto
-    else if (insideDir(out, join(out, st.file))) {
-      await fs.rm(join(out, st.file), { force: true })
-      await fs.rm(join(out, st.file.replace(/\.mp4$/i, '.wav')), { force: true })
-    }
+  const stepOf = (p: RenderPartIn) => plan.find((x) => x.id === p.id)!
+  // uma parte está pronta se o arquivo do conteúdo dela existe e está inteiro (ele só ganha esse nome
+  // depois que o ffmpeg termina); o vídeo final, se foi feito com exatamente estas partes
+  const checked = new Map<string, boolean>()
+  for (const st of plan.slice(0, -1)) {
+    if (!checked.has(st.file)) checked.set(st.file, await finished(out, st))
+    st.done = checked.get(st.file)!
   }
+  {
+    const fin = plan[plan.length - 1]
+    const prev = old?.steps.find((p) => p.id === 'final')
+    if (prev && prev.sig === fin.sig && prev.file === fin.file) fin.done = await finished(out, fin)
+  }
+  await sweepParts(partsDir, new Set(plan.slice(0, -1).flatMap((x) => [basename(x.file), basename(x.file).replace(/\.mp4$/i, '.wav')])))
   const resumed = plan.filter((x) => x.done).length
   const state: RenderState = { v: 2, status: 'rodando', updated: 0, steps: plan }
   await writeState(out, state)
@@ -281,7 +313,8 @@ async function start(sender: WebContents, job: RenderJob) {
   progress('partes')
 
   // ---------- letterings (gravados uma vez, reaproveitados enquanto não mudarem) ----------
-  const pending = job.parts.filter((p) => !plan.find((x) => x.id === p.id)!.done)
+  // partes de conteúdo igual (ex.: dois trechos vazios do mesmo tamanho) dividem o arquivo: faz uma vez só
+  const pending = job.parts.filter((p, i, all) => !stepOf(p).done && all.findIndex((q) => stepOf(q).file === stepOf(p).file) === i)
   const needed = audioOnly ? [] : [...new Set(pending.flatMap((p) => p.letterings))].map((id) => letById.get(id)!).filter((l) => l && !existsSync(letFile(l)))
   for (const [i, l] of needed.entries()) {
     send({ kind: 'info', text: `Gravando o lettering "${l.label}" (${i + 1} de ${needed.length})…` })
@@ -325,10 +358,11 @@ async function start(sender: WebContents, job: RenderJob) {
     const tPart = Date.now()
     send({ kind: 'info', text: `${p.label}…` })
     if (audioOnly) {
-      const r = await ffmpeg(ff.ffmpeg, partAudioArgs({ from: p.from, to: p.to, audio: audioOf(p.audio), outWav: join(out, st.file) }))
+      const r = await ffmpeg(ff.ffmpeg, partAudioArgs({ from: p.from, to: p.to, audio: audioOf(p.audio), outWav: join(out, tmpOf(st.file)) }))
       if (failure) return
       if (cancelled) throw await stop('Cancelado.')
       if (r.code !== 0) throw await stop(`O ffmpeg falhou no som da ${p.label}: ${tail(r.err)}.`)
+      await fs.rename(join(out, tmpOf(st.file)), join(out, st.file))
     } else {
       const lets: VLayer[] = p.letterings
         .map((id) => letById.get(id))
@@ -347,15 +381,17 @@ async function start(sender: WebContents, job: RenderJob) {
         video: [...p.video, ...lets],
         audio: audioOf(p.audio),
         fit: job.fit,
-        outVideo: join(out, st.file),
-        outWav: join(out, st.file.replace(/\.mp4$/i, '.wav'))
+        outVideo: '',
+        outWav: ''
       }
+      // grava com outro nome e só renomeia no fim: arquivo com o nome certo é sempre uma parte inteira
+      const outs = () => ({ outVideo: join(out, tmpOf(st.file)), outWav: join(out, tmpOf(st.file.replace(/\.mp4$/i, '.wav'))) })
       const onFrame = (f: number) => {
         partial.set(p.id, st.weight * Math.min(1, f / frames))
         progress('partes', extra())
       }
       let used = encArgs
-      let r = await ffmpeg(ff.ffmpeg, partArgs(spec, used), onFrame)
+      let r = await ffmpeg(ff.ffmpeg, partArgs({ ...spec, ...outs() }, used), onFrame)
       // a placa recusou (ocupada, sessões demais, driver): essa parte e as próximas vão pela CPU
       if (r.code !== 0 && !cancelled && !failure && enc.gpu && used === enc.args && nvencFailed(r.err)) {
         if (encArgs === enc.args) {
@@ -364,19 +400,19 @@ async function start(sender: WebContents, job: RenderJob) {
           nvencBroken = true
           // as partes que já saíram pela GPU são refeitas na CPU (senão não emendam)
           for (const q of job.parts) {
-            const qs = plan.find((x) => x.id === q.id)!
+            const qs = stepOf(q)
+            const was = qs.done
             qs.sig = partSig(q, false)
-            if (qs.done) {
-              qs.done = false
-              queue.push(q)
-            }
+            qs.file = partFile(qs.sig)
+            qs.done = false
+            if (was && !queue.some((x) => stepOf(x).file === qs.file)) queue.push(q)
           }
           plan[plan.length - 1].sig = finSig()
           plan[plan.length - 1].done = false
           await writeState(out, state)
         }
         used = encArgs
-        r = await ffmpeg(ff.ffmpeg, partArgs(spec, used), onFrame)
+        r = await ffmpeg(ff.ffmpeg, partArgs({ ...spec, ...outs() }, used), onFrame)
       }
       partial.delete(p.id)
       // a placa falhou em outra parte enquanto esta saía pela GPU: refaz na CPU pra emendar igual
@@ -391,8 +427,11 @@ async function start(sender: WebContents, job: RenderJob) {
         const old = /normalize/i.test(r.err) ? ' (o ffmpeg é antigo demais: atualize pra versão 5 ou mais nova)' : ''
         throw await stop(`O ffmpeg falhou na ${p.label}${old}: ${tail(r.err)}.`)
       }
+      const o = outs()
+      await fs.rename(o.outWav, join(out, st.file.replace(/\.mp4$/i, '.wav')))
+      await fs.rename(o.outVideo, join(out, st.file))
     }
-    st.done = true
+    for (const x of plan) if (x.file === st.file) x.done = true
     made.push({ label: p.label, s: (Date.now() - tPart) / 1000, len: p.to - p.from })
     await writeState(out, state)
     progress('partes', extra())
@@ -425,11 +464,11 @@ async function start(sender: WebContents, job: RenderJob) {
     const tFin = Date.now()
     send({ kind: 'info', text: 'Juntando as partes…' })
     progress('final')
-    await fs.writeFile(join(partsDir, 'audio.txt'), concatList(job.parts.map((p) => p.id + '.wav')), 'utf8')
+    await fs.writeFile(join(partsDir, 'audio.txt'), concatList(job.parts.map((p) => basename(stepOf(p).file).replace(/\.mp4$/i, '.wav'))), 'utf8')
     const dest = join(out, fin.file)
     const args = (limiter: boolean) =>
       audioOnly ? finalAudioArgs(join(partsDir, 'audio.txt'), dest, limiter, eq) : finalArgs(join(partsDir, 'video.txt'), join(partsDir, 'audio.txt'), dest, limiter, eq)
-    if (!audioOnly) await fs.writeFile(join(partsDir, 'video.txt'), concatList(job.parts.map((p) => p.id + '.mp4')), 'utf8')
+    if (!audioOnly) await fs.writeFile(join(partsDir, 'video.txt'), concatList(job.parts.map((p) => basename(stepOf(p).file))), 'utf8')
     let r = await ffmpeg(ff.ffmpeg, args(true))
     // ffmpeg antigo sem as opções do limitador: junta sem ele
     if (r.code !== 0 && !cancelled && /alimiter|level/i.test(r.err)) r = await ffmpeg(ff.ffmpeg, args(false))

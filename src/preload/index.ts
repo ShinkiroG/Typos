@@ -322,7 +322,9 @@ const api = {
   aeCancel: (block?: string) => ipcRenderer.invoke('ae:cancel', block),
   aeOpen: (aep: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('ae:open', aep),
   /** encoder do clipe de motion ('cpu' = x264 qualidade máxima, 'gpu' = NVENC); sem argumento só lê */
-  motionEncoder: (mode?: 'cpu' | 'gpu'): Promise<{ mode: 'cpu' | 'gpu'; gpu: boolean }> => ipcRenderer.invoke('motion:encoder', mode),
+  /** como o clipe de motion é gravado: encoder, quadros por segundo e motion blur (subquadros por quadro) */
+  motionEncoder: (set?: 'cpu' | 'gpu' | { mode?: 'cpu' | 'gpu'; fps?: 30 | 60; blur?: 0 | 4 | 8 }): Promise<{ mode: 'cpu' | 'gpu'; gpu: boolean; fps: 30 | 60; blur: 0 | 4 | 8 }> =>
+    ipcRenderer.invoke('motion:encoder', set),
   /** mede o HTML do motion em vários instantes e devolve o que está fora da safe zone / em cima da faixa persistente */
   motionCheckLayout: (job: {
     dir: string

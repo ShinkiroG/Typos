@@ -117,7 +117,7 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
 
   // ---------- o plano: o que está na timeline, em partes ----------
   const plan = useMemo(
-    () => planRender(montage, { from: quality.short ? fromSec : 0, to: quality.short ? fromSec + 30 : Infinity, width: outW, height: outH, fps: quality.fps, format }),
+    () => planRender(montage, { from: quality.short ? fromSec : 0, to: quality.short ? fromSec + 30 : Infinity, width: outW, height: outH, fps: quality.fps, format, cull: true }),
     [montage, quality.short, fromSec, outW, outH, quality.fps, format]
   )
   const shortTag = quality.short ? `-30s-${fmtT(fromSec).replace(':', 'm')}` : ''
@@ -281,7 +281,7 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
     const sh = sd?.items.find((x) => shortRenderId(x.id) === id)
     if (!sd || !sh) return { error: 'O recorte não existe mais.' }
     const [w, h] = shortSize(sd.aspect, q.pct)
-    const p = planRender(sh.montage, { from: 0, to: Infinity, width: w, height: h, fps: q.fps, format: shortsFormat ?? format })
+    const p = planRender(sh.montage, { from: 0, to: Infinity, width: w, height: h, fps: q.fps, format: shortsFormat ?? format, fit: 'cover', cull: true })
     if (!p.parts.length) return { error: 'A timeline do recorte está vazia.' }
     const name = slug(sh.title)
     return {

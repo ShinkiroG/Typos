@@ -66,4 +66,21 @@ describe.skipIf(!which)('render (ffmpeg de verdade)', () => {
     expect(keys.length).toBe(60)
     expect(keys.filter((k) => k.startsWith('1')).length).toBeGreaterThanOrEqual(15)
   }, 60000)
+
+  it('camada de baixo opaca (sem canal alfa) sai igual à comum: mesmos quadros, fade pro preto', () => {
+    const video = [{ path: f('a.mp4'), image: false, t0: 0, t1: 2, src0: 0.5, fadeIn: 0.5, fadeOut: 0, opaque: true, covers: true }]
+    execFileSync('ffmpeg', partArgs(spec({ video, audio: [], outVideo: f('op.mp4'), outWav: f('op.wav') }), fast), { stdio: 'ignore' })
+    execFileSync('ffmpeg', partArgs(spec({ video: video.map((v) => ({ ...v, opaque: false, covers: false })), audio: [], outVideo: f('al.mp4'), outWav: f('al.wav') }), fast), { stdio: 'ignore' })
+    expect(probe(f('op.mp4'), 'stream=width,height,nb_read_frames')).toEqual(['320', '180', '60'])
+    // os dois caminhos dão a mesma imagem (PSNR alto em todos os quadros, inclusive no fade)
+    const r = spawnSync('ffmpeg', ['-v', 'info', '-i', f('op.mp4'), '-i', f('al.mp4'), '-lavfi', 'psnr', '-f', 'null', '-'])
+    const min = Number(/min:([\d.]+|inf)/.exec(r.stderr.toString())?.[1].replace('inf', '99'))
+    expect(min).toBeGreaterThan(30)
+  }, 60000)
+
+  it('camada opaca mais curta que a parte: o resto fica preto e a conta de quadros fecha', () => {
+    const video = [{ path: f('a.mp4'), image: false, t0: 0.5, t1: 1.5, src0: 0, fadeIn: 0, fadeOut: 0, opaque: true, covers: true }]
+    execFileSync('ffmpeg', partArgs(spec({ video, audio: [], outVideo: f('curta.mp4'), outWav: f('curta.wav') }), fast), { stdio: 'ignore' })
+    expect(probe(f('curta.mp4'), 'stream=nb_read_frames')).toEqual(['60'])
+  }, 60000)
 })

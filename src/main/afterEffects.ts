@@ -140,7 +140,7 @@ async function renderAep(job: { aep: string; out: string; seconds: number; width
   if (!input) throw new Error('O aerender não gravou nada' + (aerenderErrors(log) ? ': ' + aerenderErrors(log) : r.code ? ` (código ${r.code})` : '') + '.')
   onPct(0.9)
   const s = await loadSettings()
-  const enc = s.motionEncoder === 'gpu' && (await hasNvenc()) ? nvencArgs() : x264Args('grain')
+  const enc = s.motionEncoder === 'gpu' && (await hasNvenc()) ? nvencArgs() : x264Args('clip')
   const W = Math.round(job.width / 2) * 2
   const H = Math.round(job.height / 2) * 2
   const args = ['-hide_banner', '-y']

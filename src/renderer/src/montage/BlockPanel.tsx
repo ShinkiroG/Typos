@@ -467,20 +467,35 @@ function EnginePick({ b, patch }: { b: InstructionBlock; patch: FormProps['patch
 
 /** como o clipe aprovado é gravado: x264 na CPU (qualidade máxima) ou NVENC na placa NVIDIA (bem mais rápido) */
 export function EncoderPick() {
-  const [st, setSt] = useState<{ mode: 'cpu' | 'gpu'; gpu: boolean } | null>(null)
+  const [st, setSt] = useState<Awaited<ReturnType<typeof api.motionEncoder>> | null>(null)
   useEffect(() => {
     api.motionEncoder().then(setSt).catch(() => null)
   }, [])
   if (!st) return null
   return (
-    <label className="blk-encoder" title="Vale pro clipe do motion aprovado. A prévia não muda.">
-      Gravar o clipe:{' '}
-      <select value={st.gpu ? st.mode : 'cpu'} disabled={!st.gpu} onChange={async (e) => setSt(await api.motionEncoder(e.target.value as 'cpu' | 'gpu'))}>
-        <option value="cpu">Qualidade máxima (CPU)</option>
-        <option value="gpu">Rápido (GPU NVIDIA)</option>
-      </select>
+    <div className="blk-encoder" title="Vale pro clipe do motion aprovado. A prévia não muda.">
+      <label>
+        Gravar o clipe:{' '}
+        <select value={st.gpu ? st.mode : 'cpu'} disabled={!st.gpu} onChange={async (e) => setSt(await api.motionEncoder(e.target.value as 'cpu' | 'gpu'))}>
+          <option value="cpu">Qualidade máxima (CPU)</option>
+          <option value="gpu">Rápido (GPU NVIDIA)</option>
+        </select>
+      </label>
+      <label title="Quadros por segundo do clipe (motion em HTML). Use 60 se o vídeo for renderizado em 60 fps; o After Effects segue em 30.">
+        <select value={st.fps} onChange={async (e) => setSt(await api.motionEncoder({ fps: Number(e.target.value) as 30 | 60 }))}>
+          <option value={30}>30 fps</option>
+          <option value={60}>60 fps</option>
+        </select>
+      </label>
+      <label title="Motion blur: cada quadro do clipe vira a média de vários subquadros, como o obturador de uma câmera. O movimento rápido fica mais suave, e a gravação demora 4 ou 8 vezes mais.">
+        <select value={st.blur} onChange={async (e) => setSt(await api.motionEncoder({ blur: Number(e.target.value) as 0 | 4 | 8 }))}>
+          <option value={0}>Sem motion blur</option>
+          <option value={4}>Motion blur (4×)</option>
+          <option value={8}>Motion blur fino (8×)</option>
+        </select>
+      </label>
       {!st.gpu && <small> (GPU NVIDIA não encontrada pelo ffmpeg)</small>}
-    </label>
+    </div>
   )
 }
 
