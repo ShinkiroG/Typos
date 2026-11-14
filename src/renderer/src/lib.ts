@@ -902,6 +902,8 @@ export interface BlockPreview {
   key: string
   /** o que continuou fora da safe zone depois da correção automática */
   safeIssues?: string[]
+  /** erros que a animação ainda deu ao tocar depois da correção automática (script quebrado, arquivo que não carregou) */
+  errors?: string[]
   /** tamanho (px) em que o HTML foi escrito; o clipe final amplia a partir dele */
   size?: { w: number; h: number }
   /** sons do Material bruto que o Claude pôs no motion (tempo a partir do começo do bloco); viram cortes de áudio ao aprovar */

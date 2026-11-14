@@ -7,6 +7,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { loadSettings, saveSettings, type AiSettings } from './settings'
 import { chargeAnthropic, chargeOpenAI, initAiMeter, metered } from './aiMeter'
 import { claudeModelLabel, motionModelFor } from '../shared/claudeModels'
+import { logTime } from './log'
 
 /**
  * IA do Typos, sem depender de um fornecedor só. O app pede uma TAREFA ("texto" ou
@@ -442,6 +443,10 @@ export interface MotionTrainJob {
   id?: string
   /** modelo do Claude escolhido no bloco; vazio = o das Configurações (motionModel) */
   model?: string
+  /** quanto o Claude pensa: criar um motion é 'high' (padrão); correção automática (safe zone, erro) é 'medium' */
+  effort?: 'low' | 'medium' | 'high'
+  /** pedido que não precisa da internet (o motion de um bloco): no Claude Code, só a leitura das imagens fica liberada */
+  offline?: boolean
 }
 
 /** pedidos de motion em andamento (o Cancelar da prévia corta o do bloco) */
@@ -465,7 +470,7 @@ async function motionClaudeCode(s: AiSettings, job: MotionTrainJob, signal?: Abo
   try {
     // 30 min: com emenda (HTML do vizinho + quadros) o Claude Code passava dos 15 e era cortado
     const model = motionModelFor(job.model, s.motionModel)
-    const args = ['-p', '--output-format', 'json', '--allowedTools', 'Read,WebSearch,WebFetch', ...(model ? ['--model', model] : [])]
+    const args = ['-p', '--output-format', 'json', '--allowedTools', job.offline ? 'Read' : 'Read,WebSearch,WebFetch', ...(model ? ['--model', model] : [])]
     const r = await run(cc.path, args, { cwd: work, input: prompt, timeoutMs: 30 * 60000, signal })
     let parsed: any = null
     try {
@@ -524,7 +529,7 @@ async function motionAnthropic(s: AiSettings, job: MotionTrainJob, signal?: Abor
       {
         model: motionModelFor(job.model, s.motionModel) || s.anthropicModel || DEFAULT_MODELS.anthropic,
         max_tokens: 32000,
-        output_config: { effort: 'high' },
+        output_config: { effort: job.effort ?? 'high' },
         betas: ['server-side-fallback-2026-07-01'],
         fallbacks: 'default',
         messages: [{ role: 'user', content: [...imgs, { type: 'text', text: job.prompt }] }]
@@ -558,6 +563,7 @@ export function initMotionAi() {
     const key = job.id ?? randomUUID()
     motionRunning.get(key)?.abort()
     motionRunning.set(key, ac)
+    const t0 = Date.now()
     try {
       const provider = await routeFor('text')
       const s = (await loadSettings()).ai ?? {}
@@ -574,6 +580,7 @@ export function initMotionAi() {
         ),
         stopped
       ])
+      logTime('IA (motion)', t0, `${provider}${job.model ? ' ' + job.model : ''}, esforço ${job.effort ?? 'high'}; pedido ${job.prompt.length} caracteres + ${job.images.length} imagens, resposta ${text.length}`)
       return { text, provider }
     } catch (e: any) {
       return { error: ac.signal.aborted ? 'Cancelado.' : String(e?.message ?? e) }

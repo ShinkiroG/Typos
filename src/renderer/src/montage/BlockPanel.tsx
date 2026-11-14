@@ -597,6 +597,18 @@ export function BlockPreviewBox({
           </ul>
         </details>
       )}
+      {!!b.preview?.errors?.length && (
+        <details className="blk-prev-stale blk-prev-safe">
+          <summary>
+            <AlertTriangle size={12} /> A animação ainda deu erro ao tocar. Peça um ajuste ou refaça.
+          </summary>
+          <ul>
+            {b.preview.errors.map((t, i) => (
+              <li key={i}>{t}</li>
+            ))}
+          </ul>
+        </details>
+      )}
       {error && !mine && !queued && (
         <div className="blk-prev-stale">
           <AlertTriangle size={12} /> Na fila, deu erro: {error}

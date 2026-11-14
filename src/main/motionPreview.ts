@@ -4,8 +4,9 @@ import { promises as fs, existsSync } from 'fs'
 import { createHash } from 'crypto'
 import { spawn } from 'child_process'
 import { findFfmpeg, run } from './media'
-import { partArgs, x264Args, nvencArgs, RGB_TO_YUV, type VLayer } from './compose'
+import { partArgs, x264Args, nvencArgs, seekArgs, RGB_TO_YUV, type VLayer } from './compose'
 import { loadSettings, saveSettings } from './settings'
+import { logTime } from './log'
 
 /**
  * Prévia de um bloco de instrução: o HTML de motion que a IA escreveu é tocado numa janela
@@ -42,6 +43,12 @@ export interface PreviewJob {
  */
 const CLOCK = `<script>(function(){
 var vt=0,last=0,seq=0,raf=[],timers=[],seen=new WeakMap(),T0=Date.now(),realRaf=window.requestAnimationFrame.bind(window),realST=window.setTimeout.bind(window);
+// sorteio com semente fixa: a prévia aprovada e o clipe final (gravados em rodadas separadas) saem iguais
+var sd=0x9E3779B9;Math.random=function(){sd=(sd+0x6D2B79F5)|0;var t=Math.imul(sd^(sd>>>15),1|sd);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296};
+// erros da animação (script quebrado, arquivo que não carregou): o Typos lê e devolve pra IA corrigir
+var errs=window.__typosErrors=[];function note(m){m=String(m||'').slice(0,300);if(m&&errs.length<12&&errs.indexOf(m)<0)errs.push(m)}
+window.addEventListener('error',function(e){var t=e.target;if(t&&t!==window&&t.tagName){note('<'+t.tagName.toLowerCase()+'> não carregou: '+(t.getAttribute('src')||t.getAttribute('href')||'?'))}else note((e.message||'erro')+(e.lineno?' (linha '+e.lineno+')':''))},true);
+window.addEventListener('unhandledrejection',function(e){note('promessa rejeitada: '+((e.reason&&e.reason.message)||e.reason))});
 performance.now=function(){return vt};
 Date.now=function(){return T0+vt};
 window.requestAnimationFrame=function(cb){var id=++seq;raf.push({id:id,cb:cb});return id};
@@ -50,7 +57,7 @@ function add(cb,ms,args,every){var id=++seq;timers.push({id:id,at:vt+Math.max(0,
 window.setTimeout=function(cb,ms){return add(cb,ms,[].slice.call(arguments,2),0)};
 window.setInterval=function(cb,ms){return add(cb,ms,[].slice.call(arguments,2),Math.max(4,+ms||0))};
 window.clearTimeout=window.clearInterval=function(id){timers=timers.filter(function(t){return t.id!==id})};
-function call(f,a){try{typeof f==='function'?f.apply(null,a||[]):(0,eval)(String(f))}catch(e){console.error(e)}}
+function call(f,a){try{typeof f==='function'?f.apply(null,a||[]):(0,eval)(String(f))}catch(e){note((e&&e.message)||e);console.error(e)}}
 window.__typosStep=function(ms){
   for(var g=0;g<20000;g++){timers.sort(function(a,b){return a.at-b.at});var t=timers[0];if(!t||t.at>ms)break;vt=t.at;if(t.every)t.at+=t.every;else timers.shift();call(t.cb,t.args)}
   vt=ms;var q=raf;raf=[];q.forEach(function(r){call(r.cb,[ms])});
@@ -74,6 +81,12 @@ function withClock(html: string) {
   if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + '<head>' + CLOCK + '</head>')
   return '<!doctype html><html><head>' + CLOCK + '</head><body>' + html + '</body></html>'
 }
+
+/**
+ * Ritmo da janela invisível. Cada quadro gravado espera dois requestAnimationFrame de verdade e uma
+ * pintura; a 60 Hz isso dá uns 50 ms por quadro mesmo com a animação parada. 240 é o teto do Electron.
+ */
+const CAPTURE_HZ = 240
 
 const safeName = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 60) || 'arquivo'
 
@@ -188,7 +201,7 @@ export async function htmlToVideo(job: HtmlVideoJob) {
       }
       win.webContents.invalidate()
     })
-  win.webContents.setFrameRate(60)
+  win.webContents.setFrameRate(CAPTURE_HZ)
   let wav = ''
   if (job.wav?.length) {
     wav = join(out, `audio-${Math.random().toString(36).slice(2, 8)}.wav`)
@@ -241,6 +254,7 @@ export async function htmlToVideo(job: HtmlVideoJob) {
     }
   }
   let enc: Awaited<ReturnType<typeof startEncoder>> | null = null
+  const t0 = Date.now()
   try {
     await win.loadFile(playPath)
     win.webContents.setZoomFactor(zoom)
@@ -260,7 +274,9 @@ export async function htmlToVideo(job: HtmlVideoJob) {
       if (i % 3 === 0) job.onPct?.((i + 1) / n)
     }
     job.onPct?.(1)
+    const shot = Date.now() - t0
     const r = await enc!.finish()
+    logTime('gravação', t0, `${n} quadros ${W}x${H} a ${job.fps} fps (${job.quality}); captura ${(n / Math.max(0.001, shot / 1000)).toFixed(1)} q/s`)
     if (r.code !== 0) throw new Error('O ffmpeg falhou ao montar o vídeo: ' + r.err.split('\n').slice(-3).join(' ').slice(0, 300))
   } catch (e) {
     enc?.abort()
@@ -347,7 +363,7 @@ export interface LayoutHit {
  * instantes. Um elemento só conta se ficar fora do lugar por duas medições seguidas ou no quadro final
  * (o que só atravessa a tela numa transição não conta).
  */
-export async function checkLayout(job: LayoutJob, cancelled: () => boolean = () => false): Promise<LayoutHit[]> {
+export async function checkLayout(job: LayoutJob, cancelled: () => boolean = () => false): Promise<{ issues: LayoutHit[]; errors: string[] }> {
   const out = join(job.dir, 'previas', safeName(job.block))
   await fs.mkdir(out, { recursive: true })
   for (const f of job.files) await fs.copyFile(f.src, join(out, safeName(f.name))).catch(() => null)
@@ -367,8 +383,9 @@ export async function checkLayout(job: LayoutJob, cancelled: () => boolean = () 
     webPreferences: { offscreen: true, session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
   })
   win.setContentSize(W, H)
-  win.webContents.setFrameRate(60)
+  win.webContents.setFrameRate(CAPTURE_HZ)
   const found = new Map<string, LayoutHit>()
+  let errors: string[] = []
   try {
     await win.loadFile(playPath)
     await win.webContents.executeJavaScript('(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => true)').catch(() => null)
@@ -387,11 +404,13 @@ export async function checkLayout(job: LayoutJob, cancelled: () => boolean = () 
       for (const [k, h] of now) if ((prev.has(k) || last) && !found.has(k)) found.set(k, prev.get(k) ?? h)
       prev = now
     }
+    const got = await win.webContents.executeJavaScript('window.__typosErrors || []').catch(() => [])
+    errors = Array.isArray(got) ? got.map((x) => String(x).slice(0, 300)).slice(0, 12) : []
   } finally {
     win.destroy()
     await fs.rm(playPath, { force: true }).catch(() => null)
   }
-  return [...found.values()].sort((a, z) => a.t - z.t)
+  return { issues: [...found.values()].sort((a, z) => a.t - z.t), errors }
 }
 
 export interface UnderJob {
@@ -416,12 +435,13 @@ export async function underVideo(job: UnderJob) {
   const out = join(job.dir, 'previas', safeName(job.block), 'embaixo')
   await fs.mkdir(out, { recursive: true })
   const key = createHash('sha1').update(JSON.stringify(job)).digest('hex').slice(0, 12)
-  const video = join(out, `embaixo-${job.width}-${key}.mp4`)
+  // 'k': gravado com quadro-chave curto (os de antes, com um a cada 250 quadros, são refeitos)
+  const video = join(out, `embaixo-${job.width}-${key}-k.mp4`)
   if (existsSync(video)) return video
   const wav = join(out, `_${key}.wav`)
   const r = await run(
     ff.ffmpeg,
-    partArgs({ from: job.from, to: job.to, width: job.width, height: job.height, fps: 30, video: job.video, audio: [], fit: 'contain', outVideo: video, outWav: wav }),
+    partArgs({ from: job.from, to: job.to, width: job.width, height: job.height, fps: 30, video: job.video, audio: [], fit: 'contain', outVideo: video, outWav: wav }, seekArgs()),
     { timeoutMs: 10 * 60000 }
   )
   await fs.rm(wav, { force: true }).catch(() => null)
@@ -477,7 +497,7 @@ export function initMotionPreview() {
     const own = !jobs.has(job.block)
     if (own) jobs.set(job.block, me)
     try {
-      return { issues: await checkLayout(job, () => me.cancel) }
+      return await checkLayout(job, () => me.cancel)
     } catch (err: any) {
       return { error: String(err?.message ?? err) }
     } finally {

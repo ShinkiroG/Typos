@@ -9,6 +9,7 @@ import { htmlToVideo, hasNvenc } from './motionPreview'
 import { loadSettings, saveSettings } from './settings'
 import { cleanAudio } from './denoise'
 import { eqFfmpeg, type MontageEq } from '../shared/eq'
+import { logTime } from './log'
 
 /**
  * Workspace Render: o Typos compila a timeline de montagem aqui no PC com o ffmpeg (sem IA):
@@ -316,8 +317,12 @@ async function start(sender: WebContents, job: RenderJob) {
   const extra = () => [...partial.values()].reduce((a, x) => a + x, 0)
   let encArgs = enc.args
   let failure: Error | null = null
+  /** quanto cada parte feita nesta rodada demorou (vai pro relatório) */
+  const made: { label: string; s: number; len: number }[] = []
+  const tParts = Date.now()
   const runPart = async (p: RenderPartIn) => {
     const st = plan.find((x) => x.id === p.id)!
+    const tPart = Date.now()
     send({ kind: 'info', text: `${p.label}…` })
     if (audioOnly) {
       const r = await ffmpeg(ff.ffmpeg, partAudioArgs({ from: p.from, to: p.to, audio: audioOf(p.audio), outWav: join(out, st.file) }))
@@ -388,6 +393,7 @@ async function start(sender: WebContents, job: RenderJob) {
       }
     }
     st.done = true
+    made.push({ label: p.label, s: (Date.now() - tPart) / 1000, len: p.to - p.from })
     await writeState(out, state)
     progress('partes', extra())
   }
@@ -405,12 +411,18 @@ async function start(sender: WebContents, job: RenderJob) {
     }
   }
   await Promise.all(Array.from({ length: audioOnly ? 2 : Math.max(1, Math.min(enc.parallel, pending.length)) }, worker))
+  if (made.length) {
+    const slow = [...made].sort((a, z) => z.s / z.len - a.s / a.len)[0]
+    const vid = made.reduce((a, x) => a + x.len, 0)
+    logTime('render (partes)', tParts, `${made.length} partes, ${vid.toFixed(0)} s de vídeo, ${audioOnly ? 'só áudio' : enc.gpu && encArgs === enc.args ? 'NVENC' : 'x264'}, ${job.width}x${job.height} a ${job.fps} fps; mais lenta: ${slow.label} (${slow.s.toFixed(1)} s pra ${slow.len.toFixed(1)} s)`)
+  }
   if (failure) throw failure
   if (cancelled) throw await stop('Cancelado.')
 
   // ---------- final: junta as partes (vídeo copiado) e passa o limitador no áudio ----------
   const fin = plan[plan.length - 1]
   if (!fin.done) {
+    const tFin = Date.now()
     send({ kind: 'info', text: 'Juntando as partes…' })
     progress('final')
     await fs.writeFile(join(partsDir, 'audio.txt'), concatList(job.parts.map((p) => p.id + '.wav')), 'utf8')
@@ -424,6 +436,7 @@ async function start(sender: WebContents, job: RenderJob) {
     if (cancelled) throw await stop('Cancelado.')
     if (r.code !== 0) throw await stop('O ffmpeg falhou ao juntar as partes: ' + tail(r.err) + '.')
     fin.done = true
+    logTime('render (juntar)', tFin)
   }
   state.status = 'pronto'
   delete state.reason

@@ -19,6 +19,11 @@ export function logLine(source: string, text: unknown) {
   if (lines.length > MAX) lines.splice(0, lines.length - MAX)
 }
 
+/** quanto uma etapa demorou (render, gravação, IA): entra no relatório, pra saber onde o tempo vai */
+export function logTime(step: string, t0: number, detail = '') {
+  logLine('tempo', `${step}: ${((Date.now() - t0) / 1000).toFixed(1)} s${detail ? ' · ' + detail : ''}`)
+}
+
 function safeJson(v: unknown) {
   try {
     return JSON.stringify(v)
