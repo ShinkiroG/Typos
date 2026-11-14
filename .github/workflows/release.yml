@@ -27,6 +27,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run typecheck
       - run: npm test
       # a tag enviada tem que bater com o version do package.json
       - name: Conferir versão

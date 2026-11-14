@@ -8,7 +8,7 @@
  * Versão da codificação: entra na assinatura das partes e dos letterings do render, pra que um ajuste
  * aqui grave tudo de novo em vez de reaproveitar arquivos feitos com o ajuste antigo.
  */
-export const ENCODE_V = 2
+export const ENCODE_V = 3
 
 /**
  * H.264 de entrega. Fundo em gradiente escuro com grão (o que o motion mais faz) é o pior caso do
@@ -25,14 +25,25 @@ export function x264Args(kind: 'grain' | 'master'): string[] {
 
 /**
  * Encoder da placa NVIDIA (NVENC) pro clipe de motion: bem mais rápido que o x264 'slow', com qualidade
- * constante alta (cq 14, preset p7, AQ ligado). Guarda um pouco menos do grão do fundo que o x264.
+ * constante alta (cq 14, AQ ligado). Guarda um pouco menos do grão do fundo que o x264.
+ * Preset p5: com a qualidade travada pelo cq, o p7 (o mais lento) só deixava o arquivo um pouco menor
+ * e custava bem mais tempo.
  */
 export function nvencArgs(): string[] {
   return [
-    '-c:v', 'h264_nvenc', '-preset', 'p7', '-tune', 'hq', '-rc', 'vbr', '-cq', '14', '-b:v', '0',
+    '-c:v', 'h264_nvenc', '-preset', 'p5', '-tune', 'hq', '-rc', 'vbr', '-cq', '14', '-b:v', '0',
     '-spatial-aq', '1', '-temporal-aq', '1', '-profile:v', 'high',
     '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709'
   ]
+}
+
+/**
+ * Vídeo que a animação reposiciona quadro a quadro (o embaixo.mp4): quadro-chave a cada 4 quadros e
+ * sem quadros B, pra cada salto decodificar quase nada. Com o padrão (um a cada 250) cada quadro
+ * gravado decodificava em média mais de cem. É arquivo de trabalho: o tamanho importa pouco.
+ */
+export function seekArgs(): string[] {
+  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16', '-g', '4', '-bf', '0', '-tune', 'fastdecode', '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709']
 }
 
 /** o ffmpeg falhou por causa do NVENC (placa ocupada, sessões demais, driver)? aí dá pra refazer na CPU */

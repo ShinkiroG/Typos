@@ -985,6 +985,14 @@ export function parseDemo(text: string) {
   return demo.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim()
 }
 
+/** os erros que a animação deu ao tocar, como pedido de correção pro Claude */
+export function errorsTweak(errors: string[]) {
+  return [
+    'CORREÇÃO DE ERRO (automática, do Typos): ao tocar a animação, o navegador registrou os erros abaixo. Com erro de script a animação para no meio ou nem começa; arquivo que não carregou aparece quebrado. Corrija a causa e mantenha a ideia, a composição e os tempos. Só existem na pasta os arquivos listados neste pedido, com exatamente esses nomes.',
+    ...errors.slice(0, 12).map((e) => '- ' + e)
+  ].join('\n')
+}
+
 /** nome do arquivo de anexo dentro da pasta da prévia */
 export const attachName = (a: BlockAttachment, i: number) => `anexo-${i + 1}${a.path.match(/\.\w+$/)?.[0]?.toLowerCase() ?? '.png'}`
 
@@ -1087,20 +1095,24 @@ export async function generatePreview(c: PreviewCtx) {
   const b = c.block
   const hasAudio = audioIn(c.data, b).length > 0
   const deaf = hasAudio && !heardClips(c.data, b).length
-  let heard: { words: HeardWord[]; prompts: HeardPrompt[]; error?: string } = { words: [], prompts: [] }
-  if (hasAudio && !deaf) {
-    c.onStage('Ouvindo o trecho (Whisper)…', null, [0, 0.1])
-    heard = await heardIn(c.data, b, c.lang, { signal: c.signal, onWait: (l, p) => c.onStage(l, p, [0, 0.1]) })
-  }
-  if (c.signal?.aborted) throw new Error('Cancelado.')
   const files = b.attachments.filter(isImage).map((a, i) => ({ a, name: attachName(a, i) }))
   // no After Effects a composição já nasce no tamanho do projeto (o render dele já é o clipe final)
   const ae = b.engine === 'ae'
   const size = ae ? projectSize(c.format) : previewSize(c.format)
-  c.onStage('Olhando o vídeo embaixo do bloco…', null, [0.1, 0.14])
-  const under = await underFor(c.data, b, c.dir, size, true)
-  if (b.fromPrev || b.toNext) c.onStage('Olhando o que vem antes e depois do bloco…', null, [0.14, 0.17])
-  const edges = await edgesFor(c.data, b, c.dir, size)
+  // a fala (Whisper), o vídeo de baixo, as emendas, os assets do estilo e o Material bruto não dependem
+  // um do outro: saem juntos, em vez de um esperar o outro
+  const PREP: [number, number] = [0, 0.17]
+  c.onStage(hasAudio && !deaf ? 'Ouvindo o trecho e olhando o que está na timeline…' : 'Olhando o que está na timeline…', null, PREP)
+  const [heard, under, edges, list, rawList] = await Promise.all([
+    hasAudio && !deaf
+      ? heardIn(c.data, b, c.lang, { signal: c.signal, onWait: (l, p) => c.onStage(l, p, PREP) })
+      : Promise.resolve<{ words: HeardWord[]; prompts: HeardPrompt[]; error?: string }>({ words: [], prompts: [] }),
+    underFor(c.data, b, c.dir, size, true),
+    edgesFor(c.data, b, c.dir, size),
+    styleAssets(c.format),
+    b.useRaw ? rawFiles(c.data, c.format).then(withProfiles) : Promise.resolve<RawFile[]>([])
+  ])
+  if (c.signal?.aborted) throw new Error('Cancelado.')
   let adjust: { html: string; tweaks: { text: string; names: string[] }[] } | undefined
   const tf = tweakFiles(c.adjust?.tweaks)
   if (c.adjust) {
@@ -1112,15 +1124,12 @@ export async function generatePreview(c: PreviewCtx) {
     if (ae !== (b.preview.engine === 'ae')) throw new Error(ae ? 'A prévia atual foi feita em HTML. Use "Refazer do zero" pra fazer no After Effects.' : 'A prévia atual foi feita no After Effects. Use "Refazer do zero" pra fazer em HTML.')
     adjust = { html, tweaks: c.adjust.tweaks.map((t, i) => ({ text: t.text, names: tf[i].map((f) => f.name) })) }
   }
-  const list = await styleAssets(c.format)
   const shownAssets = list.filter((a) => a.kind === 'image' && /\.(png|jpe?g|webp|gif|bmp)$/i.test(a.path)).slice(0, MAX_STYLE_IMAGES)
   // as imagens dos assets vêm por último (depois dos anexos, do vídeo de baixo, das emendas e dos ajustes)
   const baseImages = [...files.map((f) => absPath(f.a)), ...(under?.frames.map((f) => f.path) ?? []), ...edges.map((e) => e.frame), ...tf.flat().map((f) => absPath(f.a))]
   const shownSet = new Set(shownAssets)
   const assets = { list: [...shownAssets, ...list.filter((a) => !shownSet.has(a))], first: baseImages.length + 1, shown: shownAssets.length }
   // o Material bruto (se o bloco pediu): as imagens dele vêm depois das dos assets
-  if (b.useRaw) c.onStage('Lendo o Material bruto e analisando os sons…', null, [0.17, 0.17])
-  const rawList = b.useRaw ? await withProfiles(await rawFiles(c.data, c.format)) : []
   const shownRaw = rawList.filter((f) => f.kind === 'image' && /\.(png|jpe?g|webp|gif|bmp)$/i.test(f.path)).slice(0, MAX_RAW_IMAGES)
   const shownRawSet = new Set(shownRaw)
   const raw = {
@@ -1152,7 +1161,7 @@ export async function generatePreview(c: PreviewCtx) {
   })
   const images = [...baseImages, ...shownAssets.map((a) => a.path), ...shownRaw.map((f) => f.path)]
   if (c.signal?.aborted) throw new Error('Cancelado.')
-  const r = await waitAi(c, adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', [0.17, 0.62], api.motionTrain({ prompt, images, id: b.id, model: b.model }))
+  const r = await waitAi(c, adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', [0.17, 0.62], api.motionTrain({ prompt, images, id: b.id, model: b.model, offline: true }))
   if ('error' in r) throw new Error(r.error)
   if (ae) return aePreview(c, { r, prompt, images, files, tf, under, edges, list, rawList, heard, hasAudio, size })
   let html = parseDemo(r.text)
@@ -1166,19 +1175,21 @@ export async function generatePreview(c: PreviewCtx) {
     ...assetFiles(list, h),
     ...assetFiles(rawList, h)
   ]
-  // safe zone: mede a animação e, se algo ficou fora do lugar, devolve pro Claude corrigir (uma vez)
+  // conferência: mede a safe zone e lê os erros da animação (script quebrado, arquivo que não carregou);
+  // se achou algo, devolve pro Claude corrigir (uma vez)
   const zones = safeZones(c.format?.aspect, size.w, size.h)
-  const check = async (h: string): Promise<LayoutIssue[]> => {
+  const check = async (h: string): Promise<{ issues: LayoutIssue[]; errors: string[] }> => {
     const got = await api.motionCheckLayout({ dir: c.dir, block: b.id, html: h, seconds: blockDur(b), width: size.w, height: size.h, files: playFiles(h), probe: layoutProbe(zones) })
     if ('error' in got) {
       if (got.error === 'Cancelado.') throw new Error(got.error)
-      return []
+      return { issues: [], errors: [] }
     }
-    return got.issues
+    return { issues: got.issues, errors: got.errors ?? [] }
   }
-  c.onStage('Conferindo a safe zone…', null, [0.62, 0.66])
-  let issues = await check(html)
-  if (issues.length && !c.signal?.aborted) {
+  c.onStage('Conferindo a animação (safe zone e erros)…', null, [0.62, 0.66])
+  let { issues, errors } = await check(html)
+  if ((issues.length || errors.length) && !c.signal?.aborted) {
+    const fixText = [errors.length ? errorsTweak(errors) : '', issues.length ? issuesTweak(issues, zones) : ''].filter(Boolean).join('\n\n')
     const fixPrompt = blockPrompt({
       block: b,
       format: c.format,
@@ -1194,23 +1205,20 @@ export async function generatePreview(c: PreviewCtx) {
       size,
       under,
       edges,
-      adjust: { html, tweaks: [...(adjust?.tweaks ?? []), { text: issuesTweak(issues, zones), names: [] }] },
+      adjust: { html, tweaks: [...(adjust?.tweaks ?? []), { text: fixText, names: [] }] },
       assets,
       raw: { ...raw, sounds }
     })
-    const f = await waitAi(
-      c,
-      `Claude corrigindo a safe zone (${issues.length} elemento${issues.length > 1 ? 's' : ''} fora do lugar)…`,
-      [0.66, 0.78],
-      api.motionTrain({ prompt: fixPrompt, images, id: b.id, model: b.model })
-    )
+    const what = [errors.length ? `${errors.length} erro${errors.length > 1 ? 's' : ''} na animação` : '', issues.length ? `${issues.length} elemento${issues.length > 1 ? 's' : ''} fora da safe zone` : ''].filter(Boolean).join(' e ')
+    // correção mecânica (reposicionar, consertar um erro apontado): não precisa do esforço de criar do zero
+    const f = await waitAi(c, `Claude corrigindo (${what})…`, [0.66, 0.78], api.motionTrain({ prompt: fixPrompt, images, id: b.id, model: b.model, offline: true, effort: 'medium' }))
     if (c.signal?.aborted) throw new Error('Cancelado.')
     const fixed = 'error' in f ? '' : parseDemo(f.text)
     if (fixed) {
       html = fixed
       sounds = ('error' in f ? null : parseSounds(f.text, rawList, blockDur(b))) ?? sounds
-      c.onStage('Conferindo a safe zone de novo…', null, [0.78, 0.8])
-      issues = await check(html)
+      c.onStage('Conferindo a animação de novo…', null, [0.78, 0.8])
+      ;({ issues, errors } = await check(html))
     }
   }
   if (c.signal?.aborted) throw new Error('Cancelado.')
@@ -1241,6 +1249,7 @@ export async function generatePreview(c: PreviewCtx) {
     key: blockKey(b),
     size,
     safeIssues: issues.length ? issuesTweak(issues, zones).split('\n').slice(1) : undefined,
+    errors: errors.length ? errors : undefined,
     sounds: sounds.length ? sounds : undefined
   }
 }
@@ -1304,7 +1313,7 @@ async function aePreview(c: PreviewCtx, x: AeCtx): Promise<BlockPreview> {
     if ('error' in v) throw new Error(v.error)
     if ('scriptError' in v) {
       if (attempt >= 1 || c.signal?.aborted) throw new Error('o script do After Effects deu erro de novo: ' + v.scriptError)
-      const fix = await waitAi(c, 'Claude corrigindo o script do After Effects…', [0.62, 0.64], api.motionTrain({ prompt: x.prompt + aeFixSection(body, v.scriptError), images: x.images, id: b.id, model: b.model }))
+      const fix = await waitAi(c, 'Claude corrigindo o script do After Effects…', [0.62, 0.64], api.motionTrain({ prompt: x.prompt + aeFixSection(body, v.scriptError), images: x.images, id: b.id, model: b.model, offline: true, effort: 'medium' }))
       if ('error' in fix) throw new Error(fix.error)
       const fixed = parseAe(fix.text)
       if (!fixed) throw new Error('o script do After Effects deu erro: ' + v.scriptError)

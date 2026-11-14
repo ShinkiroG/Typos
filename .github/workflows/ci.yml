@@ -18,6 +18,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # com o ffmpeg, os testes que compilam vídeo e tratam áudio de verdade rodam (sem ele são pulados)
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
