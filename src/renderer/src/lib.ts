@@ -3,6 +3,7 @@ import { blockPrompts } from './editor/promptMark'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Api } from '../../preload'
 import type { MontageEq } from '../../shared/eq'
+import type { GlobalFx } from '../../shared/fx'
 
 declare global {
   interface Window {
@@ -268,6 +269,8 @@ export interface MotionStyle {
   camera?: string[]
   transitions?: string[]
   pace?: 'calmo' | 'médio' | 'frenético'
+  /** efeitos globais (camera shake, grão): o Typos aplica por cima de todo motion em HTML */
+  fx?: GlobalFx
   /** memória de motion: exemplos aprovados que as prévias e o render seguem */
   memory?: MotionMemoryItem[]
   /** o que o Claude estudou nas pastas do estilo: como usar cada asset (markdown); vai junto pros blocos */

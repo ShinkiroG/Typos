@@ -818,3 +818,33 @@
   font-size: 11px;
   color: #f5a142;
 }
+
+/* ---------- efeitos globais (camera shake, grão) ---------- */
+.st-fx {
+  display: grid;
+  gap: 8px;
+  max-width: 520px;
+}
+.st-fx-row {
+  font-size: 11px;
+}
+.st-fx-row span {
+  min-width: 96px;
+}
+.st-fx-row.sub span {
+  padding-left: 14px;
+}
+.st-fx-row.off {
+  opacity: 0.45;
+}
+.st-stage-tag {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #000a;
+  color: var(--muted);
+  font-size: 10px;
+  pointer-events: none;
+}

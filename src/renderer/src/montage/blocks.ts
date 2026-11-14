@@ -28,6 +28,7 @@ import { jobPct, runningLabel, speechFiles, watchJobs } from './transcripts'
 import { applyFixes, editFor, inPrompt } from './transcriptEdits'
 import { planRender, type VLayer } from '../render/plan'
 import { issuesTweak, layoutProbe, safeZoneDirection, safeZones, type LayoutIssue } from './safezone'
+import { fxPrompt } from '../../../shared/fx'
 
 /**
  * Blocos de instrução: pedaços de tempo na faixa de vídeo com instruções de motion.
@@ -860,6 +861,7 @@ export function blockPrompt(o: {
   if (rules) L.push('## Regras do estilo (respeite)', rules, '')
   const guide = o.format?.motion?.learned?.guide
   if (guide) L.push('## Guia de estilo do formato', guide, '')
+  if (!ae) L.push(...fxPrompt(o.format?.motion?.fx))
   if (o.assets?.list.length) {
     const a = o.assets
     L.push(
@@ -1234,7 +1236,8 @@ export async function generatePreview(c: PreviewCtx) {
     height: size.h,
     fps: PREVIEW_FPS,
     wav,
-    files: playFiles(html)
+    files: playFiles(html),
+    fx: c.format?.motion?.fx
   })
   if ('error' in v) throw new Error(v.error)
   return {
@@ -1402,6 +1405,7 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
     fps: CLIP_FPS,
     zoom: size.w / small.w,
     final: true,
+    fx: c.format?.motion?.fx,
     wav,
     files: [
       ...files.filter((f) => f.a.use === 'insert').map((f) => ({ src: absPath(f.a), name: f.name })),
