@@ -165,7 +165,7 @@ h1{margin:0;padding:0 8vw;text-align:center;font-family:"${esc(font)}",sans-seri
 }
 
 /** a camada é opaca? cobre o quadro inteiro? (pelo tipo do arquivo e pela proporção dele contra a do vídeo) */
-function layerCover(m: MontageData['media'][number], o: { width: number; height: number; fit?: 'contain' | 'cover' }): Pick<VLayer, 'opaque' | 'covers'> {
+export function layerCover(m: MontageData['media'][number], o: { width: number; height: number; fit?: 'contain' | 'cover' }): Pick<VLayer, 'opaque' | 'covers'> {
   const opaque = m.kind === 'image' ? OPAQUE_IMAGE.test(m.path) : OPAQUE_VIDEO.test(m.path)
   if (!opaque) return {}
   const same = !!m.width && !!m.height && Math.abs(m.width / m.height - o.width / o.height) < 0.01
