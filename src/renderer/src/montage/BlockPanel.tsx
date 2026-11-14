@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine, FolderOpen, ListPlus, ListX, Zap, ExternalLink } from 'lucide-react'
+import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine, FolderOpen, ListPlus, ListX, Zap, ExternalLink, Eye } from 'lucide-react'
 import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type Format, type InstructionBlock, type MontageData } from '../lib'
 import { PromptMenu } from './PromptMenu'
 import { rememberPrompt } from './prompts'
@@ -193,6 +193,19 @@ export function BlockForm({ b, data, dir, patch, big, formats, videoFormat }: Fo
             <small>imagens, vídeos e sons do projeto, a pasta SFX e as pastas do estilo</small>
           </span>
         </label>
+        {b.engine !== 'ae' && (
+          <label
+            className={'blk-chain-opt' + (b.review ? ' on' : '')}
+            title="Depois de gravar a prévia, o Claude recebe quadros dela e confere como ficou na tela: texto em cima de texto, coisa cortada, contraste fraco, quadro vazio, algo que não bate com a fala. Se achar problema, conserta e a prévia é gravada de novo. É um pedido a mais pro Claude, então a prévia demora mais. Vale na próxima prévia."
+          >
+            <input type="checkbox" checked={!!b.review} onChange={(e) => patch({ review: e.target.checked })} />
+            <Eye size={12} />
+            <span>
+              Revisar pelos quadros
+              <small>o Claude vê a prévia pronta e conserta o que saiu errado (demora mais)</small>
+            </span>
+          </label>
+        )}
       </div>
       <div className="blk-label">
         <span className="blk-label-head">

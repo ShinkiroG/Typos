@@ -907,6 +907,8 @@ export interface BlockPreview {
   safeIssues?: string[]
   /** erros que a animação ainda deu ao tocar depois da correção automática (script quebrado, arquivo que não carregou) */
   errors?: string[]
+  /** revisão pelos quadros (opção do bloco): o Claude viu a prévia e não mudou nada ('ok') ou consertou ('fixed') */
+  reviewed?: 'ok' | 'fixed'
   /** tamanho (px) em que o HTML foi escrito; o clipe final amplia a partir dele */
   size?: { w: number; h: number }
   /** sons do Material bruto que o Claude pôs no motion (tempo a partir do começo do bloco); viram cortes de áudio ao aprovar */
@@ -965,6 +967,8 @@ export interface InstructionBlock {
   formatId?: string
   /** o Claude pode usar o Material bruto do projeto (imagens, vídeos e sons, mais os sons da pasta SFX) */
   useRaw?: boolean
+  /** revisão pelos quadros: depois de gravar a prévia, o Claude olha quadros dela e conserta o que saiu errado (demora mais) */
+  review?: boolean
   /** onde o motion é feito: HTML (padrão, prévia rápida) ou After Effects (projeto .aep editável) */
   engine?: 'html' | 'ae'
 }

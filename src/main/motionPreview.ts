@@ -356,6 +356,8 @@ export interface LayoutJob {
   probe: string
   /** de quanto em quanto tempo medir (s) */
   step?: number
+  /** zoom da página: o HTML é escrito maior que a janela (largura/altura são as da janela) e medido em px dele */
+  zoom?: number
 }
 
 export interface LayoutHit {
@@ -378,6 +380,7 @@ export async function checkLayout(job: LayoutJob, cancelled: () => boolean = () 
   await fs.writeFile(playPath, withClock(job.html), 'utf8')
   const W = Math.max(16, Math.round(job.width / 2) * 2)
   const H = Math.max(16, Math.round(job.height / 2) * 2)
+  const zoom = job.zoom && job.zoom > 0 ? job.zoom : 1
   const ses = session.fromPartition('typos-motion-preview')
   ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|blob|about|devtools):/i.test(d.url) }))
   const win = new BrowserWindow({
@@ -387,7 +390,7 @@ export async function checkLayout(job: LayoutJob, cancelled: () => boolean = () 
     useContentSize: true,
     frame: false,
     enableLargerThanScreen: true,
-    webPreferences: { offscreen: true, session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
+    webPreferences: { offscreen: true, session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, zoomFactor: zoom }
   })
   win.setContentSize(W, H)
   win.webContents.setFrameRate(CAPTURE_HZ)
@@ -395,6 +398,7 @@ export async function checkLayout(job: LayoutJob, cancelled: () => boolean = () 
   let errors: string[] = []
   try {
     await win.loadFile(playPath)
+    win.webContents.setZoomFactor(zoom)
     await win.webContents.executeJavaScript('(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => true)').catch(() => null)
     const step = job.step ?? 0.25
     const times: number[] = []

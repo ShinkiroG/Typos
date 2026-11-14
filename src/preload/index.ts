@@ -334,6 +334,7 @@ const api = {
     files: { src: string; name: string }[]
     probe: string
     step?: number
+    zoom?: number
   }): Promise<{ issues: { kind: 'fora' | 'faixa' | 'faixa-vaza'; what: string; t: number; rect: { x: number; y: number; w: number; h: number } }[]; errors?: string[] } | { error: string }> =>
     ipcRenderer.invoke('motion:checkLayout', job),
   /** o que está nas faixas de vídeo embaixo de um bloco, recortado num MP4 sem som (0 s = começo do bloco) */
@@ -352,7 +353,7 @@ const api = {
   },
   findSfxLibraries: (): Promise<{ libs: { path: string; name: string; program: string; why: string; files: number }[]; hints: number } | { error: string }> =>
     ipcRenderer.invoke('ai:findSfx'),
-  motionTrain: (job: { prompt: string; images: string[]; id?: string; model?: string; effort?: 'low' | 'medium' | 'high'; offline?: boolean }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
+  motionTrain: (job: { prompt: string; prefix?: string; images: string[]; id?: string; model?: string; effort?: 'low' | 'medium' | 'high'; offline?: boolean }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
     ipcRenderer.invoke('ai:motionTrain', job),
   /** o HTML que gerou um clipe de motion antigo (o mais novo da pasta da prévia dele); null se não achar */
   motionFindHtml: (video: string): Promise<string | null> => ipcRenderer.invoke('motion:findHtml', video),
