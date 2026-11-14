@@ -137,7 +137,7 @@ const api = {
   aiStatus: (): Promise<{
     providers: { id: AiProvider; label: string; caps: ('text' | 'image')[]; configured: boolean; detail: string }[]
     routes: { text: AiProvider | null; image: AiProvider | null }
-    models: { anthropicModel: string; openaiTextModel: string; openaiImageModel: string; claudeCodePath: string; codexPath: string; codexModel: string }
+    models: { anthropicModel: string; openaiTextModel: string; openaiImageModel: string; claudeCodePath: string; codexPath: string; codexModel: string; motionModel: string }
   }> => ipcRenderer.invoke('ai:status'),
   aiSet: (patch: Record<string, string | null>) => ipcRenderer.invoke('ai:set', patch),
   aiTest: (id: AiProvider): Promise<{ ok: boolean; message: string }> => ipcRenderer.invoke('ai:test', id),
@@ -349,7 +349,7 @@ const api = {
   },
   findSfxLibraries: (): Promise<{ libs: { path: string; name: string; program: string; why: string; files: number }[]; hints: number } | { error: string }> =>
     ipcRenderer.invoke('ai:findSfx'),
-  motionTrain: (job: { prompt: string; images: string[]; id?: string }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
+  motionTrain: (job: { prompt: string; images: string[]; id?: string; model?: string }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>
     ipcRenderer.invoke('ai:motionTrain', job),
   /** o HTML que gerou um clipe de motion antigo (o mais novo da pasta da prévia dele); null se não achar */
   motionFindHtml: (video: string): Promise<string | null> => ipcRenderer.invoke('motion:findHtml', video),

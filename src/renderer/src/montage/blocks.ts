@@ -1150,7 +1150,7 @@ export async function generatePreview(c: PreviewCtx) {
   })
   const images = [...baseImages, ...shownAssets.map((a) => a.path), ...shownRaw.map((f) => f.path)]
   if (c.signal?.aborted) throw new Error('Cancelado.')
-  const r = await waitAi(c, adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', [0.17, 0.62], api.motionTrain({ prompt, images, id: b.id }))
+  const r = await waitAi(c, adjust ? 'Claude ajustando o motion…' : 'Claude criando o motion…', [0.17, 0.62], api.motionTrain({ prompt, images, id: b.id, model: b.model }))
   if ('error' in r) throw new Error(r.error)
   if (ae) return aePreview(c, { r, prompt, images, files, tf, under, edges, list, rawList, heard, hasAudio, size })
   let html = parseDemo(r.text)
@@ -1200,7 +1200,7 @@ export async function generatePreview(c: PreviewCtx) {
       c,
       `Claude corrigindo a safe zone (${issues.length} elemento${issues.length > 1 ? 's' : ''} fora do lugar)…`,
       [0.66, 0.78],
-      api.motionTrain({ prompt: fixPrompt, images, id: b.id })
+      api.motionTrain({ prompt: fixPrompt, images, id: b.id, model: b.model })
     )
     if (c.signal?.aborted) throw new Error('Cancelado.')
     const fixed = 'error' in f ? '' : parseDemo(f.text)
@@ -1301,7 +1301,7 @@ async function aePreview(c: PreviewCtx, x: AeCtx): Promise<BlockPreview> {
     if ('error' in v) throw new Error(v.error)
     if ('scriptError' in v) {
       if (attempt >= 1 || c.signal?.aborted) throw new Error('o script do After Effects deu erro de novo: ' + v.scriptError)
-      const fix = await waitAi(c, 'Claude corrigindo o script do After Effects…', [0.62, 0.64], api.motionTrain({ prompt: x.prompt + aeFixSection(body, v.scriptError), images: x.images, id: b.id }))
+      const fix = await waitAi(c, 'Claude corrigindo o script do After Effects…', [0.62, 0.64], api.motionTrain({ prompt: x.prompt + aeFixSection(body, v.scriptError), images: x.images, id: b.id, model: b.model }))
       if ('error' in fix) throw new Error(fix.error)
       const fixed = parseAe(fix.text)
       if (!fixed) throw new Error('o script do After Effects deu erro: ' + v.scriptError)

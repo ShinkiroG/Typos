@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { loadSettings, saveSettings, type AiSettings } from './settings'
 import { chargeAnthropic, chargeOpenAI, initAiMeter, metered } from './aiMeter'
+import { claudeModelLabel, motionModelFor } from '../shared/claudeModels'
 
 /**
  * IA do Typos, sem depender de um fornecedor só. O app pede uma TAREFA ("texto" ou
@@ -332,7 +333,8 @@ async function status() {
       openaiImageModel: s.openaiImageModel || DEFAULT_MODELS.openaiImage,
       claudeCodePath: s.claudeCodePath ?? '',
       codexPath: s.codexPath ?? '',
-      codexModel: s.codexModel ?? ''
+      codexModel: s.codexModel ?? '',
+      motionModel: s.motionModel ?? ''
     }
   }
 }
@@ -392,7 +394,7 @@ export function initAi() {
     const next: AiSettings = { ...cur }
     for (const k of ['anthropicKey', 'openaiKey'] as const)
       if (typeof patch[k] === 'string') next[k] = patch[k]!.trim() || undefined
-    for (const k of ['anthropicModel', 'openaiTextModel', 'openaiImageModel', 'claudeCodePath', 'codexPath', 'codexModel'] as const)
+    for (const k of ['anthropicModel', 'openaiTextModel', 'openaiImageModel', 'claudeCodePath', 'codexPath', 'codexModel', 'motionModel'] as const)
       if (typeof patch[k] === 'string') next[k] = patch[k]!.trim() || undefined
     if (patch.routeText !== undefined) next.routeText = patch.routeText || undefined
     if (patch.routeImage !== undefined) next.routeImage = patch.routeImage || undefined
@@ -438,6 +440,8 @@ export interface MotionTrainJob {
   images: string[]
   /** quem pediu (ex.: o id do bloco): é o que o Cancelar para */
   id?: string
+  /** modelo do Claude escolhido no bloco; vazio = o das Configurações (motionModel) */
+  model?: string
 }
 
 /** pedidos de motion em andamento (o Cancelar da prévia corta o do bloco) */
@@ -460,7 +464,9 @@ async function motionClaudeCode(s: AiSettings, job: MotionTrainJob, signal?: Abo
   const prompt = `${job.prompt}\n\nAs imagens de referência estão nesta pasta: ${names.join(', ')}. Abra e olhe TODAS antes de responder.`
   try {
     // 30 min: com emenda (HTML do vizinho + quadros) o Claude Code passava dos 15 e era cortado
-    const r = await run(cc.path, ['-p', '--output-format', 'json', '--allowedTools', 'Read,WebSearch,WebFetch'], { cwd: work, input: prompt, timeoutMs: 30 * 60000, signal })
+    const model = motionModelFor(job.model, s.motionModel)
+    const args = ['-p', '--output-format', 'json', '--allowedTools', 'Read,WebSearch,WebFetch', ...(model ? ['--model', model] : [])]
+    const r = await run(cc.path, args, { cwd: work, input: prompt, timeoutMs: 30 * 60000, signal })
     let parsed: any = null
     try {
       parsed = JSON.parse(r.out)
@@ -471,6 +477,8 @@ async function motionClaudeCode(s: AiSettings, job: MotionTrainJob, signal?: Abo
     if (signal?.aborted) throw new Error('Cancelado.')
     if (r.err.includes('(tempo esgotado)')) throw new Error('Claude Code: tempo esgotado (30 min sem resposta). Tente de novo; se repetir, encurte o bloco ou as instruções.')
     const why = (parsed?.result || r.err || r.out || '').toString().trim()
+    if (model && /model/i.test(why) && /not.?found|invalid|not.?available|access|unknown|issue with the selected/i.test(why))
+      throw new Error(`O Claude Code não aceitou o modelo ${claudeModelLabel(model)} (${model}). Veja se o seu plano inclui esse modelo, ou escolha outro no bloco ou em Configurações → IA.`)
     throw new Error(`Claude Code: ${why.slice(0, 300) || 'falhou sem mensagem'}`)
   } finally {
     await fs.rm(work, { recursive: true, force: true }).catch(() => null)
@@ -514,7 +522,7 @@ async function motionAnthropic(s: AiSettings, job: MotionTrainJob, signal?: Abor
   const res = await client.beta.messages
     .stream(
       {
-        model: s.anthropicModel || DEFAULT_MODELS.anthropic,
+        model: motionModelFor(job.model, s.motionModel) || s.anthropicModel || DEFAULT_MODELS.anthropic,
         max_tokens: 32000,
         output_config: { effort: 'high' },
         betas: ['server-side-fallback-2026-07-01'],
