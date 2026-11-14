@@ -6,6 +6,7 @@ import { spawn } from 'child_process'
 import { findFfmpeg, run } from './media'
 import { partArgs, x264Args, nvencArgs, RGB_TO_YUV, type VLayer } from './compose'
 import { loadSettings, saveSettings } from './settings'
+import { withFx, type GlobalFx } from '../shared/fx'
 
 /**
  * Prévia de um bloco de instrução: o HTML de motion que a IA escreveu é tocado numa janela
@@ -33,6 +34,8 @@ export interface PreviewJob {
   zoom?: number
   /** HTML já salvo (o da prévia aprovada): lê dele em vez de `html` */
   htmlPath?: string
+  /** efeitos globais do estilo (camera shake, grão): entram só na gravação, o HTML salvo fica limpo */
+  fx?: GlobalFx
 }
 
 /**
@@ -69,7 +72,8 @@ function seekVideos(ms){return Promise.all([].slice.call(document.querySelectorA
   }catch(e){done()}})}))}
 })();</script>`
 
-function withClock(html: string) {
+function withClock(html: string, fx?: GlobalFx): string {
+  if (fx) return withFx(withClock(html), fx, { after: CLOCK })
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + CLOCK)
   if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + '<head>' + CLOCK + '</head>')
   return '<!doctype html><html><head>' + CLOCK + '</head><body>' + html + '</body></html>'
@@ -129,6 +133,8 @@ export interface HtmlVideoJob {
   quality: 'preview' | 'final'
   /** encoder do vídeo de entrega (args do ffmpeg); vazio = x264 'grain' */
   encoder?: string[]
+  /** efeitos globais do estilo por cima do HTML */
+  fx?: GlobalFx
   onPct?: (pct: number) => void
   cancelled?: () => boolean
 }
@@ -140,7 +146,7 @@ export async function htmlToVideo(job: HtmlVideoJob) {
   const out = job.out
   for (const f of job.files) await fs.copyFile(f.src, join(out, safeName(f.name))).catch(() => null)
   const playPath = join(out, `_tocar-${Math.random().toString(36).slice(2, 8)}.html`)
-  await fs.writeFile(playPath, withClock(job.html), 'utf8')
+  await fs.writeFile(playPath, withClock(job.html, job.fx), 'utf8')
 
   const W = Math.max(16, Math.round(job.width / 2) * 2)
   const H = Math.max(16, Math.round(job.height / 2) * 2)
@@ -309,6 +315,7 @@ export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed
     video: join(out, `${job.final ? 'clipe' : 'previa'}-${stamp}.mp4`),
     quality: job.final ? 'final' : 'preview',
     encoder,
+    fx: job.fx,
     onPct: (p) => send(p >= 1 ? 'vídeo' : 'quadros', p),
     cancelled
       })

@@ -31,6 +31,7 @@ import { FontPicker } from './FontPicker'
 import { SfxFinder, type SfxLib } from '../components/SfxFinder'
 import { YoutubeDownload } from '../components/YoutubeDownload'
 import { askText } from '../components/AskDialog'
+import { FX_DEFAULTS, fxActive, fxPrompt, normFx, withFx, type GlobalFx } from '../../../shared/fx'
 
 const CAMERA = [
   'estática',
@@ -48,6 +49,26 @@ const CAMERA = [
 const TRANSITIONS = ['corte seco', 'whip / swipe', 'zoom through', 'glitch', 'fade', 'slide', 'máscara / wipe', 'flash branco', 'match cut', 'luma fade']
 const BACKGROUNDS = ['sólido escuro', 'gradiente suave', 'textura / grão', 'gameplay desfocado', 'papel / colagem', 'grid / tech', 'ilustração plana', 'foto com overlay']
 const PACES: MotionStyle['pace'][] = ['calmo', 'médio', 'frenético']
+/** sliders dos efeitos globais (o Typos aplica por cima de todo motion em HTML) */
+const FX_SLIDERS: { key: keyof GlobalFx; label: string; hint: string; sub?: boolean }[] = [
+  { key: 'shake', label: 'Camera shake', hint: 'Quanto a câmera treme em todo o vídeo (0 = desligado)' },
+  { key: 'shakeSpeed', label: 'velocidade', hint: 'Devagar = balanço de câmera na mão; rápido = tremor', sub: true },
+  { key: 'shakeRotate', label: 'rotação', hint: 'Quanto do shake vira giro (até ~2°)', sub: true },
+  { key: 'grain', label: 'Grão', hint: 'Grão de filme por cima de tudo (0 = desligado)' }
+]
+
+/** amostra pra ver os efeitos antes de ter uma demo treinada */
+function fxSample(w: number, h: number, bg: string, accent: string, text: string) {
+  const esc = (x: string) => x.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!)
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;width:${w}px;height:${h}px;overflow:hidden;background:${bg};font-family:system-ui,sans-serif}
+.grid{position:absolute;inset:0;background-image:linear-gradient(#ffffff14 1px,transparent 1px),linear-gradient(90deg,#ffffff14 1px,transparent 1px);background-size:${Math.round(w / 16)}px ${Math.round(w / 16)}px}
+.t{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:${Math.round(h / 40)}px;color:#fff;text-align:center;padding:0 8%}
+h1{margin:0;font-size:${Math.round(Math.min(w, h) / 9)}px;line-height:1.05}
+.bar{width:${Math.round(w / 6)}px;height:${Math.max(4, Math.round(h / 90))}px;background:${accent};border-radius:4px}
+</style></head><body><div class="grid"></div><div class="t"><div class="bar"></div><h1>${esc(text)}</h1></div></body></html>`
+}
+
 const PREFERRED_LANGS = ['pt-BR', 'pt-PT', 'en-US', 'en-GB', 'es-ES']
 const STUDY_BUSY = 'Estudando os assets do estilo…'
 
@@ -120,6 +141,8 @@ function buildPrompt(f: Format, m: MotionStyle, imageList: string[], sample: str
     lines.push('## Imagens (na ordem em que foram enviadas)')
     imageList.forEach((d, i) => lines.push(`${i + 1}. ${d}`))
   }
+  const fxLines = fxPrompt(m.fx)
+  if (fxLines.length) lines.push('', ...fxLines.slice(0, -1))
   lines.push('')
   lines.push('## Responda EXATAMENTE neste formato (nada fora das tags)')
   lines.push('<guia>')
@@ -442,11 +465,29 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
     if (demoHtml)
       api.motionDemoFile(demoHtml).then((p) => {
         setDemoPath(p)
-        setDemoSrc(fileUrl(p))
       })
   }, [demoHtml])
 
   const [pw, ph] = f.aspect === '9:16' ? [540, 960] : f.aspect === '1:1' ? [720, 720] : f.aspect === '4:5' ? [576, 720] : [960, 540]
+
+  // efeitos globais: a prévia toca a demo (ou uma amostra) com o script dos efeitos escutando os sliders
+  const fx = normFx(m.fx)
+  const fxOn = fxActive(fx)
+  const stageHtml = demoHtml || (fxOn ? fxSample(pw, ph, m.colors?.[0] ?? '#0b0d12', m.colors?.[1] ?? '#7c8cff', 'Prévia dos efeitos') : '')
+  const frameRef = useRef<HTMLIFrameElement>(null)
+  const fxRef = useRef(fx)
+  fxRef.current = fx
+  const sendFx = () => frameRef.current?.contentWindow?.postMessage({ typosFx: fxRef.current }, '*')
+  useEffect(() => {
+    if (!stageHtml) return setDemoSrc(null)
+    let live = true
+    api.motionDemoFile(withFx(stageHtml, null, { live: true })).then((p) => live && setDemoSrc(fileUrl(p)))
+    return () => {
+      live = false
+    }
+  }, [stageHtml])
+  useEffect(sendFx, [fx.shake, fx.shakeSpeed, fx.shakeRotate, fx.grain])
+  const setFx = (p: GlobalFx) => patchM((mm) => ({ fx: { ...normFx(mm.fx), ...p } }))
   const stageRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(0.5)
   useEffect(() => {
@@ -902,6 +943,36 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
           </div>
         </section>
 
+        <section className="st-sec">
+          <h4>
+            <Sparkles size={13} /> Efeitos globais
+          </h4>
+          <div className="st-note">
+            O Typos aplica estes efeitos por cima de todo motion em HTML (prévia e clipe final), na mesma intensidade no vídeo inteiro. Mexa e veja na prévia ao lado; o Claude é avisado pra não fazer o mesmo efeito no HTML. Clipes já gravados pegam o valor novo quando forem gravados de novo.
+          </div>
+          <div className="st-fx">
+            {FX_SLIDERS.map((x) => {
+              const v = fx[x.key]
+              const off = x.sub && !fx.shake
+              return (
+                <label key={x.key} className={'st-focus st-fx-row' + (x.sub ? ' sub' : '') + (off ? ' off' : '')} title={`${x.hint} (duplo clique volta pro padrão)`}>
+                  <span className={v > 0 && !x.sub ? 'on' : ''}>{x.label}</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={v}
+                    disabled={off}
+                    onChange={(e) => setFx({ [x.key]: Number(e.target.value) })}
+                    onDoubleClick={() => setFx({ [x.key]: FX_DEFAULTS[x.key] })}
+                  />
+                  <b>{x.key === 'shake' || x.key === 'grain' ? (v ? v : 'off') : v}</b>
+                </label>
+              )
+            })}
+          </div>
+        </section>
       </main>
 
       {/* ---------- treinar + prévia ---------- */}
@@ -955,14 +1026,19 @@ export function StyleStudio({ active, formats, activeId, onChange, onSelect }: P
           )}
         </div>
         <div className="st-stage" ref={stageRef}>
-          {demoHtml && demoSrc ? (
-            <iframe
-              key={replay + (f.motion?.learned?.at ?? '')}
-              title="demo do estilo"
-              sandbox="allow-scripts"
-              src={demoSrc}
-              style={{ width: pw, height: ph, transform: `scale(${scale})` }}
-            />
+          {stageHtml && demoSrc ? (
+            <>
+              <iframe
+                ref={frameRef}
+                key={replay + (f.motion?.learned?.at ?? '') + demoSrc}
+                title="demo do estilo"
+                sandbox="allow-scripts"
+                src={demoSrc}
+                onLoad={sendFx}
+                style={{ width: pw, height: ph, transform: `scale(${scale})` }}
+              />
+              {!demoHtml && <div className="st-stage-tag">amostra dos efeitos · treine o estilo pra ver a demo</div>}
+            </>
           ) : (
             <div className="st-stage-empty">Depois do treino, o Claude mostra aqui uma demo animada no estilo pra você conferir.</div>
           )}

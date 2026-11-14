@@ -53,6 +53,12 @@ O botão **Claude** salva e copia um pedido pronto. É só colar no Claude, que 
 
 **Modelo do motion**: em Configurações → IA, "Motion dos blocos de instrução" escolhe qual Claude faz o motion (Fable 5.2, Fable 5.1, Opus 5.5, Opus 5 ou Sonnet 5.5). Cada bloco pode trocar no seletor **Modelo**, ao lado de "Ao gerar"; "Padrão" usa o das Configurações. Vale pro Claude Code (o seu plano precisa incluir o modelo) e pra chave da Anthropic.
 
+### Efeitos globais (Estilo)
+No workspace **Estilo**, a seção **Efeitos globais** tem sliders de **Camera shake** (com velocidade e rotação) e **Grão**. O Typos aplica esses efeitos por cima de todo motion em HTML, na prévia e no clipe final, com a mesma intensidade no vídeo inteiro, e a prévia do estilo mostra o efeito mudando enquanto você arrasta. O Claude é avisado pra não fazer o mesmo efeito no HTML. Clipes já gravados pegam o valor novo quando forem gravados de novo.
+
+### Editar o motion à mão
+Cada motion de bloco é um HTML em `previas/<bloco>/motion-*.html`, dentro da pasta do projeto. No painel do bloco, **HTML do motion** abre o arquivo no navegador ou mostra ele na pasta pra abrir num editor. O clipe final é gravado a partir desse arquivo quando você aprova.
+
 ## Arquivos de um roteiro
 ```
 Minha pasta/
