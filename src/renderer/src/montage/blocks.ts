@@ -1556,7 +1556,9 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
   const sounds = b.preview.sounds ?? []
   const mix = await withSounds(c.engine, c.data, c.dur, b, sounds)
   const wav = hasAudio || sounds.length ? await rangeWav(c.engine, mix.data, mix.dur, b.start, b.end).catch(() => undefined) : undefined
-  c.onStage(`Gravando o clipe em ${size.w}×${size.h}…`, 0, [0.15, 1], Math.max(1, Math.round(blockDur(b) * CLIP_FPS)))
+  // quadros por segundo do clipe: o escolhido ao lado do encoder (30 ou 60)
+  const fps = await api.motionEncoder().then((e) => e.fps, () => CLIP_FPS)
+  c.onStage(`Gravando o clipe em ${size.w}×${size.h}…`, 0, [0.15, 1], Math.max(1, Math.round(blockDur(b) * fps)))
   const v = await api.motionPreview({
     dir: c.dir,
     block: b.id,
@@ -1565,7 +1567,7 @@ export async function generateClip(c: Omit<PreviewCtx, 'script' | 'lang'>) {
     seconds: blockDur(b),
     width: size.w,
     height: size.h,
-    fps: CLIP_FPS,
+    fps,
     zoom: size.w / small.w,
     final: true,
     fx: c.format?.motion?.fx,

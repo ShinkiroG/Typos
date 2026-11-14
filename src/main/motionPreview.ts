@@ -124,8 +124,17 @@ export function hasNvenc(): Promise<boolean> {
 async function finalEncoder(): Promise<string[]> {
   const s = await loadSettings()
   if (s.motionEncoder === 'gpu' && (await hasNvenc())) return nvencArgs()
-  return x264Args('grain')
+  return x264Args('clip')
 }
+
+/** subquadros por quadro do motion blur (1 = sem blur) */
+export const blurSubs = (blur?: number) => (blur && blur > 1 ? Math.min(16, Math.round(blur)) : 1)
+
+/** instante (ms) do subquadro k do quadro i: os N subquadros ficam na primeira metade do intervalo do quadro (180°) */
+export const subFrameMs = (i: number, k: number, subs: number, fps: number) => ((i + (subs > 1 ? (k / subs) * 0.5 : 0)) * 1000) / fps
+
+/** filtro do ffmpeg que mistura cada grupo de N subquadros num quadro (vazio sem blur) */
+export const blurFilter = (subs: number, fps: number) => (subs > 1 ? `tmix=frames=${subs},select='not(mod(n+1,${subs}))',setpts=N/(${fps}*TB),` : '')
 
 export interface HtmlVideoJob {
   /** pasta de trabalho (quadros, HTML tocável e anexos ficam aqui) */
@@ -148,6 +157,11 @@ export interface HtmlVideoJob {
   encoder?: string[]
   /** efeitos globais do estilo por cima do HTML */
   fx?: GlobalFx
+  /**
+   * Motion blur: cada quadro do vídeo é a média de N subquadros tirados na primeira metade do intervalo
+   * dele (obturador de 180°, o do cinema). Custa N vezes o tempo de captura; 0 ou 1 = desligado.
+   */
+  blur?: number
   onPct?: (pct: number) => void
   cancelled?: () => boolean
 }
@@ -163,6 +177,7 @@ export async function htmlToVideo(job: HtmlVideoJob) {
 
   const W = Math.max(16, Math.round(job.width / 2) * 2)
   const H = Math.max(16, Math.round(job.height / 2) * 2)
+  const sub = blurSubs(job.blur)
   let zoom = job.zoom && job.zoom > 0 ? job.zoom : 1
   // sessão própria, sem internet: a animação tem que ser autocontida (e não vaza nada)
   const ses = session.fromPartition('typos-motion-preview')
@@ -220,9 +235,9 @@ export async function htmlToVideo(job: HtmlVideoJob) {
   const startEncoder = async (size: { width: number; height: number }) => {
     const iw = size.width
     const ih = size.height
-    const args = ['-hide_banner', '-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'bgra', '-s', `${iw}x${ih}`, '-framerate', String(job.fps), '-i', 'pipe:0']
+    const args = ['-hide_banner', '-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'bgra', '-s', `${iw}x${ih}`, '-framerate', String(job.fps * sub), '-i', 'pipe:0']
     if (wav) args.push('-i', wav)
-    args.push('-vf', `scale=${W}:${H}:${RGB_TO_YUV},format=yuv420p`)
+    args.push('-vf', `${blurFilter(sub, job.fps)}scale=${W}:${H}:${RGB_TO_YUV},format=yuv420p`)
     // prévia: leve e rápida; clipe e lettering: qualidade de entrega (o grão do fundo tem que sobreviver)
     if (job.quality === 'preview') args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p')
     else args.push(...(job.encoder ?? x264Args('grain')))
@@ -270,19 +285,21 @@ export async function htmlToVideo(job: HtmlVideoJob) {
     for (let k = 0; k < 10 && !lastImg; k++) await nextPaint(300)
     const n = Math.max(1, Math.round(job.seconds * job.fps))
     for (let i = 0; i < n; i++) {
-      if (job.cancelled?.()) throw new Error('Cancelado.')
-      await win.webContents.executeJavaScript(`window.__typosStep && window.__typosStep(${((i * 1000) / job.fps).toFixed(3)})`).catch(() => null)
-      const img = await nextPaint(400)
-      if (!img) throw new Error('A animação não desenhou nada (o HTML veio vazio ou quebrado).')
-      // o ffmpeg comprime enquanto a página desenha o próximo quadro (o quadro vai cru, sem virar PNG no disco)
-      enc ??= await startEncoder(img.getSize())
-      await enc.write(img)
+      for (let k = 0; k < sub; k++) {
+        if (job.cancelled?.()) throw new Error('Cancelado.')
+        await win.webContents.executeJavaScript(`window.__typosStep && window.__typosStep(${subFrameMs(i, k, sub, job.fps).toFixed(3)})`).catch(() => null)
+        const img = await nextPaint(400)
+        if (!img) throw new Error('A animação não desenhou nada (o HTML veio vazio ou quebrado).')
+        // o ffmpeg comprime enquanto a página desenha o próximo quadro (o quadro vai cru, sem virar PNG no disco)
+        enc ??= await startEncoder(img.getSize())
+        await enc.write(img)
+      }
       if (i % 3 === 0) job.onPct?.((i + 1) / n)
     }
     job.onPct?.(1)
     const shot = Date.now() - t0
     const r = await enc!.finish()
-    logTime('gravação', t0, `${n} quadros ${W}x${H} a ${job.fps} fps (${job.quality}); captura ${(n / Math.max(0.001, shot / 1000)).toFixed(1)} q/s`)
+    logTime('gravação', t0, `${n} quadros ${W}x${H} a ${job.fps} fps (${job.quality}${sub > 1 ? `, blur de ${sub} subquadros` : ''}); captura ${(n / Math.max(0.001, shot / 1000)).toFixed(1)} q/s`)
     if (r.code !== 0) throw new Error('O ffmpeg falhou ao montar o vídeo: ' + r.err.split('\n').slice(-3).join(' ').slice(0, 300))
   } catch (e) {
     enc?.abort()
@@ -332,6 +349,7 @@ export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed
     quality: job.final ? 'final' : 'preview',
     encoder,
     fx: job.fx,
+    blur: job.final ? (await loadSettings()).motionBlur : 0,
     onPct: (p) => send(p >= 1 ? 'vídeo' : 'quadros', p),
     cancelled
       })
@@ -520,9 +538,12 @@ export function initMotionPreview() {
     for (const [k, j] of jobs) if (!block || k === block) j.cancel = true
   })
   /** encoder do clipe de motion: lê/troca e diz se a GPU (NVENC) está disponível neste PC */
-  ipcMain.handle('motion:encoder', async (_e, mode?: 'cpu' | 'gpu') => {
-    if (mode === 'cpu' || mode === 'gpu') await saveSettings({ motionEncoder: mode })
+  ipcMain.handle('motion:encoder', async (_e, set?: 'cpu' | 'gpu' | { mode?: 'cpu' | 'gpu'; fps?: number; blur?: number }) => {
+    const o = typeof set === 'string' ? { mode: set } : (set ?? {})
+    if (o.mode === 'cpu' || o.mode === 'gpu') await saveSettings({ motionEncoder: o.mode })
+    if (o.fps === 30 || o.fps === 60) await saveSettings({ motionFps: o.fps })
+    if (o.blur === 0 || o.blur === 4 || o.blur === 8) await saveSettings({ motionBlur: o.blur })
     const s = await loadSettings()
-    return { mode: s.motionEncoder ?? 'cpu', gpu: await hasNvenc() }
+    return { mode: s.motionEncoder ?? 'cpu', gpu: await hasNvenc(), fps: s.motionFps ?? 30, blur: s.motionBlur ?? 0 }
   })
 }
