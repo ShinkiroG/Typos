@@ -4,9 +4,8 @@ import { undoDepth } from '@tiptap/pm/history'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
-import type { Node as PMNode } from '@tiptap/pm/model'
 import type { JSONContent } from '@tiptap/core'
-import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Settings, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput, Palette, Clapperboard, Scissors, Copy, ClipboardPaste, MonitorPlay } from 'lucide-react'
+import { Home, FolderOpen, PanelRightOpen, PanelRightClose, AlertTriangle, Clock, Check, Loader2, AudioLines, Save, PanelLeftOpen, PanelLeftClose, PenLine, Film, FolderInput, Palette, Clapperboard, Scissors, Copy, ClipboardPaste, MonitorPlay } from 'lucide-react'
 import { Prompt, Transition, SoundUp, Sonora, Chapter, ScriptKeys, SpeechTiming, convertBracketLines } from '../editor/nodes'
 import { Timestamps, setTimestamps } from '../editor/timestamps'
 import { TimeGutter } from './TimeGutter'
@@ -42,6 +41,7 @@ import {
   blockLabel,
   buildTiming,
   computeStats,
+  dbToGain,
   formatLang,
   speechLangOf,
   speechLangLabel,
@@ -74,7 +74,8 @@ import {
   shortRenderId,
   type RenderItemId,
   type RenderSettings,
-  styleFoldersOf
+  styleFoldersOf,
+  binRoles
 } from '../lib'
 import { shortKey } from '../shorts/shorts'
 import { LibraryPanel, SNIPPET_MIME } from './LibraryPanel'
@@ -240,7 +241,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
               offset: c.in,
               duration: c.out - c.in,
               sourceDuration: media.get(c.media)?.duration ?? c.out,
-              gain: Math.pow(10, (c.gainDb ?? 0) / 20),
+              gain: dbToGain(c.gainDb),
               keys
             }
           })
@@ -285,9 +286,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
     notice || repaired.current ? notice || 'O corte automático foi pra faixa "Corte automático", logo abaixo da narração original (que ficou silenciada pra comparar: clique no alto-falante da faixa).' : ''
   )
   const [aiUsage, setAiUsage] = useState<Parameters<Parameters<typeof api.onAiUsage>[0]>[0] | null>(null)
-  useEffect(() => {
-    api.onAiUsage(setAiUsage)
-  }, [])
+  useEffect(() => api.onAiUsage(setAiUsage), [])
   useEffect(() => {
     api.aiSetProject(draft ? null : dir)
   }, [dir, draft])
@@ -513,13 +512,6 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
   editorRef.current = editor
 
   const doc = useEditorState({ editor, selector: ({ editor }) => editor?.state.doc })
-  const currentBlock = useEditorState({
-    editor,
-    selector: ({ editor }) => {
-      const $from = editor?.state.selection.$from
-      return $from && $from.depth >= 1 ? $from.node(1).type.name : 'paragraph'
-    }
-  })
   const stats = useMemo(() => (doc ? computeStats(doc, wpm) : null), [doc, wpm])
   const refCount = useMemo(() => (doc && editor ? new Set(allReferences(editor).map((r) => r.text.trim())).size : 0), [doc, editor])
   const timing = useMemo(() => (doc ? buildTiming(doc, wpm) : null), [doc, wpm])
@@ -725,12 +717,7 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
   const syncFromMontage = async (m: MontageData) => {
     const ed = editorRef.current
     if (!ed) return 0
-    const binById = new Map(m.bins.map((b) => [b.id, b]))
-    const roleOf = (id: string) => {
-      let cur = binById.get(id)
-      for (let i = 0; cur?.parent && i < 20; i++) cur = binById.get(cur.parent)
-      return cur?.role
-    }
+    const roleOf = binRoles(m.bins)
     const media = new Map(m.media.map((x) => [x.id, x]))
     const muted = new Set(m.tracks.filter((t) => t.muted).map((t) => t.id))
     const audio = new Set(m.tracks.filter((t) => t.kind === 'audio').map((t) => t.id))
@@ -823,8 +810,8 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
           onClick: async () => {
             if (draft) return setToast('Salve o roteiro numa pasta antes de exportar.')
             await save()
-            api.onExportProgress((pct) => setToast(`Exportando projeto… ${pct}%`))
-            const r = await api.exportProject(dir, title)
+            const off = api.onExportProgress((pct) => setToast(`Exportando projeto… ${pct}%`))
+            const r = await api.exportProject(dir, title).finally(off)
             if (!r) return
             if ('error' in r) return setToast(r.error)
             const gb = r.bytes / 1024 ** 3
@@ -1054,8 +1041,6 @@ export function Workspace({ dir, data, draft, onSavedAs, notice, formats, onForm
   useEffect(() => {
     setSpellLanguage(editorRef.current, lang)
   }, [lang, editor])
-
-  const setBlock = (type: string) => editor?.chain().focus().setNode(type).run()
 
   const onContextMenu = (e: React.MouseEvent) => {
     if (!editor) return

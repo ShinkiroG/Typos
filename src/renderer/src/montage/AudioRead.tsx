@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, ChevronDown, ChevronUp, CircleDashed, Ear, FileText, Layers, Loader2, X } from 'lucide-react'
-import { api, type InstructionBlock, type MontageData } from '../lib'
+import { api, baseName, type InstructionBlock, type MontageData } from '../lib'
 import { audioIn, blockSpeech } from './blocks'
 import { jobLabel, readAudio, readState, speechFiles, useReadCache, useWhisperJobs, type ReadState, type WhisperJob } from './transcripts'
 
@@ -9,7 +9,6 @@ import { jobLabel, readAudio, readState, speechFiles, useReadCache, useWhisperJo
  * no PC. Depois o corte automático, os blocos de instrução e o Criar Clipes usam na hora.
  */
 
-const nameOf = (p: string) => p.split(/[\\/]/).pop() ?? p
 
 function StateIcon({ s }: { s: ReadState }) {
   if (s.kind === 'done') return <Check size={12} strokeWidth={3} className="ar-ok" />
@@ -205,7 +204,7 @@ export function BlockHeardRow({ data, b, lang, onOpen }: { data: MontageData; b:
   const queued = states.some((x) => x.s.kind === 'queued')
   const ok = cache && states.every((x) => x.s.kind === 'done')
   return (
-    <div className={'blk-heard-row' + (ok ? ' ok' : '')} title={states.map((x) => `${nameOf(x.p)}: ${stateText(x.s)}`).join('\n')}>
+    <div className={'blk-heard-row' + (ok ? ' ok' : '')} title={states.map((x) => `${baseName(x.p)}: ${stateText(x.s)}`).join('\n')}>
       {ok ? <Check size={12} strokeWidth={3} /> : run || queued ? <Loader2 size={12} className="spin" /> : <Ear size={12} />}
       <span>
         Som do trecho:{' '}
@@ -263,7 +262,7 @@ export function WhisperJobsChip() {
             return (
               <li key={j.path + j.lang} title={j.path}>
                 <StateIcon s={s} />
-                <span className="ar-name">{nameOf(j.path)}</span>
+                <span className="ar-name">{baseName(j.path)}</span>
                 <small className={j.state === 'error' ? 'ar-err' : ''} title={j.error}>
                   {stateText(s)}
                 </small>

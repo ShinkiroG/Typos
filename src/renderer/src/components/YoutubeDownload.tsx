@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Download, Loader2, X } from 'lucide-react'
-import { api } from '../lib'
+import { api, baseName } from '../lib'
 
 /**
  * Baixar vídeo do YouTube (ou outro site) com o yt-dlp, inteiro ou só um trecho.
@@ -37,12 +37,12 @@ export function YoutubeDownload({
     const done = onDone
     setMsg('')
     setDl({ pct: 0, speed: '', eta: '' })
-    // o progresso vem por um canal só: quem baixa agora é quem escuta
-    api.onDownloadProgress((p) => setDl(p))
-    const r = await api.downloadVideo(url, dir, { quality: yt.quality, from: yt.from.trim() || undefined, to: yt.to.trim() || undefined, target })
+    // só escuta o progresso enquanto o download é daqui (o painel da Montagem e o do Estilo usam o mesmo canal)
+    const off = api.onDownloadProgress((p) => setDl(p))
+    const r = await api.downloadVideo(url, dir, { quality: yt.quality, from: yt.from.trim() || undefined, to: yt.to.trim() || undefined, target }).finally(off)
     setDl(null)
     if ('error' in r) return setMsg(r.error)
-    setMsg('Baixado: ' + (r.path.split(/[\\/]/).pop() ?? ''))
+    setMsg('Baixado: ' + baseName(r.path))
     setYt((y) => ({ ...y, url: '', from: '', to: '' }))
     await done(r.path)
   }

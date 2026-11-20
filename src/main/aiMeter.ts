@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain } from 'electron'
 import { AsyncLocalStorage } from 'async_hooks'
 import { join } from 'path'
 import { promises as fs } from 'fs'
+import { serial, writeAtomic } from './fsx'
 
 /**
  * Quanto cada pedido de IA levou e custou. Quem paga por uso (chave da Anthropic ou da
@@ -82,7 +83,15 @@ async function readBudget(dir?: string): Promise<Budget> {
     return { spent: 0 }
   }
 }
-const writeBudget = (dir: string, b: Budget) => fs.writeFile(budgetFile(dir), JSON.stringify(b, null, 2)).catch(() => null)
+const budgetQueue = serial()
+/** lê, muda e grava o gasto do projeto, um pedido de cada vez (dois motions terminando juntos somam os dois) */
+const updateBudget = (dir: string, change: (b: Budget) => void) =>
+  budgetQueue(dir.toLowerCase(), async () => {
+    const b = await readBudget(dir)
+    change(b)
+    await writeAtomic(budgetFile(dir), JSON.stringify(b, null, 2)).catch(() => null)
+    return b
+  })
 
 /** projeto aberto agora (pedidos que não dizem a pasta contam pra ele) */
 let current: string | undefined
@@ -115,9 +124,7 @@ export async function metered<T>(provider: string, dir: string | undefined, fn: 
     let cap: number | undefined
     // conta o que foi cobrado mesmo se o pedido deu erro no meio
     if (paid && project && meter.cost > 0) {
-      const b = await readBudget(project)
-      b.spent += meter.cost
-      await writeBudget(project, b)
+      const b = await updateBudget(project, (x) => (x.spent += meter.cost))
       spent = b.spent
       cap = b.cap
     }
@@ -129,10 +136,5 @@ export async function metered<T>(provider: string, dir: string | undefined, fn: 
 export function initAiMeter() {
   ipcMain.handle('ai:project', (_e, dir: string | null) => void (current = dir || undefined))
   ipcMain.handle('ai:budget', (_e, dir: string) => readBudget(dir))
-  ipcMain.handle('ai:setBudget', async (_e, dir: string, cap: number | null) => {
-    const b = await readBudget(dir)
-    b.cap = cap && cap > 0 ? cap : undefined
-    await writeBudget(dir, b)
-    return b
-  })
+  ipcMain.handle('ai:setBudget', (_e, dir: string, cap: number | null) => updateBudget(dir, (b) => (b.cap = cap && cap > 0 ? cap : undefined)))
 }

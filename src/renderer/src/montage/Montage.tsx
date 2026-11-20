@@ -49,7 +49,7 @@ import {
   AudioLines,
   SlidersVertical
 } from 'lucide-react'
-import { api, audioPath, clipDur, clipEndT, DENOISE_HINT, DENOISE_LABEL, fileUrl, PEAKS_HINT, RESOLUTIONS, uid, type DenoiseLevel, type Attachment, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
+import { api, audioPath, baseName, clipDur, clipEndT, DENOISE_HINT, DENOISE_LABEL, fileUrl, PEAKS_HINT, RESOLUTIONS, uid, type DenoiseLevel, type Attachment, type Format, type InstructionBlock, type MontageBin, type MontageClip, type MontageData, type MontageMarker, type MontageMedia } from '../lib'
 import { MontageEngine } from './engine'
 import { EqPanel } from './EqPanel'
 import { eqActive } from '../../../shared/eq'
@@ -360,9 +360,9 @@ export function Montage({
   useEffect(() => {
     api.whisperStatus().then(setWstatus)
   }, [])
-  // o aviso de progresso vai pra uma Montagem só (a do Criar Clipes também usa): fica com a da frente
+  // o progresso do download do modelo aparece na Montagem da frente (a do Criar Clipes também usa esta tela)
   useEffect(() => {
-    if (active) api.onWhisperProgress((p) => setBusy((b) => (b ? { ...b, pct: p.pct } : b)))
+    if (active) return api.onWhisperProgress((p) => setBusy((b) => (b ? { ...b, pct: p.pct } : b)))
   }, [active])
 
   const model = wstatus?.models.find((m) => m.id === wstatus.model)
@@ -1004,7 +1004,7 @@ export function Montage({
     const path = await api.saveRecording(dir, wav)
     if (typeof path !== 'string') return alert(path.error)
     const bin = dataRef.current.bins.find((b) => b.role === 'narration') ?? dataRef.current.bins[0]
-    const m: MontageMedia = { id: uid(), bin: bin.id, path, name: path.split(/[\\/]/).pop() || 'gravacao.wav', kind: 'audio', duration, hasAudio: true, hasVideo: false }
+    const m: MontageMedia = { id: uid(), bin: bin.id, path, name: baseName(path), kind: 'audio', duration, hasAudio: true, hasVideo: false }
     const clip: MontageClip = { id: uid(), track: cur.track, media: m.id, start: cur.start, in: 0, out: duration }
     change({ ...dataRef.current, media: [...dataRef.current.media, m], clips: [...dataRef.current.clips, clip] })
     setSelected([clip.id])
@@ -1277,7 +1277,7 @@ export function Montage({
   const [transcript, setTranscript] = useState<{ block: string } | { paths?: string[] } | null>(null)
   const transcriptView = (() => {
     if (!transcript) return null
-    const nameOf = (p: string) => data.media.find((m) => m.path === p)?.name || p.split(/[\\/]/).pop() || p
+    const nameOf = (p: string) => data.media.find((m) => m.path === p)?.name || baseName(p)
     if ('block' in transcript) {
       const b = blocks.find((x) => x.id === transcript.block)
       if (!b) return null
@@ -1310,8 +1310,10 @@ export function Montage({
     if (blockSel === id) setBlockSel(null)
     if (blockOpen === id) setBlockOpen(null)
   }
-  useEffect(() => {
-    if (active)
+  // cada Montagem acompanha os blocos que ela mesma mandou gravar, mesmo fora da frente (a barra não para
+  // de andar ao trocar de workspace); um aviso de bloco que não é daqui não muda nada
+  useEffect(
+    () =>
       api.onMotionPreviewProgress((p) =>
         setBlockBusy(p.block, (b) =>
           b
@@ -1320,8 +1322,9 @@ export function Montage({
               : { ...b, queued: false, label: AE_STAGE[p.stage] ?? (p.stage === 'vídeo' ? 'Montando o vídeo…' : b.label), pct: p.stage === 'ae-abrindo' || p.stage === 'ae-montando' ? null : p.pct }
             : null
         )
-      )
-  }, [active])
+      ),
+    []
+  )
   const blockHeard = useBlockHeard(data, lang)
   /** Cancelar da prévia: para de esperar o Whisper (a leitura continua na fila), corta o pedido ao Claude e para a gravação */
   const blockAbort = useRef(new Map<string, AbortController>())
@@ -1682,7 +1685,7 @@ export function Montage({
         id: uid(),
         bin: toBin,
         path: p,
-        name: p.split(/[\\/]/).pop() || p,
+        name: baseName(p),
         kind,
         duration: info.duration || (kind === 'image' ? 5 : 0),
         hasAudio: info.hasAudio,
@@ -1694,14 +1697,6 @@ export function Montage({
     }
     if (added.length) change({ ...dataRef.current, media: [...dataRef.current.media, ...added] })
     return [...already, ...added]
-  }
-
-  const addBin = async () => {
-    const name = await askText('Nome da pasta:', 'Nova pasta')
-    if (!name?.trim()) return
-    const b: MontageBin = { id: uid(), name: name.trim(), role: 'custom' }
-    change({ ...data, bins: [...data.bins, b] })
-    setBin(b.id)
   }
 
   const curBin = data.bins.find((b) => b.id === bin) ?? data.bins[0]
@@ -1846,7 +1841,7 @@ export function Montage({
   const linkPcFolder = async () => {
     const p = await api.pickFolder()
     if (!p || !curBin) return
-    const b: MontageBin = { id: uid(), name: p.split(/[\\/]/).pop() || p, role: 'custom', parent: curBin.id, linked: p }
+    const b: MontageBin = { id: uid(), name: baseName(p), role: 'custom', parent: curBin.id, linked: p }
     change({ ...dataRef.current, bins: [...dataRef.current.bins, b] })
     setBin(b.id)
   }

@@ -36,14 +36,16 @@ function UpdateBanner() {
   const [progress, setProgress] = useState<number | null>(null)
   const [hidden, setHidden] = useState(false)
 
-  useEffect(() => {
-    api.onUpdate((ch, p) => {
-      if (ch === 'update:ready') {
-        setReady(p.version)
-        setHidden(false)
-      } else if (ch === 'update:progress') setProgress(p < 0 || p >= 1 ? null : p)
-    })
-  }, [])
+  useEffect(
+    () =>
+      api.onUpdate((ch, p) => {
+        if (ch === 'update:ready') {
+          setReady(p.version)
+          setHidden(false)
+        } else if (ch === 'update:progress') setProgress(p < 0 || p >= 1 ? null : p)
+      }),
+    []
+  )
 
   if (progress !== null)
     return (

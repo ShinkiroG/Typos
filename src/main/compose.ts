@@ -4,6 +4,8 @@
  * Sem Electron aqui: só texto, pra dar pra testar com o ffmpeg puro.
  */
 
+import type { ALayer, VLayer } from '../shared/layers'
+
 /**
  * Versão da codificação: entra na assinatura das partes e dos letterings do render, pra que um ajuste
  * aqui grave tudo de novo em vez de reaproveitar arquivos feitos com o ajuste antigo.
@@ -18,6 +20,9 @@ export const ENCODE_V = 3
  *   as áreas escuras e lisas.
  * As cores saem em BT.709 (o padrão de vídeo HD), marcadas no arquivo.
  */
+/** saída em YUV 4:2:0 marcada como BT.709 (o padrão de vídeo HD) */
+const BT709 = ['-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709']
+
 export function x264Args(kind: 'grain' | 'master' | 'clip'): string[] {
   const q =
     kind === 'clip'
@@ -28,7 +33,7 @@ export function x264Args(kind: 'grain' | 'master' | 'clip'): string[] {
       : kind === 'grain'
         ? ['-preset', 'slow', '-crf', '12', '-tune', 'grain']
         : ['-preset', 'medium', '-crf', '14', '-x264-params', 'aq-mode=3']
-  return ['-c:v', 'libx264', ...q, '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709']
+  return ['-c:v', 'libx264', ...q, ...BT709]
 }
 
 /**
@@ -41,7 +46,7 @@ export function nvencArgs(): string[] {
   return [
     '-c:v', 'h264_nvenc', '-preset', 'p5', '-tune', 'hq', '-rc', 'vbr', '-cq', '14', '-b:v', '0',
     '-spatial-aq', '1', '-temporal-aq', '1', '-profile:v', 'high',
-    '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709'
+    ...BT709
   ]
 }
 
@@ -51,7 +56,7 @@ export function nvencArgs(): string[] {
  * gravado decodificava em média mais de cem. É arquivo de trabalho: o tamanho importa pouco.
  */
 export function seekArgs(): string[] {
-  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16', '-g', '4', '-bf', '0', '-tune', 'fastdecode', '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709']
+  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16', '-g', '4', '-bf', '0', '-tune', 'fastdecode', ...BT709]
 }
 
 /** o ffmpeg falhou por causa do NVENC (placa ocupada, sessões demais, driver)? aí dá pra refazer na CPU */
@@ -60,34 +65,7 @@ export const nvencFailed = (err: string) => /nvenc|cuda|OpenEncodeSession|No cap
 /** RGB (quadros PNG do navegador) → YUV 4:2:0 em BT.709, com arredondamento preciso (sem degrau extra) */
 export const RGB_TO_YUV = 'flags=bicubic+accurate_rnd+full_chroma_int:out_color_matrix=bt709:out_range=tv'
 
-/** camada de vídeo (clipe, imagem ou lettering): tempos na timeline, já com os crossfades */
-export interface VLayer {
-  path: string
-  image: boolean
-  t0: number
-  t1: number
-  /** segundo do arquivo que toca em t0 */
-  src0: number
-  /** fades de opacidade (s) a partir das bordas da camada */
-  fadeIn: number
-  fadeOut: number
-  /** sem transparência (vídeo comum, JPG): quando é a camada de baixo e ocupa a parte toda, dispensa o fundo preto e o alfa */
-  opaque?: boolean
-  covers?: boolean
-}
-
-/** trecho de áudio: tempos na timeline e o envelope de volume (s desde t0, ganho linear) */
-export interface ALayer {
-  path: string
-  /** limpeza de ruído: o render troca o path pela cópia limpa antes de montar o comando */
-  denoise?: 1 | 2 | 3
-  /** controle dos picos da voz: entra na mesma cópia tratada */
-  peaks?: 1 | 2 | 3
-  t0: number
-  t1: number
-  src0: number
-  env: [number, number][]
-}
+export type { VLayer, ALayer }
 
 export interface PartSpec {
   from: number
@@ -258,12 +236,17 @@ export function partAudioArgs(p: { from: number; to: number; audio: ALayer[]; ou
 }
 
 /** junta só o som das partes num WAV (24 bits, 48 kHz), com o mesmo equalizador e limitador do vídeo final */
-export function finalAudioArgs(audioList: string, out: string, limiter = true, eq: string[] = []): string[] {
+/** filtros do som final: o equalizador do vídeo (o mesmo da prévia) e depois o limitador */
+const finalAf = (limiter: boolean, eq: string[]) => {
   const af = [...eq, ...(limiter ? ['alimiter=limit=0.84:attack=5:release=120:level=0'] : [])]
+  return af.length ? ['-af', af.join(',')] : []
+}
+
+export function finalAudioArgs(audioList: string, out: string, limiter = true, eq: string[] = []): string[] {
   return [
     '-hide_banner', '-y', '-nostdin',
     '-f', 'concat', '-safe', '0', '-i', audioList,
-    ...(af.length ? ['-af', af.join(',')] : []),
+    ...finalAf(limiter, eq),
     '-c:a', 'pcm_s24le', '-ar', String(RATE), '-ac', '2',
     out
   ]
@@ -274,38 +257,15 @@ export const concatList = (names: string[]) => names.map((f) => `file '${f.repla
 
 /** junta as partes: vídeo copiado (sem recomprimir), áudio com o EQ e o limitador (iguais aos da Montagem) em AAC */
 export function finalArgs(videoList: string, audioList: string, out: string, limiter = true, eq: string[] = []): string[] {
-  // equalizador do vídeo (o mesmo da prévia) antes do limitador
-  const af = [...eq, ...(limiter ? ['alimiter=limit=0.84:attack=5:release=120:level=0'] : [])]
   return [
-    '-hide_banner',
-    '-y',
-    '-nostdin',
-    '-f',
-    'concat',
-    '-safe',
-    '0',
-    '-i',
-    videoList,
-    '-f',
-    'concat',
-    '-safe',
-    '0',
-    '-i',
-    audioList,
-    '-map',
-    '0:v',
-    '-map',
-    '1:a',
-    '-c:v',
-    'copy',
-    ...(af.length ? ['-af', af.join(',')] : []),
-    '-c:a',
-    'aac',
-    '-b:a',
-    '192k',
-    '-shortest',
-    '-movflags',
-    '+faststart',
+    '-hide_banner', '-y', '-nostdin',
+    '-f', 'concat', '-safe', '0', '-i', videoList,
+    '-f', 'concat', '-safe', '0', '-i', audioList,
+    '-map', '0:v', '-map', '1:a',
+    '-c:v', 'copy',
+    ...finalAf(limiter, eq),
+    '-c:a', 'aac', '-b:a', '192k',
+    '-shortest', '-movflags', '+faststart',
     out
   ]
 }

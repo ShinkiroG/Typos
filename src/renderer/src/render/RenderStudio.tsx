@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Clapperboard, CheckCircle2, XCircle, Loader2, RefreshCw, Mic, Film, AudioLines, FolderOpen, Square, Music, Boxes, RotateCcw, Play, Type, Scissors, Clock, ListOrdered, FolderOutput, X } from 'lucide-react'
-import { api, fileUrl, queueRenderItems, RESOLUTIONS, shortRenderId, type Format, type MontageData, type RenderItemId, type RenderSettings, type ShortClip, type ShortsData } from '../lib'
+import { api, binRoles, fileUrl, queueRenderItems, RESOLUTIONS, shortRenderId, type Format, type MontageData, type RenderItemId, type RenderSettings, type ShortClip, type ShortsData } from '../lib'
 import { planRender } from './plan'
 import { shortDuration, shortKey, slug } from '../shorts/shorts'
 import './render.css'
@@ -126,12 +126,7 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
   // ---------- checklist: o que entra no vídeo, num olhar ----------
   type CheckState = 'ok' | 'bad' | 'checking' | 'none'
   const checklist = useMemo(() => {
-    const binById = new Map(montage.bins.map((b) => [b.id, b]))
-    const roleOf = (binId: string) => {
-      let cur = binById.get(binId)
-      for (let i = 0; cur?.parent && i < 20; i++) cur = binById.get(cur.parent)
-      return cur?.role
-    }
+    const roleOf = binRoles(montage.bins)
     const mediaById = new Map(montage.media.map((m) => [m.id, m]))
     const kind = new Map(montage.tracks.map((t) => [t.id, t.kind]))
     // faixa silenciada não entra (ex.: gravação original ao lado do corte automático)
@@ -178,8 +173,12 @@ export function RenderStudio({ active, dir, title, format, shortsFormat, montage
 
   // ---------- criar vídeo ----------
   useEffect(() => {
-    api.onRenderProgress((ev) => setJob((j) => (j ? { ...j, log: [...j.log, ev].slice(-300) } : j)))
-    api.onRenderState(setProg)
+    const offLog = api.onRenderProgress((ev) => setJob((j) => (j ? { ...j, log: [...j.log, ev].slice(-300) } : j)))
+    const offState = api.onRenderState(setProg)
+    return () => {
+      offLog()
+      offState()
+    }
   }, [])
   useEffect(() => {
     if (!job?.busy) return

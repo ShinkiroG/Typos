@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { api, type MontageData } from '../lib'
+import { api, baseName, binRoles, type MontageData } from '../lib'
 import type { WhisperJob } from '../../../preload'
 
 /**
@@ -96,26 +96,20 @@ export const runningLabel = (path: string, lang: string) => {
 /** espera mudanças na fila (devolve como parar) */
 export const watchJobs = (f: () => void) => subscribe(f)
 
-const nameOf = (p: string) => p.split(/[\\/]/).pop() ?? p
 
 /**
  * Arquivos com fala de uma timeline: cortes com som em faixas ligadas e armadas pra escuta, menos os da pasta SFX.
  * É o que o corte automático, os blocos e o Criar Clipes vão precisar transcrever.
  */
 export function speechFiles(d: MontageData): { path: string; name: string }[] {
-  const binById = new Map(d.bins.map((b) => [b.id, b]))
-  const roleOf = (id: string) => {
-    let cur = binById.get(id)
-    for (let i = 0; cur?.parent && i < 20; i++) cur = binById.get(cur.parent)
-    return cur?.role
-  }
+  const roleOf = binRoles(d.bins)
   const muted = new Set(d.tracks.filter((t) => t.muted || t.deaf).map((t) => t.id))
   const media = new Map(d.media.map((m) => [m.id, m]))
   const out = new Map<string, string>()
   for (const c of d.clips) {
     const m = media.get(c.media)
     if (!m?.hasAudio || muted.has(c.track) || c.audioOff || roleOf(m.bin) === 'sfx') continue
-    out.set(m.path, m.name || nameOf(m.path))
+    out.set(m.path, m.name || baseName(m.path))
   }
   return [...out].map(([path, name]) => ({ path, name }))
 }

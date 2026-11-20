@@ -25,7 +25,7 @@ import {
   Brain,
   Star
 } from 'lucide-react'
-import { api, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type MotionMemoryItem, type FontCase, DEFAULT_FONT_CASES, refWeights, styleFoldersOf, STYLE_FOLDER_ROLES, type StyleFolder, type StyleFolderRole } from '../lib'
+import { api, baseName, fileUrl, formatLang, langLabel, openPreview, RESOLUTIONS, uid, type Format, type MotionRef, type MotionStyle, type MotionMemoryItem, type FontCase, DEFAULT_FONT_CASES, refWeights, styleFoldersOf, STYLE_FOLDER_ROLES, type StyleFolder, type StyleFolderRole } from '../lib'
 import { ASSETS_ANSWER, assetsOnlyPrompt, collectStudy, folderName, guessRole, MAX_STUDY_IMAGES, memoryMd, parseAssets, studyImages, studySection, studyStale } from './assets'
 import { FontPicker } from './FontPicker'
 import { SfxFinder, type SfxLib } from '../components/SfxFinder'
@@ -74,7 +74,7 @@ const STUDY_BUSY = 'Estudando os assets do estilo…'
 
 const emptyMotion = (f: Format): MotionStyle => ({
   // referências antigas (Formatos → referência pro motion) entram como imagens
-  refs: (f.motionRefFiles ?? []).map((p) => ({ id: uid(), kind: /\.(mp4|mov|webm|m4v|mkv)$/i.test(p) ? 'video' : 'image', path: p, name: p.split(/[\\/]/).pop() || p })),
+  refs: (f.motionRefFiles ?? []).map((p) => ({ id: uid(), kind: /\.(mp4|mov|webm|m4v|mkv)$/i.test(p) ? 'video' : 'image', path: p, name: baseName(p) })),
   colors: [],
   camera: [],
   transitions: []

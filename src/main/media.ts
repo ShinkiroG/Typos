@@ -109,9 +109,23 @@ export async function probe(path: string): Promise<Probe | { error: string }> {
   }
 }
 
+/** chave de cache de um arquivo: muda se ele mudar (tamanho ou data) ou se a receita (`tag`) mudar */
 const keyOf = async (path: string, tag: string) => {
   const st = await fs.stat(path)
   return createHash('sha1').update(`${tag}|${path}|${st.size}|${st.mtimeMs}`).digest('hex').slice(0, 20)
+}
+
+/** um quadro do vídeo no tempo t (s) vira um JPG (se ainda não existir); devolve se o arquivo está lá */
+async function grabFrame(ffmpeg: string, path: string, t: number, out: string, width: number, q: number) {
+  if (!existsSync(out))
+    await run(ffmpeg, ['-hide_banner', '-y', '-ss', Math.max(0, t).toFixed(2), '-i', path, '-frames:v', '1', '-vf', `scale=${width}:-2`, '-q:v', String(q), out], { timeoutMs: 60000 })
+  return existsSync(out)
+}
+
+/** "time=00:01:05.20" do progresso do ffmpeg → segundos (null se a linha não tem) */
+const progressSecs = (line: string) => {
+  const m = /time=(\d+):(\d+):([\d.]+)/.exec(line)
+  return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : null
 }
 
 const pending = new Map<string, Promise<string | { error: string }>>()
@@ -126,6 +140,7 @@ export function proxyAudio(path: string): Promise<string | { error: string }> {
   p = (async () => {
     const ff = await findFfmpeg()
     if (!ff) return { error: 'ffmpeg não encontrado' }
+    if (!existsSync(path)) return { error: 'arquivo não encontrado: ' + path }
     const out = await proxyPathOf(path)
     if (existsSync(out)) return out
     await fs.mkdir(mediaCacheDir(), { recursive: true })
@@ -136,7 +151,8 @@ export function proxyAudio(path: string): Promise<string | { error: string }> {
     return out
   })()
   pending.set(path, p)
-  p.finally(() => pending.delete(path))
+  // o erro é de quem pediu: aqui só tira da lista (sem isso sobrava uma promessa rejeitada sem dono)
+  p.catch(() => null).then(() => pending.delete(path))
   return p
 }
 
@@ -211,9 +227,6 @@ export function initMedia() {
   ipcMain.handle('media:soundProfiles', (_e, paths: string[]) => soundProfiles(paths))
   ipcMain.handle('media:exists', (_e, paths: string[]) => paths.map((p) => existsSync(p)))
 }
-
-export const isMediaFile = (p: string) => MEDIA_EXT.includes(extname(p).toLowerCase())
-export const nameOf = (p: string) => basename(p)
 
 /** volume percebido (LUFS integrado) e pico real (dBTP) de um trecho, pelo loudnorm do ffmpeg */
 export async function loudness(path: string, start: number, dur: number): Promise<{ i: number; tp: number } | null> {
@@ -290,8 +303,7 @@ export async function extractFrames(path: string, outRoot: string, n = 8): Promi
     // evita o primeiro/último instante (fade de abertura/fechamento)
     const t = info.duration * ((i + 0.5) / n)
     const f = join(dir, `f${String(i + 1).padStart(2, '0')}.jpg`)
-    if (!existsSync(f)) await run(ff.ffmpeg, ['-hide_banner', '-y', '-ss', t.toFixed(2), '-i', path, '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', f], { timeoutMs: 60000 })
-    if (existsSync(f)) out.push(f)
+    if (await grabFrame(ff.ffmpeg, path, t, f, 640, 4)) out.push(f)
   }
   return out.length ? out : { error: 'não deu pra tirar quadros desse vídeo' }
 }
@@ -349,8 +361,7 @@ export async function framesForFocus(
   for (let i = 0; i < plan.even; i++) {
     const t = d * ((i + 0.5) / plan.even)
     const f = join(dir, `e${String(i + 1).padStart(2, '0')}.jpg`)
-    if (!existsSync(f)) await run(ff.ffmpeg, ['-hide_banner', '-y', '-ss', t.toFixed(2), '-i', path, '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', f], { timeoutMs: 60000 })
-    if (existsSync(f)) out.push({ path: f, kind: 'even', group: 0, index: i, t, fps: plan.fps })
+    if (await grabFrame(ff.ffmpeg, path, t, f, 640, 4)) out.push({ path: f, kind: 'even', group: 0, index: i, t, fps: plan.fps })
   }
   // sequências: quadros seguidos (8 q/s, ou 24 q/s no quadro a quadro) em pontos diferentes do vídeo (dá pra "ver" o movimento)
   const span = plan.perBurst / plan.fps
@@ -380,11 +391,7 @@ export async function framesAt(path: string, times: number[], outRoot: string, w
   const out: (string | null)[] = []
   for (const t of times) {
     const f = join(dir, `t${Math.max(0, t).toFixed(2)}${width === 480 ? '' : '-' + width}.jpg`)
-    if (!existsSync(f))
-      await run(ff.ffmpeg, ['-hide_banner', '-y', '-ss', Math.max(0, t).toFixed(2), '-i', path, '-frames:v', '1', '-vf', `scale=${width}:-2`, '-q:v', width === 480 ? '5' : '2', f], {
-        timeoutMs: 60000
-      })
-    out.push(existsSync(f) ? f : null)
+    out.push((await grabFrame(ff.ffmpeg, path, t, f, width, width === 480 ? 5 : 2)) ? f : null)
   }
   return out
 }
@@ -511,11 +518,8 @@ async function download(
       const scale = section && !cut ? 0.5 : 1
       const onLine = (line: string) => {
         // trecho: o yt-dlp corta com o ffmpeg (sem %): o progresso sai do "time=" sobre a duração do trecho
-        const tm = /time=(\d+):(\d+):([\d.]+)/.exec(line)
-        if (tm && cut && span > 0) {
-          const done = Number(tm[1]) * 3600 + Number(tm[2]) * 60 + Number(tm[3])
-          send({ pct: Math.min(0.99, done / span), speed: '', eta: '' })
-        }
+        const done = cut && span > 0 ? progressSecs(line) : null
+        if (done !== null) send({ pct: Math.min(0.99, done / span), speed: '', eta: '' })
         // vídeo e áudio baixam separados: a barra vai de 0–50% e 50–100%
         if (/Destination:/.test(line)) step++
         const m = /\[download\]\s+([\d.]+)%(?:.*?at\s+(\S+))?(?:.*?ETA\s+(\S+))?/.exec(line)
@@ -604,11 +608,8 @@ async function download(
       {
         signal: ac.signal,
         onErr: (line) => {
-          const tm = /time=(\d+):(\d+):([\d.]+)/.exec(line)
-          if (tm && span > 0) {
-            const done = Number(tm[1]) * 3600 + Number(tm[2]) * 60 + Number(tm[3])
-            send({ pct: Math.min(0.99, 0.5 + (done / span) * 0.5), speed: '', eta: 'cortando…' })
-          }
+          const done = span > 0 ? progressSecs(line) : null
+          if (done !== null) send({ pct: Math.min(0.99, 0.5 + (done / span) * 0.5), speed: '', eta: 'cortando…' })
         }
       }
     )

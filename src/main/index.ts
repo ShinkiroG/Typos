@@ -1,10 +1,9 @@
 // precisa vir antes de tudo: registra os erros de todos os pedidos (Ajuda → Gerar relatório de erro)
 import { initLog } from './log'
-import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, session, nativeImage } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, protocol, shell, session, nativeImage } from 'electron'
 import { join, basename, extname, dirname, resolve, sep } from 'path'
 import { promises as fs, existsSync, createReadStream } from 'fs'
 import { Readable } from 'stream'
-import { pathToFileURL } from 'url'
 import { randomUUID, createHash } from 'crypto'
 import { loadSettings, saveSettings } from './settings'
 import { initUpdater, checkManually, installDownloadedNow, installMode } from './updater'
@@ -20,6 +19,7 @@ import { initHistory, beforeSave, snapshotNow, projectId, adoptDir, onOpen } fro
 import { relocatePaths, validId } from './historyCore'
 import { initRelink } from './relink'
 import { initExportProject, fixExternalPaths } from './exportProject'
+import { jsonEsc, listFiles, readJson, serial, writeJson } from './fsx'
 
 // rs://local/<caminho absoluto codificado> serve imagens/áudios locais pro renderer.
 // Sem bypassCSP: o CSP de cada página decide o que ela pode ler (a do app libera rs:, a demo da IA não)
@@ -53,6 +53,7 @@ const MIME: Record<string, string> = {
 const PROJECT_FILE = 'roteiro.json'
 const MARKDOWN_FILE = 'roteiro.md'
 const ASSETS_DIR = 'assets'
+const AUDIO_DIR = `${ASSETS_DIR}/audio`
 const IMAGE_EXT = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']
 const AUDIO_EXT = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac', '.opus']
 const VIDEO_EXT = ['.mp4', '.webm', '.mov', '.m4v']
@@ -71,23 +72,10 @@ const DEFAULT_FORMATS = [
 const userDir = () => app.getPath('userData')
 const settingsFile = (name: string) => join(userDir(), name)
 const libraryDir = (sub: string) => join(userDir(), 'library', sub)
+/** referências de motion dos formatos (valem pra todo projeto) */
+const formatMedia = () => join(userDir(), 'format-media')
 
 type Result<T> = T | { error: string }
-
-async function readJson<T>(file: string, fallback: T): Promise<T> {
-  try {
-    return JSON.parse(await fs.readFile(file, 'utf8')) as T
-  } catch {
-    return fallback
-  }
-}
-
-async function writeJson(file: string, data: unknown) {
-  // .tmp único: duas gravações do mesmo arquivo ao mesmo tempo não se atropelam no rename
-  const tmp = `${file}.${randomUUID().slice(0, 8)}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
-  await fs.rename(tmp, file)
-}
 
 /** impressão digital rápida: tamanho + começo + fim (vídeo grande não precisa ser lido inteiro) */
 async function fingerprint(file: string, size?: number): Promise<string> {
@@ -167,12 +155,15 @@ const attachment = (rel: string, name?: string) => ({ id: randomUUID(), path: re
 // ---------- recentes ----------
 type Recent = { dir: string; title: string; openedAt: string }
 
+const readRecent = () => readJson<Recent[]>(settingsFile('recent.json'), [])
+const writeRecent = (list: Recent[]) => writeJson(settingsFile('recent.json'), list)
+
 async function touchRecent(dir: string, title: string) {
-  const list = await readJson<Recent[]>(settingsFile('recent.json'), [])
+  const list = await readRecent()
   // autosave do roteiro que já está no topo: nada muda na lista, não regrava o arquivo
   if (list[0]?.dir === dir && list[0].title === title && Date.now() - Date.parse(list[0].openedAt) < 60_000) return
   const next = [{ dir, title, openedAt: new Date().toISOString() }, ...list.filter((r) => r.dir !== dir)].slice(0, 12)
-  await writeJson(settingsFile('recent.json'), next)
+  await writeRecent(next)
 }
 
 const rememberParent = (dir: string) => saveSettings({ lastParent: dirname(dir) })
@@ -276,9 +267,14 @@ app.whenReady().then(() => {
     // vídeo grande: o player pede pedaços (Range) pra poder pular pra qualquer ponto sem ler tudo
     const size = (await fs.stat(p)).size
     const range = /bytes=(\d*)-(\d*)/.exec(req.headers.get('range') ?? '')
-    if (range && size > 0) {
-      const start = range[1] ? Math.min(Number(range[1]), size - 1) : Math.max(0, size - Number(range[2]))
+    if (range && size > 0 && (range[1] || range[2])) {
+      const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]))
       const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1
+      // pedido além do fim do arquivo (ou de trás pra frente): não tem o que mandar
+      if (start >= size || end < start) {
+        headers.set('Content-Range', `bytes */${size}`)
+        return new Response(null, { status: 416, headers })
+      }
       headers.set('Content-Range', `bytes ${start}-${end}/${size}`)
       headers.set('Content-Length', String(end - start + 1))
       return new Response(Readable.toWeb(createReadStream(p, { start, end })) as ReadableStream, { status: 206, headers })
@@ -472,15 +468,8 @@ async function syncProjectFiles(root: string, data: any) {
 }
 
 /** salvamentos do mesmo roteiro em fila: o autosave pode disparar com o anterior ainda gravando */
-const saving = new Map<string, Promise<unknown>>()
-function queued<T>(dir: string, job: () => Promise<T>): Promise<T> {
-  const key = resolve(dir).toLowerCase()
-  const next = (saving.get(key) ?? Promise.resolve()).then(job, job)
-  const tail = next.catch(() => null)
-  saving.set(key, tail)
-  tail.then(() => saving.get(key) === tail && saving.delete(key))
-  return next
-}
+const saveQueue = serial()
+const queued = <T>(dir: string, job: () => Promise<T>) => saveQueue(resolve(dir).toLowerCase(), job)
 
 /** pasta que sumiu com o roteiro aberto → rascunho onde o texto foi parar (um só, mesmo com vários salvamentos) */
 const rescued = new Map<string, string>()
@@ -550,13 +539,12 @@ ipcMain.handle('project:saveAs', async (_e, dir: string, data: any, markdown: st
 })
 
 ipcMain.handle('project:recent', async () => {
-  const list = await readJson<Recent[]>(settingsFile('recent.json'), [])
+  const list = await readRecent()
   return list.filter((r) => !isDraft(r.dir) && existsSync(join(r.dir, PROJECT_FILE)))
 })
 
 ipcMain.handle('project:removeRecent', async (_e, dir: string) => {
-  const list = await readJson<Recent[]>(settingsFile('recent.json'), [])
-  await writeJson(settingsFile('recent.json'), list.filter((r) => r.dir !== dir))
+  await writeRecent((await readRecent()).filter((r) => r.dir !== dir))
 })
 
 const docHasText = (doc: any): boolean =>
@@ -629,7 +617,7 @@ ipcMain.handle('storage:info', async (_e, keep?: string) => {
   let updateBytes = (await dirSize(updaterCache)) + (await dirSize(mediaCacheDir()))
   for (const f of files) updateBytes += (await fs.stat(f).catch(() => ({ size: 0 }))).size
   const cacheBytes = (await session.defaultSession.getCacheSize()) + updateBytes
-  const recent = (await readJson<Recent[]>(settingsFile('recent.json'), [])).length
+  const recent = (await readRecent()).length
   return { drafts: drafts.length, draftBytes, cacheBytes, recent }
 })
 
@@ -647,7 +635,7 @@ ipcMain.handle('storage:clear', async (_e, what: 'drafts' | 'cache' | 'recent', 
     await fs.rm(updaterCache, { recursive: true, force: true }).catch(() => null)
     await fs.rm(mediaCacheDir(), { recursive: true, force: true }).catch(() => null)
   } else if (what === 'recent') {
-    await writeJson(settingsFile('recent.json'), [])
+    await writeRecent([])
   }
 })
 
@@ -683,7 +671,7 @@ async function importPaths(dir: string, paths: string[]) {
   for (const p of paths) {
     const kind = mediaKind(p)
     if (!kind) continue
-    const sub = kind === 'audio' ? `${ASSETS_DIR}/audio` : ASSETS_DIR
+    const sub = kind === 'audio' ? AUDIO_DIR : ASSETS_DIR
     const name = await copyUnique(p, join(dir, ...sub.split('/')))
     out.push(attachment(`${sub}/${name}`, basename(p)))
   }
@@ -726,13 +714,12 @@ ipcMain.handle('formats:load', () => readJson(settingsFile('formats.json'), DEFA
 ipcMain.handle('formats:save', (_e, formats: unknown) => writeJson(settingsFile('formats.json'), formats))
 
 // ---------- áudio (copiado pra <projeto>/assets/audio) ----------
-const isAudio = (p: string) => AUDIO_EXT.includes(extname(p).toLowerCase())
-const AUDIO_DIR = `${ASSETS_DIR}/audio`
+const audioDir = (dir: string) => join(dir, ASSETS_DIR, 'audio')
 
 async function importAudio(dir: string, paths: string[]) {
   const out = []
-  for (const p of paths.filter(isAudio)) {
-    const name = await copyUnique(p, join(dir, ASSETS_DIR, 'audio'))
+  for (const p of paths.filter((x) => mediaKind(x) === 'audio')) {
+    const name = await copyUnique(p, audioDir(dir))
     out.push({ path: `${AUDIO_DIR}/${name}`, name: basename(p) })
   }
   return out
@@ -765,7 +752,7 @@ ipcMain.handle('sfx:generate', async (_e, dir: string, text: string, seconds: nu
       return { error: r.status === 401 ? 'Chave da ElevenLabs inválida.' : `ElevenLabs respondeu ${r.status}: ${msg}` }
     }
     const slug = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30) || 'sfx'
-    const name = await writeUnique(new Uint8Array(await r.arrayBuffer()), `sfx-${slug}.mp3`, join(dir, ASSETS_DIR, 'audio'))
+    const name = await writeUnique(new Uint8Array(await r.arrayBuffer()), `sfx-${slug}.mp3`, audioDir(dir))
     return { path: `${AUDIO_DIR}/${name}`, name: `SFX: ${text.slice(0, 40)}` }
   } catch (err) {
     return { error: `Não consegui falar com a ElevenLabs: ${String(err)}` }
@@ -834,9 +821,8 @@ ipcMain.handle('format:pickImages', async (): Promise<string[]> => {
     filters: [{ name: 'Imagens e vídeos', extensions: [...IMAGE_EXT, ...VIDEO_EXT].map((e) => e.slice(1)) }]
   })
   if (r.canceled) return []
-  const dir = join(userDir(), 'format-media')
   const out: string[] = []
-  for (const p of r.filePaths) out.push(join(dir, await copyUnique(p, dir)))
+  for (const p of r.filePaths) out.push(join(formatMedia(), await copyUnique(p, formatMedia())))
   return out
 })
 
@@ -847,19 +833,8 @@ const PREF_FILES = ['settings.json', 'formats.json', 'library.json', 'folders.js
 const PREF_DIRS = ['library', 'format-media']
 const UD_TOKEN = '{{userData}}'
 
-async function listFiles(dir: string, base = dir): Promise<string[]> {
-  const out: string[] = []
-  for (const e of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
-    const p = join(dir, e.name)
-    if (e.isDirectory()) out.push(...(await listFiles(p, base)))
-    else out.push(p.slice(base.length + 1))
-  }
-  return out
-}
-
 /** troca o caminho do userData em todo texto (também na forma escapada do JSON) */
-const swapUserDir = (text: string, from: string, to: string) =>
-  text.split(from).join(to).split(JSON.stringify(from).slice(1, -1)).join(JSON.stringify(to).slice(1, -1))
+const swapUserDir = (text: string, from: string, to: string) => text.split(from).join(to).split(jsonEsc(from)).join(jsonEsc(to))
 
 ipcMain.handle('prefs:export', async (_e, includeKeys: boolean): Promise<Result<{ path: string; files: number }> | null> => {
   const r = await dialog.showSaveDialog({
@@ -887,7 +862,7 @@ ipcMain.handle('prefs:export', async (_e, includeKeys: boolean): Promise<Result<
     }
     const files: Record<string, string> = {}
     for (const d of PREF_DIRS)
-      for (const rel of await listFiles(join(ud, d))) files[join(d, rel)] = (await fs.readFile(join(ud, d, rel))).toString('base64')
+      for (const f of await listFiles(join(ud, d))) files[f.slice(ud.length + 1)] = (await fs.readFile(f)).toString('base64')
     const bundle = { typosPrefs: 1, version: app.getVersion(), exportedAt: new Date().toISOString(), withKeys: includeKeys, texts, files }
     await fs.writeFile(r.filePath, JSON.stringify(bundle), 'utf8')
     return { path: r.filePath, files: Object.keys(texts).length + Object.keys(files).length }
@@ -942,22 +917,12 @@ ipcMain.handle('prefs:import', async (e): Promise<Result<{ files: number }> | nu
 })
 
 // ---------- limpeza dos assets do projeto ----------
-async function walk(dir: string): Promise<string[]> {
-  const out: string[] = []
-  for (const e of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
-    const p = join(dir, e.name)
-    if (e.isDirectory()) out.push(...(await walk(p)))
-    else out.push(p)
-  }
-  return out
-}
-
 /** cópias iguais (fica uma) e arquivos que o roteiro não usa mais */
 async function assetReport(dir: string) {
   const text = await fs.readFile(join(dir, PROJECT_FILE), 'utf8')
   const rel = (p: string) => p.slice(dir.length + 1).split(sep).join('/')
-  const used = (r: string) => text.includes(JSON.stringify(r).slice(1, -1)) || text.includes(JSON.stringify(r.replace(/\//g, '\\')).slice(1, -1))
-  const files = await walk(join(dir, ASSETS_DIR))
+  const used = (r: string) => text.includes(jsonEsc(r)) || text.includes(jsonEsc(r.replace(/\//g, '\\')))
+  const files = await listFiles(join(dir, ASSETS_DIR))
   const groups = new Map<string, { path: string; size: number }[]>()
   for (const f of files) {
     const st = await fs.stat(f)
@@ -999,7 +964,7 @@ ipcMain.handle('assets:clean', async (_e, dir: string) => {
       for (const [a, b] of [
         [from, to],
         [from.replace(/\//g, '\\'), to.replace(/\//g, '\\')]
-      ]) next = next.split(JSON.stringify(a).slice(1, -1)).join(JSON.stringify(b).slice(1, -1))
+      ]) next = next.split(jsonEsc(a)).join(jsonEsc(b))
     }
     if (next !== text) await fs.writeFile(join(dir, PROJECT_FILE), next, 'utf8')
     let bytes = 0
@@ -1037,13 +1002,11 @@ ipcMain.handle('project:move', async (_e, dir: string, title: string): Promise<R
     // caminhos absolutos que apontavam pra dentro da pasta antiga
     const file = join(target, PROJECT_FILE)
     const text = await fs.readFile(file, 'utf8')
-    const esc = (s: string) => JSON.stringify(s).slice(1, -1)
-    const fixed = text.split(esc(dir + sep)).join(esc(target + sep))
+    const fixed = text.split(jsonEsc(dir + sep)).join(jsonEsc(target + sep))
     if (fixed !== text) await fs.writeFile(file, fixed, 'utf8')
     const moved = await readJson<any>(file, null)
     if (moved?.id) await adoptDir(target, moved.id, title).catch((err) => console.warn('histórico:', err))
-    const list = await readJson<Recent[]>(settingsFile('recent.json'), [])
-    await writeJson(settingsFile('recent.json'), list.filter((x) => x.dir !== dir))
+    await writeRecent((await readRecent()).filter((x) => x.dir !== dir))
     await touchRecent(target, title)
     await rememberParent(target)
     return { dir: target }
@@ -1100,7 +1063,6 @@ ipcMain.handle('media:trashProjectFiles', async (_e, dir: string, paths: string[
 ipcMain.handle('shell:showItem', (_e, path: string) => shell.showItemInFolder(path))
 
 // ---------- workspace Estilo (treinar motion) ----------
-const formatMedia = () => join(userDir(), 'format-media')
 
 /** referências: imagem é copiada; vídeo fica onde está e ganha quadros-chave */
 ipcMain.handle('motion:importFiles', async (_e, paths: string[]) => {

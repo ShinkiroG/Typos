@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, FolderSearch, X } from 'lucide-react'
-import { api, type MontageData } from '../lib'
+import { api, baseName, type MontageData } from '../lib'
 
 /**
  * Aviso ao abrir o roteiro: mídias da Montagem que não estão mais onde estavam (HD trocado, pasta
@@ -37,7 +37,6 @@ export function MissingMedia({ montage, onChange }: { montage: MontageData; onCh
     setNote(left ? `${n} religado(s). Ainda faltam ${left}: tente outra pasta.` : '')
   }
 
-  const name = (p: string) => p.split(/[\\/]/).pop()
   return (
     <div className="missing-media">
       <AlertTriangle size={14} />
@@ -58,7 +57,7 @@ export function MissingMedia({ montage, onChange }: { montage: MontageData; onCh
         <ul className="missing-list">
           {missing.map((p) => (
             <li key={p} title={p}>
-              <b>{name(p)}</b> <span>{p}</span>
+              <b>{baseName(p)}</b> <span>{p}</span>
             </li>
           ))}
         </ul>

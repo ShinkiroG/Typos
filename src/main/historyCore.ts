@@ -117,7 +117,8 @@ export function mapStrings(v: any, fn: (s: string) => string): any {
   return v
 }
 
-const inside = (dir: string, p: string) => {
+/** `p` fica dentro da pasta `dir` (e não é a própria)? */
+export const inside = (dir: string, p: string) => {
   const r = relative(resolve(dir), resolve(p))
   return !!r && !r.startsWith('..') && !isAbsolute(r)
 }

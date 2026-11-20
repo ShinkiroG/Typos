@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FolderPlus, RefreshCw, X, ChevronDown, ChevronRight, Search, Play, LayoutGrid, Grid3x3, List, Image as ImageIcon, Music, Film } from 'lucide-react'
-import { api, fileUrl, uid } from '../lib'
+import { api, baseName, fileUrl, uid } from '../lib'
 import { AudioPlayButton } from '../editor/views'
 import { askText } from './AskDialog'
 
@@ -105,7 +105,7 @@ export function FoldersPanel({ extra = [] }: { extra?: string[] }) {
   const add = async () => {
     const path = await api.pickFolder()
     if (!path || folders.some((f) => f.path === path)) return
-    const f = { id: uid(), name: path.split(/[\\/]/).pop() || path, path }
+    const f = { id: uid(), name: baseName(path), path }
     save([...folders, f])
     setOpen((o) => ({ ...o, [f.id]: true }))
     scan(f, true)

@@ -1,4 +1,4 @@
-import { api, clipEndT, uid, type MontageClip, type MontageData, type ShortClip, type ShortTarget } from '../lib'
+import { api, binRoles, clipEndT, uid, type MontageClip, type MontageData, type ShortClip, type ShortTarget } from '../lib'
 import { planRender, timelineEnd } from '../render/plan'
 import { runningLabel, watchJobs } from '../montage/transcripts'
 
@@ -17,12 +17,7 @@ export interface TlWord {
 
 /** cortes que tocam a narração no vídeo: faixas de áudio ligadas, da pasta Narração ou do corte automático */
 function narrationClips(m: MontageData): MontageClip[] {
-  const binById = new Map(m.bins.map((b) => [b.id, b]))
-  const roleOf = (id: string) => {
-    let cur = binById.get(id)
-    for (let i = 0; cur?.parent && i < 20; i++) cur = binById.get(cur.parent)
-    return cur?.role
-  }
+  const roleOf = binRoles(m.bins)
   const media = new Map(m.media.map((x) => [x.id, x]))
   const muted = new Set(m.tracks.filter((t) => t.muted).map((t) => t.id))
   const audio = new Set(m.tracks.filter((t) => t.kind === 'audio').map((t) => t.id))
@@ -76,7 +71,7 @@ export function transcriptText(words: TlWord[]) {
     const gap = i > 0 ? w.s - words[i - 1].e : 0
     if (cur.length && (gap > 0.7 || cur.length >= 28)) flush()
     cur.push(w)
-    if (/[.!?…]["”')]*$/.test(w.w) && cur.length >= 6) flush()
+    if (endsSentence(w.w) && cur.length >= 6) flush()
   })
   flush()
   return lines.join('\n')

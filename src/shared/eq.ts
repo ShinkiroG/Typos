@@ -79,9 +79,6 @@ export function eqFfmpeg(eq?: Partial<MontageEq> | null): string[] {
   return out
 }
 
-/** assinatura (pra saber se o render precisa refazer o final) */
-export const eqKey = (eq?: Partial<MontageEq> | null) => eqFfmpeg(eq).join(',')
-
 type Coefs = [number, number, number, number, number, number]
 
 function peaking(f0: number, g: number, q: number, fs: number): Coefs {

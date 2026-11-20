@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Paperclip, ClipboardPaste, X, Sparkles, Film, Loader2, Check, Maximize2, Trash2, AlertTriangle, MessageSquare, Send, ArrowLeftToLine, ArrowRightToLine, FolderOpen, ListPlus, ListX, Zap, ExternalLink, Eye, RefreshCw } from 'lucide-react'
-import { api, absPath, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type Format, type InstructionBlock, type MontageData } from '../lib'
+import { api, absPath, baseName, fileUrl, pasteClipboardImage, type Attachment, type BlockAttachment, type Format, type InstructionBlock, type MontageData } from '../lib'
 import { PromptMenu } from './PromptMenu'
 import { rememberPrompt } from './prompts'
 import { hasDraft, loadDraft, saveDraft } from './drafts'
@@ -744,7 +744,7 @@ export function BlockPreviewBox({
       {!!b.preview?.sounds?.length && (
         <details className="blk-heard">
           <summary>Sons do Material bruto ({b.preview.sounds.length}): viram cortes de áudio ao aprovar</summary>
-          <pre>{b.preview.sounds.map((x) => `${x.at.toFixed(1)}s  ${x.path.split(/[\\/]/).pop()}  (volume ${Math.round(x.vol * 100)}%)`).join('\n')}</pre>
+          <pre>{b.preview.sounds.map((x) => `${x.at.toFixed(1)}s  ${baseName(x.path)}  (volume ${Math.round(x.vol * 100)}%)`).join('\n')}</pre>
         </details>
       )}
       {b.preview?.transcript && (

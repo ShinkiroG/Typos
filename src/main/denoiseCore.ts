@@ -6,12 +6,6 @@
 /** 1 = leve, 2 = médio, 3 = forte */
 export type DenoiseLevel = 1 | 2 | 3
 
-export const DENOISE_LEVELS: { id: DenoiseLevel; label: string; hint: string }[] = [
-  { id: 1, label: 'Leve', hint: 'tira chiado e zumbido de leve, sem mexer na voz' },
-  { id: 2, label: 'Médio', hint: 'IA de voz (RNNoise): tira ventilador, ar-condicionado, rua e chiado' },
-  { id: 3, label: 'Forte', hint: 'IA de voz + redução extra: pra gravação bem ruidosa (a voz pode ficar mais "seca")' }
-]
-
 /** versão da receita: mudar a cadeia gera os arquivos limpos de novo */
 export const DENOISE_V = 1
 
@@ -22,21 +16,12 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
  * ignorando o silêncio digital (som cortado/zerado). null se não deu pra medir.
  */
 export function noiseFloorDb(pcm: Int16Array, rate: number): number | null {
-  const win = Math.max(1, Math.round(rate * 0.05))
-  const levels: number[] = []
-  for (let i = 0; i + win <= pcm.length; i += win) {
-    let s = 0
-    for (let j = i; j < i + win; j++) s += pcm[j] * pcm[j]
-    const rms = Math.sqrt(s / win) / 32768
-    if (rms > 3e-5) levels.push(20 * Math.log10(rms))
-  }
-  if (levels.length < 4) return null
-  levels.sort((a, b) => a - b)
-  return levels[Math.floor(levels.length * 0.1)]
+  const levels = windowLevelsDb(pcm, rate)
+  return levels.length < 4 ? null : levels[Math.floor(levels.length * 0.1)]
 }
 
-/** começo (s) do trecho de `len` segundos com mais energia (é onde a fala está, pra medir o atraso) */
-export function loudestStart(pcm: Int16Array, rate: number, len: number): number {
+/** energia (soma dos quadrados) de cada janela de 50 ms */
+function windowEnergy(pcm: Int16Array, rate: number) {
   const win = Math.max(1, Math.round(rate * 0.05))
   const e: number[] = []
   for (let i = 0; i + win <= pcm.length; i += win) {
@@ -44,6 +29,23 @@ export function loudestStart(pcm: Int16Array, rate: number, len: number): number
     for (let j = i; j < i + win; j++) s += pcm[j] * pcm[j]
     e.push(s)
   }
+  return { e, win }
+}
+
+/** volume (dBFS) das janelas de 50 ms, do mais quieto pro mais forte, sem o silêncio digital */
+export function windowLevelsDb(pcm: Int16Array, rate: number): number[] {
+  const { e, win } = windowEnergy(pcm, rate)
+  const levels: number[] = []
+  for (const s of e) {
+    const rms = Math.sqrt(s / win) / 32768
+    if (rms > 3e-5) levels.push(20 * Math.log10(rms))
+  }
+  return levels.sort((a, b) => a - b)
+}
+
+/** começo (s) do trecho de `len` segundos com mais energia (é onde a fala está, pra medir o atraso) */
+export function loudestStart(pcm: Int16Array, rate: number, len: number): number {
+  const { e } = windowEnergy(pcm, rate)
   const n = Math.max(1, Math.round(len / 0.05))
   if (e.length <= n) return 0
   let cur = e.slice(0, n).reduce((a, b) => a + b, 0)

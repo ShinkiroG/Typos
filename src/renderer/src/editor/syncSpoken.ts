@@ -1,6 +1,6 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Transaction } from '@tiptap/pm/state'
-import { tokens } from '../montage/autocut'
+import { similar, tokens } from '../montage/autocut'
 
 /**
  * "Atualizar roteiro": o texto escrito das falas passa a ser o que foi falado na narração.
@@ -42,17 +42,8 @@ function paragraphChunks(node: PMNode, pos: number, para: number): Chunk[] {
   return out
 }
 
-function similar(a: string, b: string) {
-  if (a === b) return true
-  if (Math.min(a.length, b.length) < 4 || Math.abs(a.length - b.length) > 2) return false
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j)
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i]
-    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
-    prev = cur
-  }
-  return 1 - prev[b.length] / Math.max(a.length, b.length) >= 0.75
-}
+/** igual ou quase (nome que o Whisper escreveu diferente) */
+const alike = (a: string, b: string) => a === b || (Math.abs(a.length - b.length) <= 2 && similar(a, b) >= 0.75)
 
 export type SyncResult = { changed: number; inserted: number; removed: number } | { error: string }
 
@@ -105,7 +96,7 @@ export function syncSpokenText(doc: PMNode, spoken: string[], tr: Transaction): 
       else {
         const key = a * 1048576 + b
         let ok = simCache.get(key)
-        if (ok === undefined) simCache.set(key, (ok = similar(W[i - 1].tok, S[j - 1].tok)))
+        if (ok === undefined) simCache.set(key, (ok = alike(W[i - 1].tok, S[j - 1].tok)))
         if (ok) gain = 1
       }
       if (gain && prev[j - 1] + gain >= best) {

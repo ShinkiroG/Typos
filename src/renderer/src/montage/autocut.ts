@@ -79,7 +79,8 @@ export function tokens(text: string): string[] {
   return out
 }
 
-function similar(a: string, b: string) {
+/** quão parecidas são duas palavras, de 0 a 1 (palavra curta só conta se for igual) */
+export function similar(a: string, b: string) {
   if (a === b) return 1
   if (Math.min(a.length, b.length) < 4) return 0
   const m = a.length
@@ -184,6 +185,8 @@ export function autoCut(blocks: ScriptBlock[], takes: Take[], base: MontageData)
     take: number
     s: number
     e: number
+    /** começo da última palavra (pra achar o silêncio depois dela) */
+    lastStart: number
   }
   type Step = Piece | { gap: number }
   const steps: Step[] = []
@@ -212,7 +215,7 @@ export function autoCut(blocks: ScriptBlock[], takes: Take[], base: MontageData)
       used.push([pick.from, pick.to])
       const first = T[pick.from]
       const last = T[pick.to - 1]
-      steps.push({ block: b.index, take: first.take, s: first.word.s, e: last.word.e })
+      steps.push({ block: b.index, take: first.take, s: first.word.s, e: last.word.e, lastStart: last.word.s })
       found++
     }
   }
@@ -260,10 +263,8 @@ export function autoCut(blocks: ScriptBlock[], takes: Take[], base: MontageData)
       continue
     }
     const t = takes[st.take]
-    // a última palavra começa onde? (pra achar o silêncio depois dela)
-    const lastWordStart = T.filter((w) => w.take === st.take && w.word.e === st.e).pop()?.word.s ?? st.s
     let a = snapStart(t, st.s)
-    const z = Math.max(a + 0.1, snapEnd(t, lastWordStart, st.e))
+    const z = Math.max(a + 0.1, snapEnd(t, st.lastStart, st.e))
     const track = trackFor(t.media)
     // frases vizinhas da mesma tomada que encostam/sobrepõem no áudio viram um corte só
     // (senão o mesmo pedaço toca de novo: sílabas repetidas)

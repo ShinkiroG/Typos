@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { promises as fs } from 'fs'
+import { serial, writeAtomic } from './fsx'
 
 /** Conexões de IA e quem faz cada tarefa (ver main/ai.ts). Chaves nunca saem do main. */
 export interface AiSettings {
@@ -62,9 +63,17 @@ export async function loadSettings(): Promise<AppSettings> {
   }
 }
 
-export async function saveSettings(patch: Partial<AppSettings>) {
-  const next = { ...(await loadSettings()), ...patch }
-  await fs.mkdir(app.getPath('userData'), { recursive: true })
-  await fs.writeFile(file(), JSON.stringify(next, null, 2), 'utf8')
-  return next
+const queue = serial()
+
+/**
+ * Junta o patch ao que está salvo. Em fila e com gravação atômica: dois ajustes mudados ao mesmo tempo
+ * não se perdem, e uma queda no meio da gravação não deixa o settings.json (com as chaves) pela metade.
+ */
+export function saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+  return queue('settings', async () => {
+    const next = { ...(await loadSettings()), ...patch }
+    await fs.mkdir(app.getPath('userData'), { recursive: true })
+    await writeAtomic(file(), JSON.stringify(next, null, 2))
+    return next
+  })
 }
