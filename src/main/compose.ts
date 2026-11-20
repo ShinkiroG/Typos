@@ -4,6 +4,8 @@
  * Sem Electron aqui: só texto, pra dar pra testar com o ffmpeg puro.
  */
 
+import type { ALayer, VLayer } from '../shared/layers'
+
 /**
  * Versão da codificação: entra na assinatura das partes e dos letterings do render, pra que um ajuste
  * aqui grave tudo de novo em vez de reaproveitar arquivos feitos com o ajuste antigo.
@@ -63,34 +65,7 @@ export const nvencFailed = (err: string) => /nvenc|cuda|OpenEncodeSession|No cap
 /** RGB (quadros PNG do navegador) → YUV 4:2:0 em BT.709, com arredondamento preciso (sem degrau extra) */
 export const RGB_TO_YUV = 'flags=bicubic+accurate_rnd+full_chroma_int:out_color_matrix=bt709:out_range=tv'
 
-/** camada de vídeo (clipe, imagem ou lettering): tempos na timeline, já com os crossfades */
-export interface VLayer {
-  path: string
-  image: boolean
-  t0: number
-  t1: number
-  /** segundo do arquivo que toca em t0 */
-  src0: number
-  /** fades de opacidade (s) a partir das bordas da camada */
-  fadeIn: number
-  fadeOut: number
-  /** sem transparência (vídeo comum, JPG): quando é a camada de baixo e ocupa a parte toda, dispensa o fundo preto e o alfa */
-  opaque?: boolean
-  covers?: boolean
-}
-
-/** trecho de áudio: tempos na timeline e o envelope de volume (s desde t0, ganho linear) */
-export interface ALayer {
-  path: string
-  /** limpeza de ruído: o render troca o path pela cópia limpa antes de montar o comando */
-  denoise?: 1 | 2 | 3
-  /** controle dos picos da voz: entra na mesma cópia tratada */
-  peaks?: 1 | 2 | 3
-  t0: number
-  t1: number
-  src0: number
-  env: [number, number][]
-}
+export type { VLayer, ALayer }
 
 export interface PartSpec {
   from: number

@@ -1,5 +1,6 @@
 import { clipEndT, type Format, type MontageData, type MontageMarker } from '../lib'
 import { envAt, envPoints, spans } from '../montage/engine'
+import type { ALayer, VLayer } from '../../../shared/layers'
 
 /**
  * Plano do render local: a timeline de montagem vira partes de ~20 s, cada uma com as camadas de
@@ -8,27 +9,7 @@ import { envAt, envPoints, spans } from '../montage/engine'
  * no meio, a próxima rodada pula as partes que não mudaram.
  */
 
-export interface VLayer {
-  path: string
-  image: boolean
-  t0: number
-  t1: number
-  src0: number
-  fadeIn: number
-  fadeOut: number
-  /** sem transparência (vídeo comum, JPG): o ffmpeg não precisa do canal alfa pra ele quando é a camada de baixo */
-  opaque?: boolean
-  /** opaca e cobre o quadro inteiro: enquanto está 100% visível, o que fica embaixo não aparece */
-  covers?: boolean
-}
-
-export interface ALayer {
-  path: string
-  t0: number
-  t1: number
-  src0: number
-  env: [number, number][]
-}
+export type { VLayer, ALayer }
 
 export interface LetteringSpec {
   id: string
@@ -220,12 +201,13 @@ export function planRender(
 
   // áudio: tudo que a Montagem toca, com o mesmo envelope (ganho, fades com curva, crossfades)
   const audio = all
-    .filter((s) => media.get(s.clip.media)?.hasAudio && !s.clip.audioOff)
-    .map((s) => ({
-      path: media.get(s.clip.media)!.path,
-      // limpeza de ruído: o render troca pela cópia limpa (a mesma que a prévia toca)
-      ...(media.get(s.clip.media)!.denoise ? { denoise: media.get(s.clip.media)!.denoise } : {}),
-      ...(media.get(s.clip.media)!.peaks ? { peaks: media.get(s.clip.media)!.peaks } : {}),
+    .map((s) => ({ s, m: media.get(s.clip.media) }))
+    .filter(({ s, m }) => m?.hasAudio && !s.clip.audioOff)
+    .map(({ s, m }): ALayer => ({
+      path: m!.path,
+      // limpeza de ruído e picos: o render troca pela cópia tratada (a mesma que a prévia toca)
+      ...(m!.denoise ? { denoise: m!.denoise } : {}),
+      ...(m!.peaks ? { peaks: m!.peaks } : {}),
       t0: r3(s.t0),
       t1: r3(s.t1),
       src0: r3(s.src0),

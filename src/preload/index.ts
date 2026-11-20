@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { SoundProfile } from '../main/soundProfile'
 import type { GlobalFx } from '../shared/fx'
+import type { ALayer, VLayer } from '../shared/layers'
 
 type AiProvider = 'claude-code' | 'codex' | 'anthropic' | 'openai'
 
@@ -34,6 +35,18 @@ export interface HistoryProject {
 type AeFound = { afterfx: string; aerender: string; year: number | null }
 type AeState = { found: AeFound | null; manual: string | null; all: AeFound[] }
 
+/**
+ * Escuta um aviso do main e devolve a função que para de escutar. Cada parte da tela tem a sua escuta
+ * (duas Montagens abertas, por exemplo, recebem as duas) e tira a dela quando sai.
+ */
+function listen<T>(channel: string, cb: (payload: T) => void) {
+  const f = (_e: unknown, payload: T) => cb(payload)
+  ipcRenderer.on(channel, f)
+  return () => {
+    ipcRenderer.removeListener(channel, f)
+  }
+}
+
 const api = {
   newProject: () => ipcRenderer.invoke('project:new'),
   openProject: (dir?: string) => ipcRenderer.invoke('project:open', dir),
@@ -48,10 +61,7 @@ const api = {
   /** .zip com a pasta do roteiro e a mídia de fora que ele usa */
   exportProject: (dir: string, title: string): Promise<{ path: string; files: number; external: number; bytes: number } | { error: string } | null> =>
     ipcRenderer.invoke('project:export', dir, title),
-  onExportProgress: (cb: (pct: number) => void) => {
-    ipcRenderer.removeAllListeners('project:exportProgress')
-    ipcRenderer.on('project:exportProgress', (_e, pct) => cb(pct))
-  },
+  onExportProgress: (cb: (pct: number) => void) => listen('project:exportProgress', cb),
   logError: (text: string) => ipcRenderer.send('log:renderer', text),
   /** histórico de versões (main/history.ts): todos os roteiros com cópias, inclusive de pasta sumida */
   historyProjects: (): Promise<HistoryProject[]> => ipcRenderer.invoke('history:projects'),
@@ -122,10 +132,8 @@ const api = {
   checkUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdateNow: () => ipcRenderer.invoke('update:installNow'),
   onUpdate: (cb: (event: string, payload: any) => void) => {
-    for (const ch of ['update:ready', 'update:progress', 'update:status']) {
-      ipcRenderer.removeAllListeners(ch)
-      ipcRenderer.on(ch, (_e, payload) => cb(ch, payload))
-    }
+    const offs = ['update:ready', 'update:progress', 'update:status'].map((ch) => listen(ch, (payload: any) => cb(ch, payload)))
+    return () => offs.forEach((off) => off())
   },
 
   // corretor (Hunspell no main): o editor manda as palavras e desenha o sublinhado
@@ -154,10 +162,7 @@ const api = {
   aiSetProject: (dir: string | null) => ipcRenderer.invoke('ai:project', dir),
   aiBudget: (dir: string): Promise<{ spent: number; cap?: number }> => ipcRenderer.invoke('ai:budget', dir),
   aiSetBudget: (dir: string, cap: number | null): Promise<{ spent: number; cap?: number }> => ipcRenderer.invoke('ai:setBudget', dir, cap),
-  onAiUsage: (cb: (u: { provider: AiProvider; ms: number; ok: boolean; cost: number | null; spent?: number; cap?: number }) => void) => {
-    ipcRenderer.removeAllListeners('ai:usage')
-    ipcRenderer.on('ai:usage', (_e, u) => cb(u))
-  },
+  onAiUsage: (cb: (u: { provider: AiProvider; ms: number; ok: boolean; cost: number | null; spent?: number; cap?: number }) => void) => listen('ai:usage', cb),
 
   // Montagem (ffmpeg no main)
   ffmpegInfo: (force?: boolean): Promise<{ path: string; version: string; whisper: boolean } | null> => ipcRenderer.invoke('media:ffmpeg', force),
@@ -188,10 +193,7 @@ const api = {
   downloadVideo: (url: string, dir: string, opts: { quality: '1080' | '720' | 'audio'; from?: string; to?: string; target?: 'motion' }): Promise<{ path: string } | { error: string }> =>
     ipcRenderer.invoke('media:download', url, dir, opts),
   cancelDownload: () => ipcRenderer.invoke('media:dlCancel'),
-  onDownloadProgress: (cb: (p: { pct: number; speed: string; eta: string }) => void) => {
-    ipcRenderer.removeAllListeners('media:dlProgress')
-    ipcRenderer.on('media:dlProgress', (_e, p) => cb(p))
-  },
+  onDownloadProgress: (cb: (p: { pct: number; speed: string; eta: string }) => void) => listen('media:dlProgress', cb),
   silences: (path: string): Promise<[number, number][] | { error: string }> => ipcRenderer.invoke('media:silences', path),
 
   // transcrição (Whisper local) pro corte automático
@@ -205,10 +207,7 @@ const api = {
   whisperDownload: (id: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('whisper:download', id),
   transcribe: (path: string, lang: string): Promise<{ words: { s: number; e: number; w: string }[] } | { error: string }> =>
     ipcRenderer.invoke('whisper:transcribe', path, lang),
-  onWhisperProgress: (cb: (p: { stage: 'download'; pct: number }) => void) => {
-    ipcRenderer.removeAllListeners('whisper:progress')
-    ipcRenderer.on('whisper:progress', (_e, p) => cb(p))
-  },
+  onWhisperProgress: (cb: (p: { stage: 'download'; pct: number }) => void) => listen('whisper:progress', cb),
   // leitura do áudio em segundo plano (fila com cache)
   whisperQueue: (paths: string[], lang: string): Promise<void> => ipcRenderer.invoke('whisper:queue', paths, lang),
   whisperCached: (paths: string[], lang: string): Promise<Record<string, boolean>> => ipcRenderer.invoke('whisper:cached', paths, lang),
@@ -217,11 +216,7 @@ const api = {
   whisperClearErrors: (): Promise<void> => ipcRenderer.invoke('whisper:clear'),
   whisperParallel: (n?: number): Promise<number> => ipcRenderer.invoke('whisper:parallel', n),
   /** a fila toda, a cada mudança (todas as janelas e partes do app ouvem) */
-  onWhisperJobs: (cb: (jobs: WhisperJob[]) => void) => {
-    const f = (_e: unknown, jobs: WhisperJob[]) => cb(jobs)
-    ipcRenderer.on('whisper:jobs', f)
-    return () => ipcRenderer.removeListener('whisper:jobs', f)
-  },
+  onWhisperJobs: (cb: (jobs: WhisperJob[]) => void) => listen('whisper:jobs', cb),
 
   // workspace Estilo (treinar motion)
   motionImportFiles: (paths: string[]): Promise<{ kind: 'image' | 'video'; path: string; name: string; frames?: string[]; error?: string }[]> =>
@@ -250,8 +245,9 @@ const api = {
       from: number
       to: number
       key: string
-      video: { path: string; image: boolean; t0: number; t1: number; src0: number; fadeIn: number; fadeOut: number }[]
-      audio: { path: string; t0: number; t1: number; src0: number; env: [number, number][] }[]
+      audioKey?: string
+      video: VLayer[]
+      audio: ALayer[]
       letterings: string[]
     }[]
     letterings: { id: string; label: string; t: number; dur: number; html: string }[]
@@ -267,10 +263,7 @@ const api = {
     ipcRenderer.invoke('render:status', dir),
   onRenderState: (
     cb: (p: { phase: 'letterings' | 'partes' | 'final'; pct: number; eta: number | null; steps: { id: string; label: string; done: boolean }[]; resumed: number }) => void
-  ) => {
-    ipcRenderer.removeAllListeners('render:state')
-    ipcRenderer.on('render:state', (_e, p) => cb(p))
-  },
+  ) => listen('render:state', cb),
   renderCancel: () => ipcRenderer.invoke('render:cancel'),
   /** encoder do render: GPU (NVENC) ou CPU (x264); sem mode só lê */
   renderEncoder: (mode?: 'cpu' | 'gpu'): Promise<{ mode: 'cpu' | 'gpu'; gpu: boolean }> => ipcRenderer.invoke('render:encoder', mode),
@@ -278,10 +271,7 @@ const api = {
   renderPickDir: (current?: string): Promise<string | null> => ipcRenderer.invoke('render:pickDir', current),
   /** os arquivos ainda existem? (pra prévia dos vídeos já renderizados) */
   renderExists: (paths: string[]): Promise<boolean[]> => ipcRenderer.invoke('render:exists', paths),
-  onRenderProgress: (cb: (ev: { kind: 'say' | 'info'; text: string }) => void) => {
-    ipcRenderer.removeAllListeners('render:progress')
-    ipcRenderer.on('render:progress', (_e, ev) => cb(ev))
-  },
+  onRenderProgress: (cb: (ev: { kind: 'say' | 'info'; text: string }) => void) => listen('render:progress', cb),
   // blocos de instrução: prévia do motion (HTML → MP4 leve)
   motionPreview: (job: {
     dir: string
@@ -321,7 +311,6 @@ const api = {
     ipcRenderer.invoke('ae:rerender', job),
   aeCancel: (block?: string) => ipcRenderer.invoke('ae:cancel', block),
   aeOpen: (aep: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke('ae:open', aep),
-  /** encoder do clipe de motion ('cpu' = x264 qualidade máxima, 'gpu' = NVENC); sem argumento só lê */
   /** como o clipe de motion é gravado: encoder, quadros por segundo e motion blur (subquadros por quadro) */
   motionEncoder: (set?: 'cpu' | 'gpu' | { mode?: 'cpu' | 'gpu'; fps?: 30 | 60; blur?: 0 | 4 | 8 }): Promise<{ mode: 'cpu' | 'gpu'; gpu: boolean; fps: 30 | 60; blur: 0 | 4 | 8 }> =>
     ipcRenderer.invoke('motion:encoder', set),
@@ -347,12 +336,9 @@ const api = {
     to: number
     width: number
     height: number
-    video: { path: string; image: boolean; t0: number; t1: number; src0: number; fadeIn: number; fadeOut: number }[]
+    video: VLayer[]
   }): Promise<{ video: string } | { error: string }> => ipcRenderer.invoke('motion:underVideo', job),
-  onMotionPreviewProgress: (cb: (p: { block: string; stage: string; pct: number }) => void) => {
-    ipcRenderer.removeAllListeners('motion:previewProgress')
-    ipcRenderer.on('motion:previewProgress', (_e, p) => cb(p))
-  },
+  onMotionPreviewProgress: (cb: (p: { block: string; stage: string; pct: number }) => void) => listen('motion:previewProgress', cb),
   findSfxLibraries: (): Promise<{ libs: { path: string; name: string; program: string; why: string; files: number }[]; hints: number } | { error: string }> =>
     ipcRenderer.invoke('ai:findSfx'),
   motionTrain: (job: { prompt: string; prefix?: string; images: string[]; id?: string; model?: string; effort?: 'low' | 'medium' | 'high'; offline?: boolean }): Promise<{ text: string; provider: AiProvider } | { error: string }> =>

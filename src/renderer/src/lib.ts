@@ -428,6 +428,9 @@ let projectDir = ''
 export const setProjectDir = (dir: string) => (projectDir = dir)
 export const getProjectDir = () => projectDir
 
+/** o nome do arquivo (ou da pasta) no fim de um caminho do Windows ou com barras normais */
+export const baseName = (path: string) => path.split(/[\\/]/).pop() || path
+
 export const fileUrl = (abs: string) => 'rs://local/' + encodeURIComponent(abs)
 export const absPath = (a: Attachment) => (a.external ? a.path : `${projectDir}\\${a.path.replace(/\//g, '\\')}`)
 export const attachmentUrl = (a: Attachment) => fileUrl(absPath(a))
@@ -737,6 +740,9 @@ export function envelopeAt(keys: Clip['keys'], srcT: number) {
   return keys[keys.length - 1].v
 }
 
+/** dB → ganho linear (0 dB = 1) */
+export const dbToGain = (db = 0) => Math.pow(10, db / 20)
+
 export const clipEnd = (c: Clip) => c.start + c.duration
 
 export const uid = () => Math.random().toString(36).slice(2, 10)
@@ -992,6 +998,16 @@ export interface MotionMemoryItem {
   text: string
   /** código da animação aprovada (resumido), pra servir de exemplo */
   html?: string
+}
+
+/** a categoria (aba do topo) de uma pasta: sobe pelas pastas-mãe até a raiz */
+export function binRoles(bins: MontageBin[]) {
+  const byId = new Map(bins.map((b) => [b.id, b]))
+  return (id: string): BinRole | undefined => {
+    let cur = byId.get(id)
+    for (let i = 0; cur?.parent && i < 20; i++) cur = byId.get(cur.parent)
+    return cur?.role
+  }
 }
 
 export const clipDur = (c: MontageClip) => c.out - c.in

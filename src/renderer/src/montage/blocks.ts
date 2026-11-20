@@ -2,6 +2,7 @@ import {
   absPath,
   api,
   fileUrl,
+  baseName,
   clipEndT,
   formatTime,
   RESOLUTIONS,
@@ -281,7 +282,7 @@ export function videoUnder(data: MontageData, b: InstructionBlock) {
   const names = new Map(data.media.map((m) => [m.path, m.name]))
   const parts = [...layers]
     .sort((x, y) => x.t0 - y.t0)
-    .map((v) => ({ name: names.get(v.path) ?? v.path.split(/[\\/]/).pop() ?? v.path, image: v.image, t0: Math.max(0, v.t0 - b.start), t1: Math.min(blockDur(b), v.t1 - b.start) }))
+    .map((v) => ({ name: names.get(v.path) ?? baseName(v.path), image: v.image, t0: Math.max(0, v.t0 - b.start), t1: Math.min(blockDur(b), v.t1 - b.start) }))
   return { layers, parts }
 }
 
@@ -592,7 +593,7 @@ export async function rawFiles(data: MontageData, format?: Format): Promise<RawF
     if (seen.has(f.path) || (!fromStyle && out.length >= MAX_RAW)) return
     seen.add(f.path)
     const ext = f.path.match(/\.\w+$/)?.[0]?.toLowerCase() ?? ''
-    const base = (f.path.split(/[\\/]/).pop() ?? 'arquivo').replace(/\.\w+$/, '').replace(/[^\w.-]+/g, '_').slice(0, 40)
+    const base = baseName(f.path).replace(/\.\w+$/, '').replace(/[^\w.-]+/g, '_').slice(0, 40)
     out.push({ ...f, name: `bruto-${out.length + 1}-${base}${ext}` })
   }
   const wanted = (bin: string, kind: MediaKind) => roleWants(roleOf(bin), kind)
@@ -673,7 +674,7 @@ export function soundsToTimeline(d: MontageData, b: InstructionBlock, sounds: Bl
     if (len <= 0.01) continue
     if (!m) {
       const video = /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(s.path)
-      m = { id: uid(), bin: s.bin ?? '', path: s.path, name: s.path.split(/[\\/]/).pop() ?? s.name, kind: video ? 'video' : 'audio', duration: s.duration ?? len, hasAudio: true, hasVideo: video }
+      m = { id: uid(), bin: s.bin ?? '', path: s.path, name: baseName(s.path), kind: video ? 'video' : 'audio', duration: s.duration ?? len, hasAudio: true, hasVideo: video }
       media = [...media, m]
     }
     const start = b.start + s.at

@@ -1,6 +1,6 @@
 import { LiveAudio } from '../audio'
 import { EQ_BANDS, EQ_Q, flatEq, normEq, type MontageEq } from '../../../shared/eq'
-import { api, audioPath, clipEndT, fileUrl, type FadeCurve, type MontageClip, type MontageData, type MontageMedia } from '../lib'
+import { api, audioPath, clipEndT, dbToGain, fileUrl, type FadeCurve, type MontageClip, type MontageData, type MontageMedia } from '../lib'
 
 export const PEAKS_PER_SEC = 100
 
@@ -8,8 +8,6 @@ export interface LoadedAudio {
   buffer: AudioBuffer
   peaks: Float32Array
 }
-
-const dbToGain = (db = 0) => Math.pow(10, db / 20)
 
 /** Trecho que um clipe realmente toca, já contando os crossfades com os vizinhos. */
 export interface Span {

@@ -15,6 +15,22 @@ export async function readJson<T>(file: string, fallback: T): Promise<T> {
 }
 
 /**
+ * No Windows o rename por cima falha (EPERM/EBUSY/EACCES) enquanto outro programa está com o arquivo
+ * aberto (antivírus, indexador); costuma soltar em milissegundos, então tenta de novo algumas vezes.
+ */
+async function renameOver(from: string, to: string) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fs.rename(from, to)
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (attempt >= 4 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw err
+      await new Promise((r) => setTimeout(r, 20 * 2 ** attempt))
+    }
+  }
+}
+
+/**
  * Grava num .tmp e renomeia: quem lê nunca pega o arquivo pela metade, e uma queda no meio da
  * gravação deixa o arquivo antigo inteiro. O .tmp é único, então duas gravações do mesmo arquivo
  * ao mesmo tempo não se atropelam no rename.
@@ -23,7 +39,7 @@ export async function writeAtomic(file: string, text: string) {
   const tmp = `${file}.${randomUUID().slice(0, 8)}.tmp`
   try {
     await fs.writeFile(tmp, text, 'utf8')
-    await fs.rename(tmp, file)
+    await renameOver(tmp, file)
   } catch (err) {
     await fs.rm(tmp, { force: true }).catch(() => null)
     throw err
