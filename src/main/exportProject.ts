@@ -1,7 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'path'
+import { basename, extname, isAbsolute, join, relative, sep } from 'path'
 import { promises as fs, existsSync } from 'fs'
 import { writeZip } from './zip'
+import { listFiles } from './fsx'
+import { inside, mapStrings } from './historyCore'
 
 /**
  * "Exportar projeto": um .zip com a pasta do roteiro e toda mídia de fora que ele usa
@@ -13,30 +15,6 @@ import { writeZip } from './zip'
 const EXTERNAL = '_midia-externa'
 /** fica de fora: cópias de segurança e a pasta de trabalho do render (vídeos finais, pesados) */
 const SKIP_TOP = new Set(['.typos-versoes', 'render'])
-
-async function listFiles(dir: string, base = dir): Promise<string[]> {
-  const out: string[] = []
-  for (const e of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
-    const p = join(dir, e.name)
-    if (dir === base && SKIP_TOP.has(e.name)) continue
-    if (e.isDirectory()) out.push(...(await listFiles(p, base)))
-    else if (e.isFile()) out.push(p)
-  }
-  return out
-}
-
-/** troca cada texto do JSON (em qualquer profundidade) pelo que fn devolver */
-function mapStrings(v: any, fn: (s: string) => string): any {
-  if (typeof v === 'string') return fn(v)
-  if (Array.isArray(v)) return v.map((x) => mapStrings(x, fn))
-  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, mapStrings(x, fn)]))
-  return v
-}
-
-const inside = (dir: string, p: string) => {
-  const r = relative(resolve(dir), resolve(p))
-  return !!r && !r.startsWith('..') && !isAbsolute(r)
-}
 
 /** caminhos de arquivos de fora da pasta que o roteiro usa */
 async function externalFiles(dir: string, data: any) {
@@ -98,7 +76,7 @@ export function initExportProject() {
 
       const root = safe
       const files: { path: string; name: string }[] = []
-      for (const p of await listFiles(dir)) {
+      for (const p of await listFiles(dir, (name, parent) => parent === dir && SKIP_TOP.has(name))) {
         const rel = relative(dir, p).split(sep).join('/')
         files.push({ path: rel === 'roteiro.json' ? tmp : p, name: `${root}/${rel}` })
       }

@@ -102,7 +102,7 @@ export function cleanAudio(path: string, level: DenoiseLevel | 0, peaks: PeaksLe
     return out
   })()
   pending.set(id, p)
-  p.finally(() => pending.delete(id))
+  p.catch(() => null).then(() => pending.delete(id))
   return p
 }
 

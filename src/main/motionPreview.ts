@@ -9,6 +9,7 @@ import { loadSettings, saveSettings } from './settings'
 import { MOTION_LIB, MOTION_LIB_FILE } from '../shared/motionLib'
 import { logTime } from './log'
 import { withFx, type GlobalFx } from '../shared/fx'
+import { safeName } from './fsx'
 
 /**
  * Prévia de um bloco de instrução: o HTML de motion que a IA escreveu é tocado numa janela
@@ -93,8 +94,6 @@ function withClock(html: string, fx?: GlobalFx): string {
  */
 const CAPTURE_HZ = 240
 
-const safeName = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 60) || 'arquivo'
-
 /** a biblioteca de animação do Typos na pasta do motion (o HTML carrega pelo nome; regravada pra ficar na versão do app) */
 const putMotionLib = (dir: string) => fs.writeFile(join(dir, MOTION_LIB_FILE), MOTION_LIB, 'utf8').catch(() => null)
 
@@ -113,15 +112,65 @@ export function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
 }
 let recRunning = 0
 
-/** a placa tem NVENC e o ffmpeg sabe usar? (testa uma vez gravando um vídeo minúsculo) */
-let nvencOk: Promise<boolean> | null = null
-export function hasNvenc(): Promise<boolean> {
-  nvencOk ??= findFfmpeg().then(async (ff) => {
-    if (!ff) return false
-    const r = await run(ff.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2', ...nvencArgs(), '-f', 'null', '-'], { timeoutMs: 20000 }).catch(() => null)
-    return r?.code === 0
+/**
+ * A placa tem NVENC e o ffmpeg sabe usar? Testa uma vez por ffmpeg, gravando um vídeo minúsculo
+ * (apontar outro ffmpeg nas Configurações, ou instalar um depois de abrir o app, testa de novo).
+ */
+const nvencOk = new Map<string, Promise<boolean>>()
+export async function hasNvenc(): Promise<boolean> {
+  const ff = await findFfmpeg()
+  if (!ff) return false
+  let ok = nvencOk.get(ff.ffmpeg)
+  if (!ok) {
+    ok = run(ff.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2', ...nvencArgs(), '-f', 'null', '-'], { timeoutMs: 20000 }).then(
+      (r) => r.code === 0,
+      () => false
+    )
+    nvencOk.set(ff.ffmpeg, ok)
+  }
+  return ok
+}
+
+/** medidas pares (o H.264 em 4:2:0 exige) */
+const even = (n: number) => Math.max(16, Math.round(n / 2) * 2)
+
+/**
+ * O "palco" de um motion: o HTML com o relógio virtual gravado na pasta de trabalho (junto dos arquivos
+ * que ele usa pelo nome) e uma janela invisível, sem internet, do tamanho do vídeo.
+ */
+async function openStage(o: { out: string; tag: string; html: string; fx?: GlobalFx; files: { src: string; name: string }[]; width: number; height: number; zoom: number }) {
+  for (const f of o.files) await fs.copyFile(f.src, join(o.out, safeName(f.name))).catch(() => null)
+  const playPath = join(o.out, `_${o.tag}-${Math.random().toString(36).slice(2, 8)}.html`)
+  await fs.writeFile(playPath, withClock(o.html, o.fx), 'utf8')
+  // sessão própria, sem internet: a animação tem que ser autocontida (e não vaza nada)
+  const ses = session.fromPartition('typos-motion-preview')
+  ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|blob|about|devtools):/i.test(d.url) }))
+  const win = new BrowserWindow({
+    show: false,
+    width: o.width,
+    height: o.height,
+    useContentSize: true,
+    frame: false,
+    enableLargerThanScreen: true,
+    webPreferences: { offscreen: true, session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, zoomFactor: o.zoom }
   })
-  return nvencOk
+  win.setContentSize(o.width, o.height)
+  win.webContents.setFrameRate(CAPTURE_HZ)
+  return {
+    win,
+    /** carrega a página e espera as fontes (o zoom só vale depois de carregar) */
+    async load(zoom: number) {
+      await win.loadFile(playPath)
+      win.webContents.setZoomFactor(zoom)
+      await win.webContents.executeJavaScript('(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => true)').catch(() => null)
+    },
+    /** anda o relógio da página até `ms` */
+    step: (ms: number) => win.webContents.executeJavaScript(`window.__typosStep && window.__typosStep(${ms.toFixed(3)})`).catch(() => null),
+    async close() {
+      win.destroy()
+      await fs.rm(playPath, { force: true }).catch(() => null)
+    }
+  }
 }
 
 /** encoder do clipe final: o escolhido nas Configurações; GPU sem NVENC disponível cai pra CPU */
@@ -175,27 +224,12 @@ export async function htmlToVideo(job: HtmlVideoJob) {
   const ff = await findFfmpeg()
   if (!ff) throw new Error('O ffmpeg não foi encontrado (Configurações → Mídia).')
   const out = job.out
-  for (const f of job.files) await fs.copyFile(f.src, join(out, safeName(f.name))).catch(() => null)
-  const playPath = join(out, `_tocar-${Math.random().toString(36).slice(2, 8)}.html`)
-  await fs.writeFile(playPath, withClock(job.html, job.fx), 'utf8')
-
-  const W = Math.max(16, Math.round(job.width / 2) * 2)
-  const H = Math.max(16, Math.round(job.height / 2) * 2)
+  const W = even(job.width)
+  const H = even(job.height)
   const sub = blurSubs(job.blur)
   let zoom = job.zoom && job.zoom > 0 ? job.zoom : 1
-  // sessão própria, sem internet: a animação tem que ser autocontida (e não vaza nada)
-  const ses = session.fromPartition('typos-motion-preview')
-  ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|blob|about|devtools):/i.test(d.url) }))
-  const win = new BrowserWindow({
-    show: false,
-    width: W,
-    height: H,
-    useContentSize: true,
-    frame: false,
-    enableLargerThanScreen: true,
-    webPreferences: { offscreen: true, session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, zoomFactor: zoom }
-  })
-  win.setContentSize(W, H)
+  const stage = await openStage({ out, tag: 'tocar', html: job.html, fx: job.fx, files: job.files, width: W, height: H, zoom })
+  const win = stage.win
   // o Windows não deixa a janela passar do tamanho da tela (ex.: 1080×1920 num monitor de 1080 de altura):
   // se encolheu, grava menor na MESMA proporção (zoom junto) e o ffmpeg amplia, em vez de esticar o quadro
   const [cw, ch] = win.getContentSize()
@@ -226,7 +260,6 @@ export async function htmlToVideo(job: HtmlVideoJob) {
       }
       win.webContents.invalidate()
     })
-  win.webContents.setFrameRate(CAPTURE_HZ)
   let wav = ''
   if (job.wav?.length) {
     wav = join(out, `audio-${Math.random().toString(36).slice(2, 8)}.wav`)
@@ -281,17 +314,15 @@ export async function htmlToVideo(job: HtmlVideoJob) {
   let enc: Awaited<ReturnType<typeof startEncoder>> | null = null
   const t0 = Date.now()
   try {
-    await win.loadFile(playPath)
-    win.webContents.setZoomFactor(zoom)
     // fontes e imagens carregadas antes do primeiro quadro
-    await win.webContents.executeJavaScript('(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => true)').catch(() => null)
+    await stage.load(zoom)
     // espera a página aparecer de verdade antes do quadro 0
     for (let k = 0; k < 10 && !lastImg; k++) await nextPaint(300)
     const n = Math.max(1, Math.round(job.seconds * job.fps))
     for (let i = 0; i < n; i++) {
       for (let k = 0; k < sub; k++) {
         if (job.cancelled?.()) throw new Error('Cancelado.')
-        await win.webContents.executeJavaScript(`window.__typosStep && window.__typosStep(${subFrameMs(i, k, sub, job.fps).toFixed(3)})`).catch(() => null)
+        await stage.step(subFrameMs(i, k, sub, job.fps))
         const img = await nextPaint(400)
         if (!img) throw new Error('A animação não desenhou nada (o HTML veio vazio ou quebrado).')
         // o ffmpeg comprime enquanto a página desenha o próximo quadro (o quadro vai cru, sem virar PNG no disco)
@@ -310,8 +341,7 @@ export async function htmlToVideo(job: HtmlVideoJob) {
     await fs.rm(job.video, { force: true }).catch(() => null)
     throw e
   } finally {
-    win.destroy()
-    await fs.rm(playPath, { force: true }).catch(() => null)
+    await stage.close()
     if (wav) await fs.rm(wav, { force: true }).catch(() => null)
   }
   return job.video
@@ -341,22 +371,22 @@ export async function renderMotionPreview(sender: Pick<WebContents, 'isDestroyed
     recRunning++
     try {
       return await htmlToVideo({
-    out,
-    html,
-    seconds: job.seconds,
-    width: job.width,
-    height: job.height,
-    fps: job.fps,
-    zoom: job.zoom,
-    wav: job.wav,
-    files: job.files,
-    video: join(out, `${job.final ? 'clipe' : 'previa'}-${stamp}.mp4`),
-    quality: job.final ? 'final' : 'preview',
-    encoder,
-    fx: job.fx,
-    blur: job.final ? (await loadSettings()).motionBlur : 0,
-    onPct: (p) => send(p >= 1 ? 'vídeo' : 'quadros', p),
-    cancelled
+        out,
+        html,
+        seconds: job.seconds,
+        width: job.width,
+        height: job.height,
+        fps: job.fps,
+        zoom: job.zoom,
+        wav: job.wav,
+        files: job.files,
+        video: join(out, `${job.final ? 'clipe' : 'previa'}-${stamp}.mp4`),
+        quality: job.final ? 'final' : 'preview',
+        encoder,
+        fx: job.fx,
+        blur: job.final ? (await loadSettings()).motionBlur : 0,
+        onPct: (p) => send(p >= 1 ? 'vídeo' : 'quadros', p),
+        cancelled
       })
     } finally {
       recRunning--
@@ -399,31 +429,13 @@ export async function checkLayout(job: LayoutJob, cancelled: () => boolean = () 
   const out = join(job.dir, 'previas', safeName(job.block))
   await fs.mkdir(out, { recursive: true })
   await putMotionLib(out)
-  for (const f of job.files) await fs.copyFile(f.src, join(out, safeName(f.name))).catch(() => null)
-  const playPath = join(out, `_checar-${Math.random().toString(36).slice(2, 8)}.html`)
-  await fs.writeFile(playPath, withClock(job.html), 'utf8')
-  const W = Math.max(16, Math.round(job.width / 2) * 2)
-  const H = Math.max(16, Math.round(job.height / 2) * 2)
   const zoom = job.zoom && job.zoom > 0 ? job.zoom : 1
-  const ses = session.fromPartition('typos-motion-preview')
-  ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|blob|about|devtools):/i.test(d.url) }))
-  const win = new BrowserWindow({
-    show: false,
-    width: W,
-    height: H,
-    useContentSize: true,
-    frame: false,
-    enableLargerThanScreen: true,
-    webPreferences: { offscreen: true, session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, zoomFactor: zoom }
-  })
-  win.setContentSize(W, H)
-  win.webContents.setFrameRate(CAPTURE_HZ)
+  const stage = await openStage({ out, tag: 'checar', html: job.html, files: job.files, width: even(job.width), height: even(job.height), zoom })
+  const win = stage.win
   const found = new Map<string, LayoutHit>()
   let errors: string[] = []
   try {
-    await win.loadFile(playPath)
-    win.webContents.setZoomFactor(zoom)
-    await win.webContents.executeJavaScript('(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => true)').catch(() => null)
+    await stage.load(zoom)
     const step = job.step ?? 0.25
     const times: number[] = []
     for (let t = 0; t < job.seconds - 0.01; t += step) times.push(t)
@@ -431,7 +443,7 @@ export async function checkLayout(job: LayoutJob, cancelled: () => boolean = () 
     let prev = new Map<string, LayoutHit>()
     for (const [i, t] of times.entries()) {
       if (cancelled()) throw new Error('Cancelado.')
-      await win.webContents.executeJavaScript(`window.__typosStep && window.__typosStep(${(t * 1000).toFixed(3)})`).catch(() => null)
+      await stage.step(t * 1000)
       const hits: Omit<LayoutHit, 't'>[] = (await win.webContents.executeJavaScript(job.probe).catch(() => [])) ?? []
       const now = new Map<string, LayoutHit>()
       for (const h of hits) now.set(h.kind + '|' + h.what, { ...h, t })
@@ -442,8 +454,7 @@ export async function checkLayout(job: LayoutJob, cancelled: () => boolean = () 
     const got = await win.webContents.executeJavaScript('window.__typosErrors || []').catch(() => [])
     errors = Array.isArray(got) ? got.map((x) => String(x).slice(0, 300)).slice(0, 12) : []
   } finally {
-    win.destroy()
-    await fs.rm(playPath, { force: true }).catch(() => null)
+    await stage.close()
   }
   return { issues: [...found.values()].sort((a, z) => a.t - z.t), errors }
 }
@@ -546,10 +557,11 @@ export function initMotionPreview() {
   /** encoder do clipe de motion: lê/troca e diz se a GPU (NVENC) está disponível neste PC */
   ipcMain.handle('motion:encoder', async (_e, set?: 'cpu' | 'gpu' | { mode?: 'cpu' | 'gpu'; fps?: number; blur?: number }) => {
     const o = typeof set === 'string' ? { mode: set } : (set ?? {})
-    if (o.mode === 'cpu' || o.mode === 'gpu') await saveSettings({ motionEncoder: o.mode })
-    if (o.fps === 30 || o.fps === 60) await saveSettings({ motionFps: o.fps })
-    if (o.blur === 0 || o.blur === 4 || o.blur === 8) await saveSettings({ motionBlur: o.blur })
-    const s = await loadSettings()
+    const patch: Parameters<typeof saveSettings>[0] = {}
+    if (o.mode === 'cpu' || o.mode === 'gpu') patch.motionEncoder = o.mode
+    if (o.fps === 30 || o.fps === 60) patch.motionFps = o.fps
+    if (o.blur === 0 || o.blur === 4 || o.blur === 8) patch.motionBlur = o.blur
+    const s = Object.keys(patch).length ? await saveSettings(patch) : await loadSettings()
     return { mode: s.motionEncoder ?? 'cpu', gpu: await hasNvenc(), fps: s.motionFps ?? 30, blur: s.motionBlur ?? 0 }
   })
 }

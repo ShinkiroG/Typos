@@ -4,6 +4,8 @@
  * trechos fortes e limitador pra pôr um teto que nenhum pico passa.
  */
 
+import { windowLevelsDb } from './denoiseCore'
+
 /** 1 = leve, 2 = médio, 3 = forte */
 export type PeaksLevel = 1 | 2 | 3
 
@@ -17,16 +19,8 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
  * (o que sobra é a voz). null se não deu pra medir.
  */
 export function speechLevelDb(pcm: Int16Array, rate: number): number | null {
-  const win = Math.max(1, Math.round(rate * 0.05))
-  const levels: number[] = []
-  for (let i = 0; i + win <= pcm.length; i += win) {
-    let s = 0
-    for (let j = i; j < i + win; j++) s += pcm[j] * pcm[j]
-    const rms = Math.sqrt(s / win) / 32768
-    if (rms > 3e-5) levels.push(20 * Math.log10(rms))
-  }
+  const levels = windowLevelsDb(pcm, rate)
   if (levels.length < 4) return null
-  levels.sort((a, b) => a - b)
   const floor = levels[Math.floor(levels.length * 0.1)]
   const loud = levels.filter((l) => l > floor + 15)
   // quase tudo no mesmo volume (só fala, sem pausas): a mediana geral já é a fala

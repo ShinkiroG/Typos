@@ -7,6 +7,7 @@ import { pipeline } from 'stream/promises'
 import { findFfmpeg, proxyAudio, proxyPathOf, probe, run, mediaCacheDir } from './media'
 import { loadSettings, saveSettings } from './settings'
 import { whisperRuns, wordsFromWhisper } from './whisperTimes'
+import { writeAtomic } from './fsx'
 
 /**
  * Transcrição local (Whisper via filtro do ffmpeg) pra o corte automático da narração.
@@ -67,7 +68,10 @@ export function initWhisper() {
     }
   })
 
-  ipcMain.handle('whisper:setModel', (_e, id: string) => saveSettings({ whisperModel: id }))
+  // sem devolver nada: o saveSettings devolve os ajustes inteiros, com as chaves de API, e elas não saem do main
+  ipcMain.handle('whisper:setModel', async (_e, id: string) => {
+    if (MODELS.some((m) => m.id === id)) await saveSettings({ whisperModel: id })
+  })
 
   ipcMain.handle('whisper:download', async (e, id: string) => {
     const m = MODELS.find((x) => x.id === id)
@@ -214,7 +218,8 @@ function cancel(path?: string, lang?: string) {
  */
 export async function transcribe(path: string, lang: string): Promise<Result> {
   const c = await cacheFile(path, lang).catch(() => null)
-  if (c?.hit) return { words: JSON.parse(await fs.readFile(c.file, 'utf8')) }
+  const cached = c?.hit ? await readWords(c.file) : null
+  if (cached) return { words: cached }
   const k = jobKey(path, lang)
   const cur = jobs.get(k)
   if (cur && (cur.state === 'queued' || cur.state === 'running')) return cur.promise
@@ -231,6 +236,16 @@ export async function transcribe(path: string, lang: string): Promise<Result> {
 async function currentModel() {
   const s = await loadSettings()
   return MODELS.find((x) => x.id === (s.whisperModel ?? 'large-v3')) ?? MODELS[0]
+}
+
+/** as palavras guardadas no cache; null se o arquivo está quebrado (gravação interrompida): aí lê o áudio de novo */
+async function readWords(file: string): Promise<Word[] | null> {
+  try {
+    const words = JSON.parse(await fs.readFile(file, 'utf8'))
+    return Array.isArray(words) ? words : null
+  } catch {
+    return null
+  }
 }
 
 /** o arquivo de cache da transcrição (pelo áudio de prévia, que só existe depois de gerado) */
@@ -258,7 +273,8 @@ async function transcribeNow(path: string, lang: string, signal: AbortSignal, on
   const c = await cacheFile(path, lang, proxy)
   const key = c.key!
   const cache = c.file
-  if (c.hit) return { words: JSON.parse(await fs.readFile(cache, 'utf8')) }
+  const cached = c.hit ? await readWords(cache) : null
+  if (cached) return { words: cached }
   onStage('model', 0)
 
   const info = await probe(proxy)
@@ -288,7 +304,7 @@ async function transcribeNow(path: string, lang: string, signal: AbortSignal, on
   if (signal.aborted) return { error: 'Cancelado.' }
   if (r.code !== 0) return { error: 'O Whisper falhou: ' + r.err.split('\n').slice(-4).join(' ').slice(0, 300) }
   const words: Word[] = wordsFromWhisper(await fs.readFile(out, 'utf8').catch(() => ''), log.runs, total)
-  await fs.writeFile(cache, JSON.stringify(words))
+  await writeAtomic(cache, JSON.stringify(words))
   return { words }
 }
 

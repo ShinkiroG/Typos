@@ -7,6 +7,7 @@ import { RGB_TO_YUV, x264Args, nvencArgs } from './compose'
 import { loadSettings, saveSettings } from './settings'
 import { aeScript, aeYear, aerenderErrors, aerenderFrame, parseResult, pickAeFolders, renderInput } from './aeCore'
 import { hasNvenc, oneAtATime } from './motionPreview'
+import { safeName } from './fsx'
 
 /**
  * Motion no After Effects (o "híbrido"): o Claude escreve um script ExtendScript, o AE roda ele e monta o
@@ -68,7 +69,6 @@ export interface AeJob {
   files: { src: string; name: string }[]
 }
 
-const safeName = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 60) || 'arquivo'
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
 
 /** o AE está aberto? (pra avisar que ele pode pedir pra salvar o projeto que está nele) */
@@ -218,33 +218,32 @@ async function owned<T>(block: string, fn: (cancelled: () => boolean) => Promise
   }
 }
 
+/** o que as Configurações mostram: o AE em uso, o escolhido na mão (se tiver) e todos os instalados */
+const aeState = async () => ({ found: await findAe(), manual: (await loadSettings()).aePath ?? null, all: await listAe() })
+
 export function initAfterEffects() {
-  ipcMain.handle('ae:info', async () => {
-    const ae = await findAe()
-    const s = await loadSettings()
-    return { found: ae, manual: s.aePath ?? null, all: await listAe() }
-  })
+  ipcMain.handle('ae:info', () => aeState())
   /** escolhe o AfterFX.exe na mão (vazio = volta a procurar sozinho) */
   ipcMain.handle('ae:pick', async (e, clear?: boolean | string) => {
     if (clear === true) {
       await saveSettings({ aePath: undefined })
-      return { found: await findAe(), manual: null, all: await listAe() }
+      return aeState()
     }
     // uma das versões achadas (a lista das Configurações)
     if (typeof clear === 'string') {
       const got = (await listAe()).find((x) => x.afterfx === clear)
       if (!got) return { error: 'Essa versão do After Effects não foi encontrada.' }
       await saveSettings({ aePath: got.afterfx })
-      return { found: got, manual: got.afterfx, all: await listAe() }
+      return aeState()
     }
     const win = BrowserWindow.fromWebContents(e.sender)
     const opts = { title: 'Onde está o AfterFX.exe?', defaultPath: 'C:\\Program Files\\Adobe', filters: [{ name: 'After Effects', extensions: ['exe'] }], properties: ['openFile' as const] }
     const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     const exe = r.filePaths[0]
-    if (r.canceled || !exe) return { found: await findAe(), manual: (await loadSettings()).aePath ?? null, all: await listAe() }
+    if (r.canceled || !exe) return aeState()
     if (!existsSync(join(dirname(exe), 'aerender.exe'))) return { error: 'Não achei o aerender.exe na mesma pasta. Escolha o AfterFX.exe dentro de "Support Files".' }
     await saveSettings({ aePath: exe })
-    return { found: await findAe(), manual: exe, all: await listAe() }
+    return aeState()
   })
   ipcMain.handle('ae:build', (e, job: AeJob) => owned(job.block, (c) => aeBuild(e.sender, job, c)))
   ipcMain.handle('ae:rerender', (e, job: { block: string; aep: string; seconds: number; width: number; height: number; fps: number }) =>

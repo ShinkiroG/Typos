@@ -149,29 +149,53 @@ interface TextJob {
   timeoutMs?: number
 }
 
-async function textClaudeCode(s: AiSettings, job: TextJob) {
-  const cc = await findClaudeCode(s)
-  if (!cc) throw new Error('Claude Code não encontrado neste PC. Instale e faça login (Configurações → IA).')
-  const prompt = `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}`
-  // prompt vai pela entrada padrão (sem limite de tamanho da linha de comando do Windows)
-  // no modo -p só roda ferramenta liberada aqui: busca na web sim, mexer em arquivo não
-  const r = await run(cc.path, ['-p', '--output-format', 'json', '--allowedTools', 'WebSearch,WebFetch'], { cwd: job.dir, input: prompt, timeoutMs: Math.min(30 * 60000, job.timeoutMs ?? 180000) })
+/** o pedido de texto como vai pra IA: a instrução, as regras fixas e o material (`extra`: regra a mais do fornecedor) */
+const textPrompt = (job: TextJob, extra = '') =>
+  `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. ${extra}Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}`
+
+const TEXT_SYSTEM = 'Você ajuda a escrever roteiros de vídeo para YouTube, em português do Brasil.'
+const textTimeout = (job: TextJob) => Math.min(30 * 60000, job.timeoutMs ?? 180000)
+
+/**
+ * O que o Claude Code respondeu no modo -p com --output-format json: `text` quando deu certo,
+ * senão `why` (a mensagem de erro dele, ou o que saiu no terminal).
+ */
+function claudeCodeReply(r: { out: string; err: string }): { text: string } | { why: string } {
   let parsed: any = null
   try {
     parsed = JSON.parse(r.out)
   } catch {
-    /* saída não-JSON: erro abaixo */
+    /* saída não-JSON: vira `why` */
   }
-  if (parsed && !parsed.is_error && typeof parsed.result === 'string') return parsed.result.trim()
-  const why = (parsed?.result || r.err || r.out || '').toString().trim()
-  if (/log ?in|auth|credential|\/login/i.test(why)) throw new Error('O Claude Code não está logado. Abra um terminal, rode "claude" e faça o login.')
-  throw new Error(`Claude Code: ${why.slice(0, 300) || 'falhou sem mensagem'}`)
+  if (parsed && !parsed.is_error && typeof parsed.result === 'string') return { text: parsed.result.trim() }
+  return { why: (parsed?.result || r.err || r.out || '').toString().trim() }
+}
+
+/** o texto de uma resposta da API da Anthropic (os blocos de texto, sem os de ferramenta) */
+const anthropicText = (content: { type: string; text?: string }[]) =>
+  content
+    .map((b) => (b.type === 'text' ? (b.text ?? '') : ''))
+    .join('')
+    .trim()
+
+const NO_CLAUDE_CODE = 'Claude Code não encontrado neste PC. Instale e faça login (Configurações → IA).'
+
+async function textClaudeCode(s: AiSettings, job: TextJob) {
+  const cc = await findClaudeCode(s)
+  if (!cc) throw new Error(NO_CLAUDE_CODE)
+  // prompt vai pela entrada padrão (sem limite de tamanho da linha de comando do Windows)
+  // no modo -p só roda ferramenta liberada aqui: busca na web sim, mexer em arquivo não
+  const r = await run(cc.path, ['-p', '--output-format', 'json', '--allowedTools', 'WebSearch,WebFetch'], { cwd: job.dir, input: textPrompt(job), timeoutMs: textTimeout(job) })
+  const reply = claudeCodeReply(r)
+  if ('text' in reply) return reply.text
+  if (/log ?in|auth|credential|\/login/i.test(reply.why)) throw new Error('O Claude Code não está logado. Abra um terminal, rode "claude" e faça o login.')
+  throw new Error(`Claude Code: ${reply.why.slice(0, 300) || 'falhou sem mensagem'}`)
 }
 
 async function textCodex(s: AiSettings, job: TextJob) {
-  const prompt = `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. Não mexa em nenhum arquivo. Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}`
+  const prompt = textPrompt(job, 'Não mexa em nenhum arquivo. ')
   const cwd = job.dir && existsSync(job.dir) ? job.dir : app.getPath('temp')
-  const r = await codexExec(s, prompt, { cwd, sandbox: 'read-only', extra: ['--ephemeral'], timeoutMs: Math.min(30 * 60000, job.timeoutMs ?? 180000) })
+  const r = await codexExec(s, prompt, { cwd, sandbox: 'read-only', extra: ['--ephemeral'], timeoutMs: textTimeout(job) })
   return r.text
 }
 
@@ -186,15 +210,12 @@ async function textAnthropic(s: AiSettings, job: TextJob) {
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
     tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
-    system: 'Você ajuda a escrever roteiros de vídeo para YouTube, em português do Brasil.',
-    messages: [{ role: 'user', content: `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}` }]
+    system: TEXT_SYSTEM,
+    messages: [{ role: 'user', content: textPrompt(job) }]
   })
   chargeAnthropic(res.model, res.usage)
   if (res.stop_reason === 'refusal') throw new Error('O Claude recusou esse pedido.')
-  return res.content
-    .map((b) => (b.type === 'text' ? b.text : ''))
-    .join('')
-    .trim()
+  return anthropicText(res.content)
 }
 
 async function openaiFetch(s: AiSettings, path: string, body?: unknown) {
@@ -213,8 +234,8 @@ async function textOpenAI(s: AiSettings, job: TextJob) {
   const j = await openaiFetch(s, 'chat/completions', {
     model: s.openaiTextModel || DEFAULT_MODELS.openaiText,
     messages: [
-      { role: 'system', content: 'Você ajuda a escrever roteiros de vídeo para YouTube, em português do Brasil.' },
-      { role: 'user', content: `${job.instruction}\n\nSe precisar de dados atuais ou números exatos, pesquise na web. Responda só com o resultado, sem comentários antes ou depois.\n\n---\n${job.input}` }
+      { role: 'system', content: TEXT_SYSTEM },
+      { role: 'user', content: textPrompt(job) }
     ]
   })
   chargeOpenAI(String(j?.model ?? ''), j?.usage)
@@ -456,51 +477,45 @@ const motionRunning = new Map<string, AbortController>()
 
 const mimeOf = (p: string) => (/\.png$/i.test(p) ? 'image/png' : /\.webp$/i.test(p) ? 'image/webp' : /\.gif$/i.test(p) ? 'image/gif' : 'image/jpeg')
 
-async function motionClaudeCode(s: AiSettings, job: MotionTrainJob, signal?: AbortSignal) {
-  const cc = await findClaudeCode(s)
-  if (!cc) throw new Error('Claude Code não encontrado neste PC. Instale e faça login (Configurações → IA).')
-  // as imagens vão pra uma pasta de trabalho; o Claude Code lê cada uma (ele enxerga imagem)
+/** pasta de trabalho de um pedido de motion, com as imagens copiadas como ref-01, ref-02… (as que não deu pra copiar ficam de fora) */
+async function stageImages(images: string[]) {
   const work = join(app.getPath('userData'), 'motion-train', randomUUID().slice(0, 8))
   await fs.mkdir(work, { recursive: true })
   const names: string[] = []
-  for (const [i, p] of job.images.entries()) {
+  for (const [i, p] of images.entries()) {
     const name = `ref-${String(i + 1).padStart(2, '0')}${p.match(/\.\w+$/)?.[0] ?? '.jpg'}`
-    await fs.copyFile(p, join(work, name)).catch(() => null)
-    names.push(name)
+    if (await fs.copyFile(p, join(work, name)).then(() => true, () => false)) names.push(name)
   }
+  return { work, names, done: () => fs.rm(work, { recursive: true, force: true }).catch(() => null) }
+}
+
+async function motionClaudeCode(s: AiSettings, job: MotionTrainJob, signal?: AbortSignal) {
+  const cc = await findClaudeCode(s)
+  if (!cc) throw new Error(NO_CLAUDE_CODE)
+  // as imagens vão pra uma pasta de trabalho; o Claude Code lê cada uma (ele enxerga imagem)
+  const { work, names, done } = await stageImages(job.images)
   const prompt = `${job.prompt}\n\nAs imagens de referência estão nesta pasta: ${names.join(', ')}. Abra e olhe TODAS antes de responder.`
   try {
     // 30 min: com emenda (HTML do vizinho + quadros) o Claude Code passava dos 15 e era cortado
     const model = motionModelFor(job.model, s.motionModel)
     const args = ['-p', '--output-format', 'json', '--allowedTools', job.offline ? 'Read' : 'Read,WebSearch,WebFetch', ...(model ? ['--model', model] : [])]
     const r = await run(cc.path, args, { cwd: work, input: prompt, timeoutMs: 30 * 60000, signal })
-    let parsed: any = null
-    try {
-      parsed = JSON.parse(r.out)
-    } catch {
-      /* erro abaixo */
-    }
-    if (parsed && !parsed.is_error && typeof parsed.result === 'string') return parsed.result.trim()
+    const reply = claudeCodeReply(r)
+    if ('text' in reply) return reply.text
     if (signal?.aborted) throw new Error('Cancelado.')
     if (r.err.includes('(tempo esgotado)')) throw new Error('Claude Code: tempo esgotado (30 min sem resposta). Tente de novo; se repetir, encurte o bloco ou as instruções.')
-    const why = (parsed?.result || r.err || r.out || '').toString().trim()
+    const why = reply.why
     if (model && /model/i.test(why) && /not.?found|invalid|not.?available|access|unknown|issue with the selected/i.test(why))
       throw new Error(`O Claude Code não aceitou o modelo ${claudeModelLabel(model)} (${model}). Veja se o seu plano inclui esse modelo, ou escolha outro no bloco ou em Configurações → IA.`)
     throw new Error(`Claude Code: ${why.slice(0, 300) || 'falhou sem mensagem'}`)
   } finally {
-    await fs.rm(work, { recursive: true, force: true }).catch(() => null)
+    await done()
   }
 }
 
 async function motionCodex(s: AiSettings, job: MotionTrainJob, signal?: AbortSignal) {
   // mesma ideia do Claude Code: as imagens vão pra uma pasta de trabalho e entram anexadas no pedido
-  const work = join(app.getPath('userData'), 'motion-train', randomUUID().slice(0, 8))
-  await fs.mkdir(work, { recursive: true })
-  const names: string[] = []
-  for (const [i, p] of job.images.slice(0, 50).entries()) {
-    const name = `ref-${String(i + 1).padStart(2, '0')}${p.match(/\.\w+$/)?.[0] ?? '.jpg'}`
-    if (await fs.copyFile(p, join(work, name)).then(() => true, () => false)) names.push(name)
-  }
+  const { work, names, done } = await stageImages(job.images.slice(0, 50))
   try {
     const r = await codexExec(s, `${job.prompt}\n\nNão mexa em nenhum arquivo. Responda só com o resultado.`, {
       cwd: work,
@@ -511,7 +526,7 @@ async function motionCodex(s: AiSettings, job: MotionTrainJob, signal?: AbortSig
     })
     return r.text
   } finally {
-    await fs.rm(work, { recursive: true, force: true }).catch(() => null)
+    await done()
   }
 }
 
@@ -545,10 +560,7 @@ async function motionAnthropic(s: AiSettings, job: MotionTrainJob, signal?: Abor
   chargeAnthropic(res.model, res.usage)
   if (job.prefix) logLine('tempo', `cache do pedido: ${res.usage.cache_read_input_tokens ?? 0} tokens lidos, ${res.usage.cache_creation_input_tokens ?? 0} gravados`)
   if (res.stop_reason === 'refusal') throw new Error('O Claude recusou esse pedido.')
-  return res.content
-    .map((b) => (b.type === 'text' ? b.text : ''))
-    .join('')
-    .trim()
+  return anthropicText(res.content)
 }
 
 async function motionOpenAI(s: AiSettings, job: MotionTrainJob) {
@@ -668,16 +680,11 @@ export function initSfxFinder() {
       const dirs = [...new Set([process.env.USERPROFILE, process.env.ProgramData, process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.CommonProgramFiles, ...hints].filter(Boolean) as string[])]
       const args = ['-p', '--output-format', 'json', '--allowedTools', 'Glob,Grep,Read', ...dirs.flatMap((d) => ['--add-dir', d])]
       const r = await metered('claude-code', undefined, () => run(cc.path, args, { cwd: process.env.USERPROFILE, input: prompt, timeoutMs: 15 * 60000 }))
-      let parsed: any = null
-      try {
-        parsed = JSON.parse(r.out)
-      } catch {
-        /* abaixo */
-      }
-      if (!parsed || parsed.is_error || typeof parsed.result !== 'string') throw new Error('Claude Code: ' + ((parsed?.result || r.err || r.out || '').toString().trim().slice(0, 300) || 'falhou sem mensagem'))
-      const m = parsed.result.match(/<libs>([\s\S]*?)<\/libs>/)
+      const reply = claudeCodeReply(r)
+      if ('why' in reply) throw new Error('Claude Code: ' + (reply.why.slice(0, 300) || 'falhou sem mensagem'))
+      const m = reply.text.match(/<libs>([\s\S]*?)<\/libs>/)
       let list: { path: string; name: string; program: string; why: string }[] = []
-      const raw = (m ? m[1] : parsed.result).trim()
+      const raw = (m ? m[1] : reply.text).trim()
       try {
         list = JSON.parse(raw)
       } catch {

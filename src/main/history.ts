@@ -2,6 +2,7 @@ import { app, ipcMain } from 'electron'
 import { join } from 'path'
 import { promises as fs, existsSync } from 'fs'
 import { randomUUID } from 'crypto'
+import { readJson, writeJson } from './fsx'
 import {
   countWords,
   legacyTime,
@@ -38,20 +39,6 @@ interface Info {
 const root = () => join(app.getPath('userData'), 'historico')
 const store = (id: string) => join(root(), id)
 const keyOf = (dir: string) => (process.platform === 'win32' ? dir.toLowerCase() : dir)
-
-async function readJson<T>(file: string, fallback: T): Promise<T> {
-  try {
-    return JSON.parse(await fs.readFile(file, 'utf8')) as T
-  } catch {
-    return fallback
-  }
-}
-
-async function writeJson(file: string, data: unknown) {
-  const tmp = `${file}.${randomUUID().slice(0, 8)}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
-  await fs.rename(tmp, file)
-}
 
 const infos = new Map<string, Info>()
 async function readInfo(id: string): Promise<Info | null> {

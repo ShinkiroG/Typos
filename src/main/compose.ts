@@ -18,6 +18,9 @@ export const ENCODE_V = 3
  *   as áreas escuras e lisas.
  * As cores saem em BT.709 (o padrão de vídeo HD), marcadas no arquivo.
  */
+/** saída em YUV 4:2:0 marcada como BT.709 (o padrão de vídeo HD) */
+const BT709 = ['-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709']
+
 export function x264Args(kind: 'grain' | 'master' | 'clip'): string[] {
   const q =
     kind === 'clip'
@@ -28,7 +31,7 @@ export function x264Args(kind: 'grain' | 'master' | 'clip'): string[] {
       : kind === 'grain'
         ? ['-preset', 'slow', '-crf', '12', '-tune', 'grain']
         : ['-preset', 'medium', '-crf', '14', '-x264-params', 'aq-mode=3']
-  return ['-c:v', 'libx264', ...q, '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709']
+  return ['-c:v', 'libx264', ...q, ...BT709]
 }
 
 /**
@@ -41,7 +44,7 @@ export function nvencArgs(): string[] {
   return [
     '-c:v', 'h264_nvenc', '-preset', 'p5', '-tune', 'hq', '-rc', 'vbr', '-cq', '14', '-b:v', '0',
     '-spatial-aq', '1', '-temporal-aq', '1', '-profile:v', 'high',
-    '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709'
+    ...BT709
   ]
 }
 
@@ -51,7 +54,7 @@ export function nvencArgs(): string[] {
  * gravado decodificava em média mais de cem. É arquivo de trabalho: o tamanho importa pouco.
  */
 export function seekArgs(): string[] {
-  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16', '-g', '4', '-bf', '0', '-tune', 'fastdecode', '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709']
+  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16', '-g', '4', '-bf', '0', '-tune', 'fastdecode', ...BT709]
 }
 
 /** o ffmpeg falhou por causa do NVENC (placa ocupada, sessões demais, driver)? aí dá pra refazer na CPU */
@@ -258,12 +261,17 @@ export function partAudioArgs(p: { from: number; to: number; audio: ALayer[]; ou
 }
 
 /** junta só o som das partes num WAV (24 bits, 48 kHz), com o mesmo equalizador e limitador do vídeo final */
-export function finalAudioArgs(audioList: string, out: string, limiter = true, eq: string[] = []): string[] {
+/** filtros do som final: o equalizador do vídeo (o mesmo da prévia) e depois o limitador */
+const finalAf = (limiter: boolean, eq: string[]) => {
   const af = [...eq, ...(limiter ? ['alimiter=limit=0.84:attack=5:release=120:level=0'] : [])]
+  return af.length ? ['-af', af.join(',')] : []
+}
+
+export function finalAudioArgs(audioList: string, out: string, limiter = true, eq: string[] = []): string[] {
   return [
     '-hide_banner', '-y', '-nostdin',
     '-f', 'concat', '-safe', '0', '-i', audioList,
-    ...(af.length ? ['-af', af.join(',')] : []),
+    ...finalAf(limiter, eq),
     '-c:a', 'pcm_s24le', '-ar', String(RATE), '-ac', '2',
     out
   ]
@@ -274,38 +282,15 @@ export const concatList = (names: string[]) => names.map((f) => `file '${f.repla
 
 /** junta as partes: vídeo copiado (sem recomprimir), áudio com o EQ e o limitador (iguais aos da Montagem) em AAC */
 export function finalArgs(videoList: string, audioList: string, out: string, limiter = true, eq: string[] = []): string[] {
-  // equalizador do vídeo (o mesmo da prévia) antes do limitador
-  const af = [...eq, ...(limiter ? ['alimiter=limit=0.84:attack=5:release=120:level=0'] : [])]
   return [
-    '-hide_banner',
-    '-y',
-    '-nostdin',
-    '-f',
-    'concat',
-    '-safe',
-    '0',
-    '-i',
-    videoList,
-    '-f',
-    'concat',
-    '-safe',
-    '0',
-    '-i',
-    audioList,
-    '-map',
-    '0:v',
-    '-map',
-    '1:a',
-    '-c:v',
-    'copy',
-    ...(af.length ? ['-af', af.join(',')] : []),
-    '-c:a',
-    'aac',
-    '-b:a',
-    '192k',
-    '-shortest',
-    '-movflags',
-    '+faststart',
+    '-hide_banner', '-y', '-nostdin',
+    '-f', 'concat', '-safe', '0', '-i', videoList,
+    '-f', 'concat', '-safe', '0', '-i', audioList,
+    '-map', '0:v', '-map', '1:a',
+    '-c:v', 'copy',
+    ...finalAf(limiter, eq),
+    '-c:a', 'aac', '-b:a', '192k',
+    '-shortest', '-movflags', '+faststart',
     out
   ]
 }
